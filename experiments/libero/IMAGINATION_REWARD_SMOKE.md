@@ -66,6 +66,6 @@ conda run -n fastwam python experiments/libero/analyze_imagination_rewards.py \
   --batch-size 16
 ```
 
-The output contains one JSONL record per valid `t -> t+8` transition and one aggregate JSON summary. The cyclic next-transition wrong-goal number is only a smoke diagnostic; adjacent goals can be semantically similar, so it is not a formal matched-wrong-goal test.
+The output contains one JSONL record per valid `t -> t+8` transition, one JSONL record per episode, and one aggregate JSON summary. Wrong goals are selected from a different episode of the same task, preferring the same action mode and the most distant available replan index. This is a stronger smoke control than an adjacent transition, but it is still only a proxy for manually annotated task stages.
 
 The first decision is deliberately small: policy progress should be clearly larger than the zero-action control. A single episode only verifies the pipeline and does not establish statistical effectiveness.

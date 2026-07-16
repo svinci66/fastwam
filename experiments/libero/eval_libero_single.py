@@ -679,6 +679,7 @@ def run_single_task(
     results["action_mode"] = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
     results["imagination_transition_count"] = 0
     results["valid_imagination_transition_count"] = 0
+    results["episode_policy_steps"] = []
 
     for trial_idx in range(int(cfg.EVALUATION.num_trials)):
         success, replay_images, predicted_future_video_clips, episode_mean_psnr = run_single_episode(
@@ -701,6 +702,10 @@ def run_single_task(
             results["failure_episodes"].append(trial_idx)
         if visualize_future_video:
             results["episode_future_video_psnr"].append(episode_mean_psnr)
+        episode_policy_steps = int(
+            sum(int(clip.get("effective_k", 0)) for clip in predicted_future_video_clips)
+        )
+        results["episode_policy_steps"].append(episode_policy_steps)
 
         save_rollout_video(
             video_dir,
@@ -745,6 +750,7 @@ def run_single_task(
                             "action_source": str(clip.get("action_source", "infer_joint")),
                             "target_step": int(clip.get("target_step", 0)),
                             "effective_k": int(clip.get("effective_k", 0)),
+                            "episode_policy_steps": episode_policy_steps,
                             "alignment_valid": alignment_valid,
                             "policy_seed": None if cfg.get("seed") is None else int(cfg.seed),
                         }

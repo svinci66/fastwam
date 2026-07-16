@@ -8,6 +8,10 @@ from experiments.libero.imagination_reward_utils import (
     compute_progress_reward,
     save_aligned_transition,
 )
+from experiments.libero.analyze_imagination_rewards import (
+    build_episode_rows,
+    select_wrong_goal_record,
+)
 
 
 def test_progress_reward_is_positive_when_actual_moves_toward_goal():
@@ -51,3 +55,52 @@ def test_save_aligned_transition_writes_lossless_triplet(tmp_path):
     assert Image.open(metadata_path.parent / "predicted_goal.png").size == (12, 8)
     assert Image.open(metadata_path.parent / "actual.png").size == (12, 8)
     assert json.loads(metadata_path.read_text(encoding="utf-8"))["alignment_valid"] is True
+
+
+def test_wrong_goal_comes_from_distant_same_mode_episode():
+    current = {
+        "source_input_dir": "policy",
+        "task_suite": "libero_goal",
+        "task_id": 3,
+        "trial_idx": 0,
+        "action_mode": "policy",
+        "replan_idx": 1,
+        "record_dir": "current",
+    }
+    same_mode = {
+        **current,
+        "trial_idx": 1,
+        "replan_idx": 8,
+        "record_dir": "same-mode",
+    }
+    other_mode = {
+        **current,
+        "source_input_dir": "noise",
+        "trial_idx": 1,
+        "action_mode": "noise",
+        "replan_idx": 20,
+        "record_dir": "other-mode",
+    }
+    assert select_wrong_goal_record(current, [current, same_mode, other_mode]) is same_mode
+
+
+def test_episode_rows_include_return_mean_and_steps():
+    common = {
+        "source_input_dir": "policy",
+        "task_suite": "libero_goal",
+        "task_id": 3,
+        "trial_idx": 0,
+        "action_mode": "policy",
+        "success": True,
+        "episode_policy_steps": 16,
+    }
+    episodes = build_episode_rows(
+        [
+            {**common, "imagination_progress": 0.25},
+            {**common, "imagination_progress": -0.05},
+        ]
+    )
+    assert len(episodes) == 1
+    assert episodes[0]["episode_imagination_return"] == 0.2
+    assert episodes[0]["episode_mean_imagination_progress"] == 0.1
+    assert episodes[0]["episode_policy_steps"] == 16
