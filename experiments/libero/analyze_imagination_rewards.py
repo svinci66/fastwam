@@ -186,6 +186,9 @@ def summarize(
     episode_mean_by_mode: dict[str, list[float]] = defaultdict(list)
     episode_return_by_success: dict[str, list[float]] = defaultdict(list)
     episode_mean_by_success: dict[str, list[float]] = defaultdict(list)
+    episode_success_by_mode: dict[str, list[float]] = defaultdict(list)
+    episode_steps_by_mode: dict[str, list[float]] = defaultdict(list)
+    paired_by_trial: dict[tuple[str, int, int], dict[str, float]] = defaultdict(dict)
     for episode in episode_rows:
         mode = str(episode["action_mode"])
         success = str(bool(episode["success"])).lower()
@@ -193,6 +196,21 @@ def summarize(
         episode_mean_by_mode[mode].append(float(episode["episode_mean_imagination_progress"]))
         episode_return_by_success[success].append(float(episode["episode_imagination_return"]))
         episode_mean_by_success[success].append(float(episode["episode_mean_imagination_progress"]))
+        episode_success_by_mode[mode].append(float(bool(episode["success"])))
+        episode_steps_by_mode[mode].append(float(episode["episode_policy_steps"]))
+        paired_key = (
+            str(episode["task_suite"]),
+            int(episode["task_id"]),
+            int(episode["trial_idx"]),
+        )
+        paired_by_trial[paired_key][mode] = float(episode["episode_mean_imagination_progress"])
+
+    fully_paired = [values for values in paired_by_trial.values() if {"policy", "noise", "zero"} <= values.keys()]
+    policy_beats_noise = [values["policy"] > values["noise"] for values in fully_paired]
+    noise_beats_zero = [values["noise"] > values["zero"] for values in fully_paired]
+    full_order = [
+        values["policy"] > values["noise"] > values["zero"] for values in fully_paired
+    ]
 
     return {
         "num_transitions": len(rows),
@@ -224,6 +242,20 @@ def summarize(
         "mean_episode_progress_per_transition_by_success": {
             key: _mean(values) for key, values in sorted(episode_mean_by_success.items())
         },
+        "episode_success_rate_by_action_mode": {
+            key: _mean(values) for key, values in sorted(episode_success_by_mode.items())
+        },
+        "mean_episode_policy_steps_by_action_mode": {
+            key: _mean(values) for key, values in sorted(episode_steps_by_mode.items())
+        },
+        "num_fully_paired_trials": len(fully_paired),
+        "paired_policy_beats_noise_fraction": _mean(
+            [float(value) for value in policy_beats_noise]
+        ),
+        "paired_noise_beats_zero_fraction": _mean([float(value) for value in noise_beats_zero]),
+        "paired_policy_gt_noise_gt_zero_fraction": _mean(
+            [float(value) for value in full_order]
+        ),
     }
 
 

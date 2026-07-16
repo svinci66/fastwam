@@ -11,6 +11,7 @@ from experiments.libero.imagination_reward_utils import (
 from experiments.libero.analyze_imagination_rewards import (
     build_episode_rows,
     select_wrong_goal_record,
+    summarize,
 )
 
 
@@ -104,3 +105,29 @@ def test_episode_rows_include_return_mean_and_steps():
     assert episodes[0]["episode_imagination_return"] == 0.2
     assert episodes[0]["episode_mean_imagination_progress"] == 0.1
     assert episodes[0]["episode_policy_steps"] == 16
+
+
+def test_summary_reports_paired_action_quality_order():
+    episode_rows = []
+    for trial_idx in range(2):
+        for mode, progress, success in (
+            ("policy", 0.3, True),
+            ("noise", 0.2, False),
+            ("zero", 0.0, False),
+        ):
+            episode_rows.append(
+                {
+                    "task_suite": "libero_goal",
+                    "task_id": 3,
+                    "trial_idx": trial_idx,
+                    "action_mode": mode,
+                    "success": success,
+                    "episode_policy_steps": 8,
+                    "episode_imagination_return": progress,
+                    "episode_mean_imagination_progress": progress,
+                }
+            )
+    summary = summarize([], episode_rows)
+    assert summary["num_fully_paired_trials"] == 2
+    assert summary["paired_policy_gt_noise_gt_zero_fraction"] == 1.0
+    assert summary["episode_success_rate_by_action_mode"]["policy"] == 1.0
