@@ -26,6 +26,15 @@ EVALUATION:
   binarize_gripper: true
   use_action_ensembler: false
   visualize_future_video: false
+  save_imagination_transitions: false
+  # Keep the released direct policy's infer_action output while separately
+  # collecting its predicted future video for reward validation.
+  imagination_use_direct_action: false
+
+  # Initial imagination-reward validation. `zero` executes LIBERO no-ops;
+  # `noise` perturbs the policy's non-gripper actions after denormalization.
+  action_mode: policy  # one of: policy, noise, zero
+  action_noise_std: 0.15
 
   # Action inference
   action_horizon: null

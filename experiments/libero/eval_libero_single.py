@@ -35,6 +35,11 @@ from experiments.libero.libero_utils import (
     save_prediction_video,
     save_rollout_video,
 )
+from experiments.libero.imagination_reward_utils import (
+    ACTION_MODES,
+    apply_action_mode,
+    save_aligned_transition,
+)
 from fastwam.datasets.lerobot.processors.fastwam_processor import FastWAMProcessor
 from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
 from fastwam.utils.pytorch_utils import set_global_seed
@@ -291,6 +296,40 @@ def _validate_visualize_future_video_cfg(cfg: DictConfig) -> None:
         )
 
 
+def _validate_imagination_reward_cfg(cfg: DictConfig) -> None:
+    action_mode = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
+    if action_mode not in ACTION_MODES:
+        raise ValueError(
+            f"EVALUATION.action_mode must be one of {sorted(ACTION_MODES)}, got {action_mode!r}."
+        )
+    noise_std = float(cfg.EVALUATION.get("action_noise_std", 0.15))
+    if noise_std < 0:
+        raise ValueError(f"EVALUATION.action_noise_std must be non-negative, got {noise_std}.")
+
+    if not bool(cfg.EVALUATION.get("save_imagination_transitions", False)):
+        return
+    if not bool(cfg.EVALUATION.get("visualize_future_video", False)):
+        raise ValueError(
+            "EVALUATION.save_imagination_transitions=true requires "
+            "EVALUATION.visualize_future_video=true."
+        )
+    replan_steps = int(cfg.EVALUATION.get("replan_steps", 5))
+    action_video_freq_ratio = int(cfg.data.train.action_video_freq_ratio)
+    if replan_steps <= 0 or replan_steps % action_video_freq_ratio != 0:
+        raise ValueError(
+            "Initial imagination-reward capture requires replan_steps to be a positive "
+            "multiple of data.train.action_video_freq_ratio; got "
+            f"replan_steps={replan_steps}, ratio={action_video_freq_ratio}."
+        )
+    if bool(cfg.EVALUATION.get("imagination_use_direct_action", False)) and not bool(
+        cfg.EVALUATION.get("visualize_future_video", False)
+    ):
+        raise ValueError(
+            "EVALUATION.imagination_use_direct_action=true requires "
+            "EVALUATION.visualize_future_video=true."
+        )
+
+
 def _select_predicted_future_frames(pred_video: list[Image.Image], cfg: DictConfig) -> list[Image.Image]:
     if len(pred_video) == 0:
         raise ValueError("`infer_joint` returned an empty predicted video.")
@@ -412,8 +451,15 @@ def _predict_action_chunk(
 
     with torch.no_grad():
         if visualize_future_video:
-            pred = model.infer_joint(**infer_kwargs)
+            joint_kwargs = dict(infer_kwargs)
+            if "test_action_with_infer_action" in inspect.signature(model.infer_joint).parameters:
+                joint_kwargs["test_action_with_infer_action"] = False
+            pred = model.infer_joint(**joint_kwargs)
             predicted_future_frames = _select_predicted_future_frames(pred["video"], cfg)
+            if bool(cfg.EVALUATION.get("imagination_use_direct_action", False)):
+                action_parameters = inspect.signature(model.infer_action).parameters
+                action_kwargs = {key: value for key, value in infer_kwargs.items() if key in action_parameters}
+                pred["action"] = model.infer_action(**action_kwargs)["action"]
         else:
             pred = model.infer_action(**infer_kwargs)
     action = pred["action"]  # [T, D]
@@ -476,6 +522,10 @@ def run_single_episode(
     current_predicted_future_clip: Optional[dict[str, Any]] = None
     current_replan_step = 0
     current_replan_idx = -1
+    action_mode = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
+    action_noise_std = float(cfg.EVALUATION.get("action_noise_std", 0.15))
+    base_seed = 0 if cfg.get("seed") is None else int(cfg.seed)
+    action_rng = np.random.default_rng(base_seed + episode_idx * 100_003)
 
     t = 0
     done = False
@@ -499,12 +549,25 @@ def run_single_episode(
                 input_h=input_h,
                 model_device=model_device,
             )
+            action_chunk = apply_action_mode(
+                action_chunk,
+                mode=action_mode,
+                noise_std=action_noise_std,
+                rng=action_rng,
+            )
             if predicted_future_frames is not None:
                 current_replan_idx += 1
                 current_predicted_future_clip = {
                     "replan_idx": current_replan_idx,
                     "gt_frames": [imgs.copy()],
                     "pred_frames": predicted_future_frames,
+                    "action_mode": action_mode,
+                    "action_source": (
+                        "direct_infer_action"
+                        if bool(cfg.EVALUATION.get("imagination_use_direct_action", False))
+                        else "infer_joint"
+                    ),
+                    "target_step": replan_steps,
                 }
             else:
                 current_predicted_future_clip = None
@@ -554,6 +617,11 @@ def run_single_episode(
                 current_predicted_future_clip["pred_frames"] = current_predicted_future_clip["pred_frames"][
                     :expected_frame_count
                 ]
+                current_predicted_future_clip["effective_k"] = current_replan_step
+                current_predicted_future_clip["alignment_valid"] = bool(
+                    current_replan_step == replan_steps
+                    and expected_frame_count == len(capture_steps) + 1
+                )
                 assert len(current_predicted_future_clip["gt_frames"]) == len(
                     current_predicted_future_clip["pred_frames"]
                 ), (
@@ -589,6 +657,7 @@ def run_single_task(
     cfg: DictConfig,
     video_dir: Path,
     predicted_video_dir: Path,
+    imagination_transition_dir: Path,
     *,
     action_horizon: int,
     input_w: int,
@@ -606,6 +675,10 @@ def run_single_task(
     if visualize_future_video:
         results["episode_future_video_psnr"] = []
         results["future_video_psnr_mean"] = None
+    save_imagination_transitions = bool(cfg.EVALUATION.get("save_imagination_transitions", False))
+    results["action_mode"] = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
+    results["imagination_transition_count"] = 0
+    results["valid_imagination_transition_count"] = 0
 
     for trial_idx in range(int(cfg.EVALUATION.num_trials)):
         success, replay_images, predicted_future_video_clips, episode_mean_psnr = run_single_episode(
@@ -658,6 +731,35 @@ def run_single_task(
                         success=success,
                         task_description=task_description,
                     )
+                    if save_imagination_transitions:
+                        replan_idx = int(clip["replan_idx"])
+                        alignment_valid = bool(clip.get("alignment_valid", False))
+                        metadata = {
+                            "task_suite": str(cfg.EVALUATION.task_suite_name),
+                            "task_id": int(cfg.EVALUATION.task_id),
+                            "task_description": task_description,
+                            "trial_idx": trial_idx,
+                            "replan_idx": replan_idx,
+                            "success": bool(success),
+                            "action_mode": str(clip.get("action_mode", "policy")),
+                            "action_source": str(clip.get("action_source", "infer_joint")),
+                            "target_step": int(clip.get("target_step", 0)),
+                            "effective_k": int(clip.get("effective_k", 0)),
+                            "alignment_valid": alignment_valid,
+                            "policy_seed": None if cfg.get("seed") is None else int(cfg.seed),
+                        }
+                        save_aligned_transition(
+                            imagination_transition_dir
+                            / f"task{int(cfg.EVALUATION.task_id):02d}"
+                            / f"trial{trial_idx:04d}"
+                            / f"replan{replan_idx:04d}",
+                            current_frame=clip["gt_frames"][0],
+                            predicted_goal_frame=clip["pred_frames"][-1],
+                            actual_frame=clip["gt_frames"][-1],
+                            metadata=metadata,
+                        )
+                        results["imagination_transition_count"] += 1
+                        results["valid_imagination_transition_count"] += int(alignment_valid)
                 save_prediction_video(
                     predicted_video_dir,
                     all_gt_frames,
@@ -687,6 +789,7 @@ def eval_single_process(cfg: DictConfig):
     if cfg.ckpt is None:
         raise ValueError("cfg.ckpt must not be None.")
     _validate_visualize_future_video_cfg(cfg)
+    _validate_imagination_reward_cfg(cfg)
 
     env_num = int(cfg.EVALUATION.get("env_num", 1))
     if env_num != 1:
@@ -730,6 +833,11 @@ def eval_single_process(cfg: DictConfig):
     predicted_video_dir = local_log_dir / cfg.EVALUATION.task_suite_name / "predicted_videos"
     if bool(cfg.EVALUATION.get("visualize_future_video", False)):
         predicted_video_dir.mkdir(parents=True, exist_ok=True)
+    imagination_transition_dir = (
+        local_log_dir / cfg.EVALUATION.task_suite_name / "imagination_transitions"
+    )
+    if bool(cfg.EVALUATION.get("save_imagination_transitions", False)):
+        imagination_transition_dir.mkdir(parents=True, exist_ok=True)
 
     benchmark_dict = benchmark.get_benchmark_dict()
     task_suite = benchmark_dict[cfg.EVALUATION.task_suite_name]()
@@ -761,6 +869,7 @@ def eval_single_process(cfg: DictConfig):
         cfg=cfg,
         video_dir=video_dir,
         predicted_video_dir=predicted_video_dir,
+        imagination_transition_dir=imagination_transition_dir,
         action_horizon=action_horizon,
         input_w=input_w,
         input_h=input_h,
