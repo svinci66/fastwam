@@ -13,6 +13,7 @@ from experiments.libero.analyze_imagination_rewards import (
     select_wrong_goal_record,
     summarize,
 )
+from experiments.libero.scan_imagination_reward_weights import scan_weights
 
 
 def test_progress_reward_is_positive_when_actual_moves_toward_goal():
@@ -131,3 +132,33 @@ def test_summary_reports_paired_action_quality_order():
     assert summary["num_fully_paired_trials"] == 2
     assert summary["paired_policy_gt_noise_gt_zero_fraction"] == 1.0
     assert summary["episode_success_rate_by_action_mode"]["policy"] == 1.0
+
+
+def test_weight_scan_selects_smallest_passing_match_weight():
+    rows = []
+    for trial_idx in range(2):
+        for mode, progress, distance_after, success in (
+            ("policy", 0.30, 0.20, True),
+            ("noise", 0.20, 0.30, False),
+            ("zero", 0.00, 0.40, False),
+        ):
+            rows.append(
+                {
+                    "task_suite": "libero_goal",
+                    "task_id": 3,
+                    "trial_idx": trial_idx,
+                    "action_mode": mode,
+                    "success": success,
+                    "imagination_progress": progress,
+                    "distance_after": distance_after,
+                    "wrong_goal_imagination_progress": progress + 0.05,
+                    "wrong_goal_distance_after": distance_after + 0.20,
+                }
+            )
+
+    result = scan_weights(rows, weights=[0.0, 0.5, 1.0], goal_specificity_threshold=0.7)
+
+    assert result["candidates"][0]["correct_goal_beats_wrong_fraction"] == 0.0
+    assert result["minimum_passing_candidate"]["match_weight"] == 0.5
+    assert result["selected_candidate"]["match_weight"] == 0.5
+    assert result["selected_candidate"]["paired_policy_gt_noise_gt_zero_fraction"] == 1.0
