@@ -69,6 +69,13 @@ than independent confirmation. Before policy updates, freeze `lambda_match = 0.0
 it on unseen transitions from another LIBERO task or a new task-3 seed. Do not retune the weight
 on that validation set.
 
+## Independent-validation update
+
+The frozen `lambda_match = 0.05` candidate was subsequently evaluated on seed 1042 without
+retuning. It did not pass: correct-versus-wrong discrimination reached only 61.29%, and the full
+paired action ordering held in 3/5 trials. The provisional candidate is therefore rejected for
+RL use. See `IMAGINATION_REWARD_SEED1042_VALIDATION_RESULTS.md` for the complete result.
+
 ## Reproduction
 
 ```bash

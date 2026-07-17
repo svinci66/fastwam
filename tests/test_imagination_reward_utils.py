@@ -162,3 +162,38 @@ def test_weight_scan_selects_smallest_passing_match_weight():
     assert result["minimum_passing_candidate"]["match_weight"] == 0.5
     assert result["selected_candidate"]["match_weight"] == 0.5
     assert result["selected_candidate"]["paired_policy_gt_noise_gt_zero_fraction"] == 1.0
+
+
+def test_weight_scan_uses_fixed_external_zero_reference():
+    rows = []
+    for mode, progress, distance_after, success in (
+        ("policy", 0.30, 0.20, True),
+        ("noise", 0.20, 0.30, False),
+        ("zero", 0.00, 0.40, False),
+    ):
+        rows.append(
+            {
+                "task_suite": "libero_goal",
+                "task_id": 3,
+                "trial_idx": 0,
+                "action_mode": mode,
+                "success": success,
+                "imagination_progress": progress,
+                "distance_after": distance_after,
+                "wrong_goal_imagination_progress": progress,
+                "wrong_goal_distance_after": distance_after + 0.10,
+            }
+        )
+
+    result = scan_weights(
+        rows,
+        weights=[0.05],
+        goal_specificity_threshold=0.7,
+        fixed_zero_reference=0.45,
+    )
+
+    assert result["zero_action_distance_reference_source"] == "fixed_external_calibration"
+    assert result["zero_action_distance_reference_by_task"]["libero_goal/task_3"] == 0.45
+    assert result["candidates"][0]["paired_trial_rewards"][0][
+        "policy_gt_noise_gt_zero"
+    ]

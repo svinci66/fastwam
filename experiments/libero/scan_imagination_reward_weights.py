@@ -35,6 +35,15 @@ def parse_args() -> argparse.Namespace:
         default=0.02,
         help="Extra goal-specificity margin used to avoid selecting a threshold-edge weight.",
     )
+    parser.add_argument(
+        "--fixed-zero-reference",
+        type=float,
+        default=None,
+        help=(
+            "Use a previously calibrated zero-action distance for single-task validation "
+            "instead of estimating it from the input rows."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -141,6 +150,21 @@ def evaluate_weight(
         "paired_policy_gt_noise_gt_zero_fraction": _mean(
             [float(value) for value in full_order]
         ),
+        "paired_trial_rewards": [
+            {
+                "task_suite": key[0],
+                "task_id": key[1],
+                "trial_idx": key[2],
+                "mean_episode_reward_by_action_mode": {
+                    mode: float(reward) for mode, reward in sorted(values.items())
+                },
+                "policy_gt_noise_gt_zero": bool(
+                    values["policy"] > values["noise"] > values["zero"]
+                ),
+            }
+            for key, values in sorted(paired_by_trial.items())
+            if {"policy", "noise", "zero"} <= values.keys()
+        ],
         "success_mean_exceeds_failure_mean": bool(
             success_mean is not None and failure_mean is not None and success_mean > failure_mean
         ),
@@ -153,6 +177,7 @@ def scan_weights(
     weights: list[float] | tuple[float, ...],
     goal_specificity_threshold: float,
     selection_margin: float = 0.02,
+    fixed_zero_reference: float | None = None,
 ) -> dict[str, Any]:
     if not 0.0 <= goal_specificity_threshold <= 1.0:
         raise ValueError("goal_specificity_threshold must be in [0, 1]")
@@ -161,7 +186,20 @@ def scan_weights(
     if not rows:
         raise ValueError("No reward rows were provided")
 
-    zero_references = estimate_zero_action_references(rows)
+    if fixed_zero_reference is None:
+        zero_references = estimate_zero_action_references(rows)
+        zero_reference_source = "median_of_input_zero_action_rows"
+    else:
+        if not 0.0 <= fixed_zero_reference <= 2.0:
+            raise ValueError("fixed_zero_reference must be a cosine distance in [0, 2]")
+        task_keys = sorted({_task_key(row) for row in rows})
+        if len(task_keys) != 1:
+            raise ValueError(
+                "fixed_zero_reference supports one task per scan; "
+                f"found {len(task_keys)} tasks"
+            )
+        zero_references = {task_keys[0]: float(fixed_zero_reference)}
+        zero_reference_source = "fixed_external_calibration"
     candidates = [
         evaluate_weight(rows, weight=weight, zero_references=zero_references)
         for weight in sorted(set(float(value) for value in weights))
@@ -193,12 +231,13 @@ def scan_weights(
     return {
         "reward_definition": (
             "imagination_progress + match_weight * "
-            "(median_zero_action_distance_after_per_task - distance_after)"
+            "(zero_action_distance_reference_per_task - distance_after)"
         ),
         "goal_specificity_threshold": float(goal_specificity_threshold),
         "selection_margin": float(selection_margin),
         "recommended_goal_specificity_threshold": float(recommended_threshold),
         "num_transitions": len(rows),
+        "zero_action_distance_reference_source": zero_reference_source,
         "zero_action_distance_reference_by_task": {
             f"{suite}/task_{task_id}": value
             for (suite, task_id), value in sorted(zero_references.items())
@@ -216,6 +255,7 @@ def main() -> None:
         weights=args.weights,
         goal_specificity_threshold=args.goal_specificity_threshold,
         selection_margin=args.selection_margin,
+        fixed_zero_reference=args.fixed_zero_reference,
     )
     output_path = Path(args.output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
