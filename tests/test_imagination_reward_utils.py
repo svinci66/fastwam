@@ -21,6 +21,12 @@ from experiments.libero.diagnose_camera_delta_rewards import (
     binary_auc,
     compute_candidate_metrics,
 )
+from experiments.libero.calibrate_camera_reward_weights import (
+    calibrate_camera_scales,
+    compute_weighted_reward,
+    extract_camera_rewards,
+    select_calibration_candidate,
+)
 
 
 def test_progress_reward_is_positive_when_actual_moves_toward_goal():
@@ -121,6 +127,59 @@ def test_temporal_phases_are_relative_to_each_episode():
 def test_binary_auc_is_tie_aware():
     assert binary_auc([False, False, True, True], [0.0, 0.5, 0.5, 1.0]) == 0.875
     assert binary_auc([True, True], [0.0, 1.0]) is None
+
+
+def test_camera_weight_calibration_recovers_wrist_and_uses_only_calibration_seed():
+    def row(seed, mode, agent, wrist):
+        return {
+            "policy_seed": seed,
+            "action_mode": mode,
+            "candidate_rewards": {
+                "agent_delta_alignment": agent,
+                "dual_delta_alignment": 0.5 * (agent + wrist),
+            },
+        }
+
+    rows = [
+        row(42, "policy", 2.0, 1.0),
+        row(42, "noise", 1.0, 0.5),
+        row(42, "zero", 100.0, 100.0),
+        row(1042, "policy", 1000.0, 1000.0),
+    ]
+    assert extract_camera_rewards(rows[0]) == {"agent": 2.0, "wrist": 1.0}
+    scales = calibrate_camera_scales(rows, calibration_seed=42, quantile=1.0)
+    assert scales == {"agent": 2.0, "wrist": 1.0}
+    reward = compute_weighted_reward(
+        rows[0],
+        agent_weight=0.6,
+        scales=scales,
+    )
+    assert reward == 1.0
+
+
+def test_camera_weight_selection_requires_all_calibration_gates():
+    def candidate(weight, goal, auc=1.0, order=1.0, success_pairs=1.0):
+        return {
+            "agent_weight": weight,
+            "wrist_weight": 1.0 - weight,
+            "correct_goal_beats_wrong_fraction": goal,
+            "episode_success_roc_auc": auc,
+            "paired_policy_gt_noise_gt_zero_fraction": order,
+            "successful_mode_beats_failed_mode_fraction": success_pairs,
+        }
+
+    result = select_calibration_candidate(
+        [
+            candidate(0.4, 0.75, order=0.8),
+            candidate(0.5, 0.71),
+            candidate(0.6, 0.73),
+        ],
+        goal_specificity_threshold=0.70,
+        success_auc_threshold=0.90,
+    )
+    assert result["selection_status"] == "passed_calibration_gates"
+    assert result["num_passing_candidates"] == 2
+    assert result["selected_agent_weight"] == 0.6
 
 
 def test_zero_action_mode_produces_libero_noop():
