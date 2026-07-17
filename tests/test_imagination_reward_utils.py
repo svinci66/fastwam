@@ -5,8 +5,10 @@ from PIL import Image
 
 from experiments.libero.imagination_reward_utils import (
     apply_action_mode,
+    compute_delta_alignment_reward,
     compute_progress_reward,
     save_aligned_transition,
+    split_horizontal_camera_views,
 )
 from experiments.libero.analyze_imagination_rewards import (
     build_episode_rows,
@@ -14,6 +16,11 @@ from experiments.libero.analyze_imagination_rewards import (
     summarize,
 )
 from experiments.libero.scan_imagination_reward_weights import scan_weights
+from experiments.libero.diagnose_camera_delta_rewards import (
+    assign_temporal_phases,
+    binary_auc,
+    compute_candidate_metrics,
+)
 
 
 def test_progress_reward_is_positive_when_actual_moves_toward_goal():
@@ -24,6 +31,96 @@ def test_progress_reward_is_positive_when_actual_moves_toward_goal():
     )
     assert metrics["distance_after"] < metrics["distance_before"]
     assert metrics["imagination_progress"] > 0
+
+
+def test_horizontal_camera_split_preserves_agent_then_wrist_order():
+    agent = np.full((4, 4, 3), 17, dtype=np.uint8)
+    wrist = np.full((4, 4, 3), 231, dtype=np.uint8)
+    views = split_horizontal_camera_views(np.concatenate([agent, wrist], axis=1))
+    np.testing.assert_array_equal(views["agent"], agent)
+    np.testing.assert_array_equal(views["wrist"], wrist)
+
+
+def test_horizontal_camera_split_rejects_unknown_layout():
+    malformed = np.zeros((4, 7, 3), dtype=np.uint8)
+    try:
+        split_horizontal_camera_views(malformed)
+    except ValueError as error:
+        assert "width == 2 * height" in str(error)
+    else:
+        raise AssertionError("Expected malformed camera layout to be rejected")
+
+
+def test_delta_alignment_rewards_matching_change_and_suppresses_noop():
+    aligned = compute_delta_alignment_reward(
+        current_feature=np.array([0.0, 0.0]),
+        actual_feature=np.array([1.0, 0.0]),
+        goal_feature=np.array([2.0, 0.0]),
+    )
+    opposite = compute_delta_alignment_reward(
+        current_feature=np.array([0.0, 0.0]),
+        actual_feature=np.array([-1.0, 0.0]),
+        goal_feature=np.array([2.0, 0.0]),
+    )
+    noop = compute_delta_alignment_reward(
+        current_feature=np.array([0.0, 0.0]),
+        actual_feature=np.array([0.0, 0.0]),
+        goal_feature=np.array([2.0, 0.0]),
+    )
+    assert aligned["direction_alignment"] == 1.0
+    assert aligned["delta_alignment_reward"] == 0.5
+    assert opposite["delta_alignment_reward"] == -0.5
+    assert noop["delta_alignment_reward"] == 0.0
+
+
+def test_candidate_metrics_use_equal_dual_camera_mean_and_fixed_weight():
+    features = {
+        view: {
+            "current": np.array([1.0, 1.0]),
+            "actual": np.array([2.0, 1.0]),
+            "goal": np.array([3.0, 1.0]),
+        }
+        for view in ("concat", "agent", "wrist")
+    }
+    features["wrist"]["actual"] = np.array([0.0, 1.0])
+    metrics = compute_candidate_metrics(
+        features,
+        current_path="current",
+        actual_path="actual",
+        goal_path="goal",
+        direction_weight=0.01,
+    )
+    assert metrics["candidates"]["agent_delta_alignment"] == 0.5
+    assert metrics["candidates"]["dual_delta_alignment"] == 0.0
+    assert (
+        metrics["candidates"]["concat_progress_plus_dual_delta"]
+        == metrics["candidates"]["concat_progress"]
+    )
+
+
+def test_temporal_phases_are_relative_to_each_episode():
+    records = []
+    for replan_idx in range(7):
+        records.append(
+            {
+                "policy_seed": 42,
+                "task_suite": "libero_goal",
+                "task_id": 3,
+                "trial_idx": 0,
+                "action_mode": "policy",
+                "replan_idx": replan_idx,
+                "record_dir": f"record-{replan_idx}",
+            }
+        )
+    phases = assign_temporal_phases(records)
+    assert phases["record-0"] == "early"
+    assert phases["record-3"] == "middle"
+    assert phases["record-6"] == "late"
+
+
+def test_binary_auc_is_tie_aware():
+    assert binary_auc([False, False, True, True], [0.0, 0.5, 0.5, 1.0]) == 0.875
+    assert binary_auc([True, True], [0.0, 1.0]) is None
 
 
 def test_zero_action_mode_produces_libero_noop():

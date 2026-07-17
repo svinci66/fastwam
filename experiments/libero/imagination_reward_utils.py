@@ -11,6 +11,7 @@ from PIL import Image
 
 
 ACTION_MODES = {"policy", "noise", "zero"}
+LIBERO_CAMERA_NAMES = ("agent", "wrist")
 
 
 def apply_action_mode(
@@ -58,6 +59,27 @@ def frame_to_rgb_array(frame: Any) -> np.ndarray:
     if array.ndim != 3 or array.shape[2] != 3:
         raise ValueError(f"Expected an RGB image [H,W,3], got {array.shape}")
     return array.astype(np.uint8, copy=False)
+
+
+def split_horizontal_camera_views(frame: Any) -> dict[str, np.ndarray]:
+    """Split FastWAM's LIBERO ``agent | wrist`` image without resizing it.
+
+    The released two-camera LIBERO configuration concatenates two square views
+    horizontally.  Failing loudly on a different layout avoids silently assigning
+    image content to the wrong camera in reward diagnostics.
+    """
+    array = frame_to_rgb_array(frame)
+    height, width = array.shape[:2]
+    if width != 2 * height:
+        raise ValueError(
+            "Expected two square LIBERO views concatenated horizontally "
+            f"with width == 2 * height, got {array.shape}."
+        )
+    midpoint = width // 2
+    return {
+        LIBERO_CAMERA_NAMES[0]: array[:, :midpoint],
+        LIBERO_CAMERA_NAMES[1]: array[:, midpoint:],
+    }
 
 
 def _resize_like(image: np.ndarray, reference: np.ndarray) -> np.ndarray:
@@ -123,4 +145,53 @@ def compute_progress_reward(
         "distance_before": distance_before,
         "distance_after": distance_after,
         "imagination_progress": float(progress),
+    }
+
+
+def compute_delta_alignment_reward(
+    current_feature: np.ndarray,
+    actual_feature: np.ndarray,
+    goal_feature: np.ndarray,
+    eps: float = 1e-8,
+) -> dict[str, float]:
+    """Compare the observed and imagined feature *changes* from one state.
+
+    Let ``actual_delta = actual - current`` and
+    ``imagined_delta = goal - current``.  Their cosine measures whether the two
+    changes point in the same direction.  The returned reward also multiplies that
+    cosine by ``min(||actual_delta|| / ||imagined_delta||, 1)``.  Consequently a
+    visually static transition receives approximately zero reward even if numerical
+    noise happens to point in the same direction; no dataset-tuned no-op threshold is
+    required.
+    """
+    if eps <= 0:
+        raise ValueError(f"eps must be positive, got {eps}")
+
+    current = np.asarray(current_feature, dtype=np.float32).reshape(-1)
+    actual = np.asarray(actual_feature, dtype=np.float32).reshape(-1)
+    goal = np.asarray(goal_feature, dtype=np.float32).reshape(-1)
+    if not (current.shape == actual.shape == goal.shape):
+        raise ValueError(
+            "current, actual, and goal features must have the same flattened shape, "
+            f"got {current.shape}, {actual.shape}, and {goal.shape}."
+        )
+
+    actual_delta = actual - current
+    imagined_delta = goal - current
+    actual_norm = float(np.linalg.norm(actual_delta))
+    imagined_norm = float(np.linalg.norm(imagined_delta))
+    denominator = actual_norm * imagined_norm
+    if denominator <= eps:
+        alignment = 0.0
+    else:
+        alignment = float(
+            np.clip(np.dot(actual_delta, imagined_delta) / denominator, -1.0, 1.0)
+        )
+    magnitude_ratio = float(min(actual_norm / max(imagined_norm, eps), 1.0))
+    return {
+        "actual_change_norm": actual_norm,
+        "imagined_change_norm": imagined_norm,
+        "direction_alignment": alignment,
+        "magnitude_ratio": magnitude_ratio,
+        "delta_alignment_reward": float(alignment * magnitude_ratio),
     }
