@@ -14,6 +14,46 @@ ACTION_MODES = {"policy", "noise", "zero"}
 LIBERO_CAMERA_NAMES = ("agent", "wrist")
 
 
+def build_shared_direction_action_branches(
+    action: np.ndarray,
+    *,
+    noise_stds: tuple[float, ...] = (0.075, 0.15, 0.30),
+    rng: Optional[np.random.Generator] = None,
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Build exact-state branches using one shared Gaussian noise direction.
+
+    Only non-gripper dimensions are perturbed.  Scaling the same unit-variance
+    sample at every noise level makes the ordering a genuine severity test
+    instead of comparing unrelated random actions.
+    """
+    base = np.asarray(action, dtype=np.float32)
+    if base.ndim != 2 or base.shape[1] < 2:
+        raise ValueError(f"Expected action chunk [T, D>=2], got {base.shape}")
+    if not noise_stds or any(float(std) <= 0.0 for std in noise_stds):
+        raise ValueError(f"noise_stds must be positive, got {noise_stds}")
+    if tuple(sorted(float(std) for std in noise_stds)) != tuple(
+        float(std) for std in noise_stds
+    ):
+        raise ValueError(f"noise_stds must be increasing, got {noise_stds}")
+    if rng is None:
+        rng = np.random.default_rng()
+
+    epsilon = rng.normal(size=base[:, :-1].shape).astype(np.float32)
+    branches = {"policy": base.copy()}
+    for std in noise_stds:
+        branch = base.copy()
+        branch[:, :-1] = np.clip(
+            branch[:, :-1] + float(std) * epsilon,
+            -1.0,
+            1.0,
+        )
+        branches[f"noise_{float(std):.3f}"] = branch
+    zero = np.zeros_like(base)
+    zero[:, -1] = -1.0
+    branches["zero"] = zero
+    return branches, epsilon
+
+
 def apply_action_mode(
     action: np.ndarray,
     mode: str,

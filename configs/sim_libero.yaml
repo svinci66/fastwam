@@ -36,6 +36,13 @@ EVALUATION:
   action_mode: policy  # one of: policy, noise, zero
   action_noise_std: 0.15
 
+  # Exact-state counterfactual Reward V2 validation. The collector performs one
+  # model inference per anchor and restores the same MuJoCo state for all branches.
+  exact_state_num_states: 10
+  exact_state_exec_steps: 8
+  exact_state_render_repeats: 8
+  exact_state_noise_stds: [0.075, 0.15, 0.30]
+
   # Action inference
   action_horizon: null
   num_inference_steps: ${eval_num_inference_steps}
