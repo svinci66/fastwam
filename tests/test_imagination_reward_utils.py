@@ -27,6 +27,10 @@ from experiments.libero.calibrate_camera_reward_weights import (
     extract_camera_rewards,
     select_calibration_candidate,
 )
+from experiments.libero.validate_same_phase_hard_negatives import (
+    combine_rewards,
+    select_same_phase_hard_negative,
+)
 
 
 def test_progress_reward_is_positive_when_actual_moves_toward_goal():
@@ -180,6 +184,57 @@ def test_camera_weight_selection_requires_all_calibration_gates():
     assert result["selection_status"] == "passed_calibration_gates"
     assert result["num_passing_candidates"] == 2
     assert result["selected_agent_weight"] == 0.6
+
+
+def test_same_phase_hard_negative_uses_near_current_but_different_goal():
+    def row(trial, phase, current, goal):
+        return {
+            "policy_seed": 42,
+            "task_suite": "libero_goal",
+            "task_id": 3,
+            "trial_idx": trial,
+            "action_mode": "policy",
+            "phase": phase,
+            "record_dir": f"record-{trial}-{phase}",
+            "current_path": current,
+            "goal_path": goal,
+        }
+
+    target = row(0, "early", "current-0", "goal-0")
+    similar_goal = row(1, "early", "current-1", "goal-1")
+    different_goal = row(2, "early", "current-2", "goal-2")
+    wrong_phase = row(3, "late", "current-3", "goal-3")
+    vectors = {
+        "current-0": np.array([1.0, 0.0]),
+        "current-1": np.array([0.995, 0.1]),
+        "current-2": np.array([0.98, 0.2]),
+        "current-3": np.array([1.0, 0.0]),
+        "goal-0": np.array([0.0, 1.0]),
+        "goal-1": np.array([0.1, 0.995]),
+        "goal-2": np.array([0.0, -1.0]),
+        "goal-3": np.array([0.0, -1.0]),
+    }
+    features = {camera: vectors for camera in ("agent", "wrist")}
+    selected = select_same_phase_hard_negative(
+        target,
+        [target, similar_goal, different_goal, wrong_phase],
+        features,
+        nearest_k=2,
+    )
+    assert selected is not None
+    assert selected["record"] is different_goal
+    assert selected["candidate_pool_size"] == 2
+    assert selected["neighborhood_size"] == 2
+
+
+def test_frozen_camera_combination_uses_calibrated_scales_and_weights():
+    combined = combine_rewards(
+        {"agent": 2.0, "wrist": 1.0},
+        agent_weight=0.25,
+        scales={"agent": 2.0, "wrist": 0.5},
+    )
+    assert combined["raw_dual"] == 1.5
+    assert combined["frozen_normalized"] == 1.75
 
 
 def test_zero_action_mode_produces_libero_noop():
