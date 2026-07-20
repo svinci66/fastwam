@@ -1,0 +1,43 @@
+# Server-side lightweight learner. FastWAM and LIBERO are not loaded by this job.
+device: cuda
+experiment_name: residual_success_imitation_imagination
+
+# Raw LIBERO reward is retained in replay for auditing. LIBERO's reward is itself a
+# success indicator, so environment_weight stays zero to avoid counting success twice.
+reward:
+  success_bonus: 10.0
+  environment_weight: 0.0
+  success_weight: 1.0
+  imitation_weight: 0.1
+  imagination_weight: 1.0
+  step_penalty: 0.0
+  imagination_clip: 0.1
+  max_imagination_to_success_ratio: 0.5
+
+awr:
+  gamma: 0.99
+  beta: 1.0
+  max_advantage_weight: 20.0
+  normalize_advantage_weights: true
+  actor_learning_rate: 0.0003
+  critic_learning_rate: 0.0003
+  weight_decay: 0.0001
+  batch_size: 64
+  epochs: 20
+  max_grad_norm: 1.0
+  use_goal_conditioning: false
+  seed: 42
+
+# Translation/rotation can receive small corrections; the first version leaves the
+# discontinuous gripper command entirely to frozen FastWAM.
+model:
+  hidden_dims: [512, 512]
+  residual_scale: [0.05, 0.05, 0.05, 0.1, 0.1, 0.1, 0.0]
+  action_low: [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
+  action_high: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+critic_hidden_dims: [512, 512]
+
+# Normalize heterogeneous LIBERO action units before the imitation MSE. These are
+# configuration values, not learned from the final evaluation split.
+imitation_dimension_scales: [0.05, 0.05, 0.05, 0.1, 0.1, 0.1, 1.0]

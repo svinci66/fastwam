@@ -549,6 +549,7 @@ def run_single_episode(
                 input_h=input_h,
                 model_device=model_device,
             )
+            baseline_action_chunk = np.asarray(action_chunk, dtype=np.float32).copy()
             action_chunk = apply_action_mode(
                 action_chunk,
                 mode=action_mode,
@@ -568,6 +569,13 @@ def run_single_episode(
                         else "infer_joint"
                     ),
                     "target_step": replan_steps,
+                    "start_proprio": _extract_sim_state(obs).copy(),
+                    "baseline_actions": baseline_action_chunk[:replan_steps].copy(),
+                    "planned_executed_actions": np.asarray(
+                        action_chunk[:replan_steps], dtype=np.float32
+                    ).copy(),
+                    "executed_actions": [],
+                    "sim_rewards": [],
                 }
             else:
                 current_predicted_future_clip = None
@@ -582,12 +590,19 @@ def run_single_episode(
             imgs = get_libero_image(obs)
             replay_images.append(imgs.copy())
 
-        obs, _, done, _ = env.step(pending_actions.pop(0))
+        executed_action = np.asarray(pending_actions.pop(0), dtype=np.float32)
+        obs, sim_reward, done, _ = env.step(executed_action)
+        if current_predicted_future_clip is not None:
+            current_predicted_future_clip["executed_actions"].append(executed_action.copy())
+            current_predicted_future_clip["sim_rewards"].append(float(sim_reward))
         if visualize_future_video and current_predicted_future_clip is not None:
             current_replan_step += 1
             if current_replan_step in capture_steps:
                 current_predicted_future_clip["gt_frames"].append(get_libero_image(obs))
-            if done or len(pending_actions) == 0:
+            will_truncate = bool(
+                not done and t + 1 >= max_steps + num_steps_wait
+            )
+            if done or len(pending_actions) == 0 or will_truncate:
                 expected_frame_count = 1 + sum(
                     1 for capture_step in capture_steps if capture_step <= current_replan_step
                 )
@@ -618,6 +633,11 @@ def run_single_episode(
                     :expected_frame_count
                 ]
                 current_predicted_future_clip["effective_k"] = current_replan_step
+                current_predicted_future_clip["terminated"] = bool(done)
+                current_predicted_future_clip["truncated"] = will_truncate
+                current_predicted_future_clip["transition_success"] = bool(done)
+                current_predicted_future_clip["next_proprio"] = _extract_sim_state(obs).copy()
+                current_predicted_future_clip["goal_frame_index"] = expected_frame_count - 1
                 current_predicted_future_clip["alignment_valid"] = bool(
                     current_replan_step == replan_steps
                     and expected_frame_count == len(capture_steps) + 1
@@ -746,14 +766,44 @@ def run_single_task(
                             "trial_idx": trial_idx,
                             "replan_idx": replan_idx,
                             "success": bool(success),
+                            "episode_success": bool(success),
+                            "transition_success": bool(clip.get("transition_success", False)),
+                            "terminated": bool(clip.get("terminated", False)),
+                            "truncated": bool(clip.get("truncated", False)),
                             "action_mode": str(clip.get("action_mode", "policy")),
+                            "action_noise_std": (
+                                action_noise_std
+                                if str(clip.get("action_mode", "policy")) == "noise"
+                                else 0.0
+                            ),
                             "action_source": str(clip.get("action_source", "infer_joint")),
                             "target_step": int(clip.get("target_step", 0)),
                             "effective_k": int(clip.get("effective_k", 0)),
                             "episode_policy_steps": episode_policy_steps,
                             "alignment_valid": alignment_valid,
                             "policy_seed": None if cfg.get("seed") is None else int(cfg.seed),
+                            "env_seed": None if cfg.get("seed") is None else int(cfg.seed),
+                            "goal_seed": None if cfg.get("seed") is None else int(cfg.seed),
+                            "action_seed": (
+                                trial_idx * 100_003
+                                if cfg.get("seed") is None
+                                else int(cfg.seed) + trial_idx * 100_003
+                            ),
+                            "goal_frame_index": int(clip.get("goal_frame_index", -1)),
+                            "goal_tau": float(clip.get("effective_k", 0)),
+                            "policy_version": str(cfg.ckpt),
+                            "predictor_version": str(cfg.ckpt),
+                            "reward_encoder_version": "raw_images_not_encoded",
                         }
+                        target_k = int(clip.get("target_step", 0))
+                        effective_k = int(clip.get("effective_k", 0))
+                        baseline_actions = np.asarray(clip["baseline_actions"], dtype=np.float32)
+                        executed_actions = np.zeros_like(baseline_actions)
+                        recorded_executed = np.asarray(clip["executed_actions"], dtype=np.float32)
+                        executed_actions[:effective_k] = recorded_executed[:effective_k]
+                        environment_rewards = np.zeros(target_k, dtype=np.float32)
+                        recorded_rewards = np.asarray(clip["sim_rewards"], dtype=np.float32)
+                        environment_rewards[:effective_k] = recorded_rewards[:effective_k]
                         save_aligned_transition(
                             imagination_transition_dir
                             / f"task{int(cfg.EVALUATION.task_id):02d}"
@@ -763,6 +813,18 @@ def run_single_task(
                             predicted_goal_frame=clip["pred_frames"][-1],
                             actual_frame=clip["gt_frames"][-1],
                             metadata=metadata,
+                            rollout_arrays={
+                                "proprio": np.asarray(clip["start_proprio"], dtype=np.float32),
+                                "next_proprio": np.asarray(
+                                    clip["next_proprio"], dtype=np.float32
+                                ),
+                                "baseline_actions": baseline_actions,
+                                "planned_executed_actions": np.asarray(
+                                    clip["planned_executed_actions"], dtype=np.float32
+                                ),
+                                "executed_actions": executed_actions,
+                                "environment_rewards": environment_rewards,
+                            },
                         )
                         results["imagination_transition_count"] += 1
                         results["valid_imagination_transition_count"] += int(alignment_valid)

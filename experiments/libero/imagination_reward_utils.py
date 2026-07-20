@@ -184,8 +184,9 @@ def save_aligned_transition(
     predicted_goal_frame: Any,
     actual_frame: Any,
     metadata: dict[str, Any],
+    rollout_arrays: Optional[dict[str, np.ndarray]] = None,
 ) -> Path:
-    """Save one lossless current/goal/actual triplet and its metadata."""
+    """Save one lossless current/goal/actual triplet and optional raw RL arrays."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,9 +198,24 @@ def save_aligned_transition(
     Image.fromarray(goal).save(output_dir / "predicted_goal.png")
     Image.fromarray(actual).save(output_dir / "actual.png")
 
+    serializable_metadata = dict(metadata)
+    if rollout_arrays is not None:
+        arrays: dict[str, np.ndarray] = {}
+        for name, value in rollout_arrays.items():
+            array = np.asarray(value)
+            if array.size == 0:
+                raise ValueError(f"rollout array {name!r} must not be empty")
+            if np.issubdtype(array.dtype, np.number) and not np.all(np.isfinite(array)):
+                raise ValueError(f"rollout array {name!r} contains non-finite values")
+            arrays[name] = array
+        array_path = output_dir / "rollout_arrays.npz"
+        with array_path.open("wb") as stream:
+            np.savez_compressed(stream, **arrays)
+        serializable_metadata["rollout_arrays_file"] = array_path.name
+
     metadata_path = output_dir / "metadata.json"
     with metadata_path.open("w", encoding="utf-8") as stream:
-        json.dump(metadata, stream, ensure_ascii=False, indent=2)
+        json.dump(serializable_metadata, stream, ensure_ascii=False, indent=2)
     return metadata_path
 
 
