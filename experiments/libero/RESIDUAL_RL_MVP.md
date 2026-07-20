@@ -61,6 +61,38 @@ nvidia-smi
 conda run -n fastwam python -c "import torch; assert torch.cuda.is_available()"
 ```
 
+## Recommended: one-command single-GPU smoke
+
+After activating the already configured FastWAM environment, the orchestration script
+runs CUDA/import/unit checks, policy and noise collection, replay construction, both
+validate-only jobs, both matched learner jobs, and finite-history verification:
+
+```bash
+bash scripts/run_libero_residual_rl_smoke.sh \
+  --checkpoint /server/checkpoints/libero_uncond_2cam224.pt \
+  --dataset-stats /server/checkpoints/libero_uncond_2cam224_dataset_stats.json \
+  --siglip-path /server/checkpoints/siglip/snapshots/IMMUTABLE_REVISION \
+  --output-root /server/runs/fastwam_rl_smoke
+```
+
+If the original FastWAM setup requires explicit paths, add:
+
+```bash
+  --libero-root /server/LIBERO \
+  --model-base-path /server/checkpoints
+```
+
+The smoke defaults are task 3, seed 42, one episode per behavior, `K=8`, four
+diffusion steps, and noise standard deviation 0.075. Run only through replay validation
+with `--no-train`. A failed job can be continued with the identical command plus
+`--resume`; the script freezes its path, seed, task, inference, noise, camera, and
+bootstrap settings plus the Git commit and rejects a mismatched resume. GPU and import
+checks always rerun. A run also refuses uncommitted changes to tracked source files.
+
+Every stage has its own log under `OUTPUT_ROOT/logs` and a completion marker under
+`OUTPUT_ROOT/.stages`. An incomplete replay or learner directory is not deleted
+automatically.
+
 ## 1. Collect raw K=8 chunks
 
 Run the existing single-task evaluation with future-video generation and transition
