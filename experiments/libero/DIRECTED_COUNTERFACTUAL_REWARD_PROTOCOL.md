@@ -131,7 +131,7 @@ Collection:
 ```bash
 MUJOCO_GL=egl \
 PYTHONPATH=/home/ubuntu/sj/LIBERO:$PWD/src:$PWD \
-conda run -n fastwam python \
+conda run -n fastwam env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 python \
   experiments/libero/collect_directed_state_counterfactuals.py \
   --source-manifest evaluate_results/exact_state_seed2042_final/manifest.json \
   --output-dir evaluate_results/directed_state_seed2042_final \

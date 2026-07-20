@@ -22,7 +22,6 @@ from experiments.libero.analyze_exact_state_counterfactuals import (
 
 
 BRANCH_NAMES = ("policy", "toward_bowl", "away_from_bowl", "zero")
-MOVING_BRANCHES = ("policy", "toward_bowl", "away_from_bowl")
 FORMAL_NUM_ANCHORS = 10
 
 
