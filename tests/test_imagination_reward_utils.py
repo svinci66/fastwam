@@ -5,6 +5,7 @@ from PIL import Image
 
 from experiments.libero.imagination_reward_utils import (
     apply_action_mode,
+    build_matched_direction_action_branches,
     compute_delta_alignment_reward,
     compute_progress_reward,
     save_aligned_transition,
@@ -253,6 +254,46 @@ def test_noise_action_mode_is_seeded_and_preserves_gripper():
     np.testing.assert_allclose(first, second)
     np.testing.assert_array_equal(first[:, -1], action[:, -1])
     assert not np.allclose(first[:, :-1], action[:, :-1])
+
+
+def test_matched_direction_branches_only_reverse_translation_direction():
+    action = np.array(
+        [
+            [0.6, 0.8, 0.0, 0.1, 0.2, 0.3, -1.0],
+            [0.03, 0.04, 0.0, -0.1, -0.2, -0.3, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    branches = build_matched_direction_action_branches(
+        action,
+        np.array([0.0, 0.0, -2.0]),
+        translation_magnitude_cap=0.25,
+    )
+    toward = branches["toward_bowl"]
+    away = branches["away_from_bowl"]
+    np.testing.assert_allclose(toward[:, :3], -away[:, :3], atol=1e-7)
+    np.testing.assert_allclose(
+        np.linalg.norm(toward[:, :3], axis=1),
+        np.array([0.25, 0.05]),
+        atol=1e-7,
+    )
+    np.testing.assert_array_equal(toward[:, 3:], action[:, 3:])
+    np.testing.assert_array_equal(away[:, 3:], action[:, 3:])
+    np.testing.assert_array_equal(branches["policy"], action)
+    np.testing.assert_array_equal(branches["zero"][:, :-1], 0.0)
+    np.testing.assert_array_equal(branches["zero"][:, -1], -1.0)
+
+
+def test_matched_direction_branches_reject_zero_direction():
+    try:
+        build_matched_direction_action_branches(
+            np.zeros((2, 7), dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+        )
+    except ValueError as error:
+        assert "non-zero" in str(error)
+    else:
+        raise AssertionError("Expected zero direction to be rejected")
 
 
 def test_save_aligned_transition_writes_lossless_triplet(tmp_path):

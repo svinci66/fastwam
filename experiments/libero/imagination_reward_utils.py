@@ -14,6 +14,51 @@ ACTION_MODES = {"policy", "noise", "zero"}
 LIBERO_CAMERA_NAMES = ("agent", "wrist")
 
 
+def build_matched_direction_action_branches(
+    action: np.ndarray,
+    direction: np.ndarray,
+    *,
+    translation_magnitude_cap: float = 0.25,
+) -> dict[str, np.ndarray]:
+    """Build policy/toward/away/zero branches for a controlled direction test.
+
+    ``toward`` and ``away`` have identical per-step translation magnitudes,
+    rotations, and gripper commands.  Their translation vectors are exact
+    opposites along the supplied world-space direction.  Capping (rather than
+    rescaling upward) keeps the counterfactual local when the reference policy
+    emits a saturated translation command.
+    """
+    base = np.asarray(action, dtype=np.float32)
+    unit_direction = np.asarray(direction, dtype=np.float32).reshape(-1)
+    if base.ndim != 2 or base.shape[1] != 7:
+        raise ValueError(f"Expected LIBERO action chunk [T, 7], got {base.shape}")
+    if unit_direction.shape != (3,):
+        raise ValueError(f"Expected a three-dimensional direction, got {unit_direction.shape}")
+    direction_norm = float(np.linalg.norm(unit_direction))
+    if direction_norm <= 0.0:
+        raise ValueError("Direction must be non-zero")
+    if not 0.0 < float(translation_magnitude_cap) <= 1.0:
+        raise ValueError("translation_magnitude_cap must be in (0, 1]")
+
+    unit_direction = unit_direction / direction_norm
+    reference_magnitudes = np.linalg.norm(base[:, :3], axis=1)
+    matched_magnitudes = np.minimum(reference_magnitudes, translation_magnitude_cap)
+
+    toward = base.copy()
+    away = base.copy()
+    toward[:, :3] = matched_magnitudes[:, None] * unit_direction[None, :]
+    away[:, :3] = -toward[:, :3]
+
+    zero = np.zeros_like(base)
+    zero[:, -1] = -1.0
+    return {
+        "policy": base.copy(),
+        "toward_bowl": toward,
+        "away_from_bowl": away,
+        "zero": zero,
+    }
+
+
 def build_shared_direction_action_branches(
     action: np.ndarray,
     *,
