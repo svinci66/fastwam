@@ -93,6 +93,23 @@ The analyzer must reject the collection if:
 - branch-current feature stability exceeds cosine distance `1e-4` or feature L2
   `0.015`;
 - stored geometry progress is inconsistent with initial and final simulator distance.
+- the newly replayed policy final MuJoCo state differs from the source policy final
+  state by more than `1e-7`;
+- the newly rendered policy endpoint does not reproduce the source policy endpoint
+  ensemble within cosine distance `1e-4` and feature L2 `0.015`.
+
+### Cross-experiment audit amendment
+
+The first attempted formal collection omitted the source collector's one soft reset
+per anchor. MuJoCo flattened states and branch-internal comparisons matched, but
+LIBERO model-level camera state for anchors 1--9 did not reproduce the source model
+sequence. That attempt was invalidated before accepting its reward result.
+
+The corrected collector performs exactly one soft reset at the start of every anchor,
+matching the source collection sequence. The two source-policy state/feature checks
+above were added before corrected collection. They are integrity gates, not reward
+selection gates: the primary formula, translation cap, candidate formulas, statistical
+thresholds, anchors, and bootstrap settings remain unchanged.
 
 The physical manipulation must also pass, on ten anchors:
 
@@ -115,6 +132,8 @@ toward progress > away progress: 10/10
    positive in at least `8/10` anchors, using `policy/toward/away/zero`.
 6. The paired-anchor bootstrap 95% lower bound of mean Spearman is greater than zero.
 7. Mean absolute zero reward is at most `5%` of mean absolute policy reward.
+8. The corrected policy endpoint reproduces the source policy endpoint feature
+   ensemble within the fixed integrity thresholds.
 
 Ten anchors are the independent statistical units. Eight render repeats, four
 branches, and simulator action steps are not independent samples. Bootstrap uses

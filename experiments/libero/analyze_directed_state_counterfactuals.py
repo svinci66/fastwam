@@ -16,6 +16,7 @@ from experiments.libero.analyze_exact_state_counterfactuals import (
     _image_items,
     _load_feature_cache,
     _load_frozen_camera_weight,
+    _normalized_mean,
     bootstrap_mean_ci,
     spearman_correlation,
 )
@@ -42,6 +43,7 @@ def _parse_args() -> argparse.Namespace:
 
 def validate_directed_collection(manifest: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
+    source_policy_state_errors: list[float] = []
     exec_steps = int(manifest["exec_steps"])
     cap = float(manifest["translation_magnitude_cap"])
     for anchor in manifest["anchors"]:
@@ -115,6 +117,22 @@ def validate_directed_collection(manifest: dict[str, Any]) -> dict[str, Any]:
             ):
                 errors.append(f"anchor {anchor_index}/{name}: invalid geometry progress")
 
+        source_policy_paths = anchor.get("source_policy_actual_paths", [])
+        if len(source_policy_paths) != int(manifest["render_repeats"]):
+            errors.append(f"anchor {anchor_index}: missing source policy renders")
+        source_policy_state_path = anchor.get("source_policy_final_state_path")
+        if not source_policy_state_path:
+            errors.append(f"anchor {anchor_index}: missing source policy state")
+        else:
+            source_state = np.load(source_policy_state_path)
+            new_state = np.load(branches["policy"]["final_state_path"])
+            state_error = float(np.max(np.abs(source_state - new_state)))
+            source_policy_state_errors.append(state_error)
+            if state_error > 1e-7:
+                errors.append(
+                    f"anchor {anchor_index}: source policy state mismatch {state_error}"
+                )
+
     return {
         "passed": not errors,
         "errors": errors,
@@ -127,6 +145,64 @@ def validate_directed_collection(manifest: dict[str, Any]) -> dict[str, Any]:
             for anchor in manifest["anchors"]
             for branch in anchor["branches"]
         ),
+        "max_source_policy_final_state_abs_diff": (
+            None
+            if not source_policy_state_errors
+            else max(source_policy_state_errors)
+        ),
+    }
+
+
+def _directed_image_items(manifest: dict[str, Any]) -> dict[str, dict[str, str]]:
+    items = _image_items(manifest)
+    for anchor in manifest["anchors"]:
+        anchor_index = int(anchor["anchor_index"])
+        for repeat_index, paths in enumerate(anchor["source_policy_actual_paths"]):
+            items[f"a{anchor_index:02d}/source_policy/actual{repeat_index:02d}"] = paths
+    return items
+
+
+def _source_policy_feature_stability(
+    manifest: dict[str, Any],
+    features: dict[str, dict[str, np.ndarray]],
+) -> dict[str, Any]:
+    cosine_distances = []
+    feature_l2 = []
+    for anchor in manifest["anchors"]:
+        anchor_index = int(anchor["anchor_index"])
+        prefix = f"a{anchor_index:02d}"
+        new_count = len(next(
+            branch["actual_paths"]
+            for branch in anchor["branches"]
+            if branch["name"] == "policy"
+        ))
+        source_count = len(anchor["source_policy_actual_paths"])
+        for view in ("concat", "agent", "wrist"):
+            new_mean = _normalized_mean(
+                [
+                    features[view][f"{prefix}/policy/actual{index:02d}"]
+                    for index in range(new_count)
+                ]
+            )
+            source_mean = _normalized_mean(
+                [
+                    features[view][f"{prefix}/source_policy/actual{index:02d}"]
+                    for index in range(source_count)
+                ]
+            )
+            cosine_distances.append(float(1.0 - np.dot(new_mean, source_mean)))
+            feature_l2.append(float(np.linalg.norm(new_mean - source_mean)))
+    max_cosine = max(cosine_distances)
+    max_l2 = max(feature_l2)
+    return {
+        "mean_cosine_distance": float(np.mean(cosine_distances)),
+        "max_cosine_distance": max_cosine,
+        "max_feature_l2": max_l2,
+        "thresholds": {
+            "max_cosine_distance": 1e-4,
+            "max_feature_l2": 0.015,
+        },
+        "passed": max_cosine <= 1e-4 and max_l2 <= 0.015,
     }
 
 
@@ -289,7 +365,7 @@ def main() -> None:
     if not integrity["passed"]:
         raise ValueError(f"Collection integrity failed: {integrity['errors']}")
 
-    items = _image_items(manifest)
+    items = _directed_image_items(manifest)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     keys = list(items)
     feature_cache_path = args.output_dir / "features.npz"
@@ -319,6 +395,12 @@ def main() -> None:
     if not start_stability["passed"]:
         raise ValueError(f"Branch anchor feature stability failed: {start_stability}")
     _attach_geometry(rows, manifest)
+    source_policy_stability = _source_policy_feature_stability(manifest, features)
+    if not source_policy_stability["passed"]:
+        raise ValueError(
+            "New policy endpoints do not reproduce source policy endpoint features: "
+            f"{source_policy_stability}"
+        )
     hybrid_calibration = _load_hybrid_calibration(args.calibration_summary)
     _attach_hybrid_reward(rows, hybrid_calibration)
 
@@ -338,9 +420,11 @@ def main() -> None:
         geometry_summary,
         num_anchors=len(manifest["anchors"]),
     )
+    gates["source_policy_endpoint_feature_alignment"] = source_policy_stability["passed"]
     passed = (
         integrity["passed"]
         and start_stability["passed"]
+        and source_policy_stability["passed"]
         and all(gates.values())
     )
     summary = {
@@ -370,6 +454,7 @@ def main() -> None:
         "collection_integrity": integrity,
         "render_feature_stability": render_stability,
         "branch_anchor_feature_stability": start_stability,
+        "source_policy_endpoint_feature_stability": source_policy_stability,
         "geometry_control": geometry_summary,
         "hybrid_calibration": hybrid_calibration,
         "frozen_camera_weight_diagnostic": frozen_weight,

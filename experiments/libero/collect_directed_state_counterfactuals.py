@@ -109,6 +109,10 @@ def main() -> None:
         for source_anchor in source["anchors"][: args.num_anchors]:
             anchor_start = time.time()
             anchor_index = int(source_anchor["anchor_index"])
+            # Reproduce the source collector's per-anchor soft-reset sequence.
+            # LIBERO can update model-level camera / fixture state on reset; those
+            # values are absent from the flattened MuJoCo state.
+            env.reset()
             anchor_dir = output_root / f"anchor{anchor_index:02d}"
             anchor_dir.mkdir(parents=True, exist_ok=True)
             anchor_state = np.load(source_anchor["anchor_state_path"])
@@ -241,6 +245,16 @@ def main() -> None:
                 "current_paths": current_paths,
                 "reward_current_paths": reward_current_paths,
                 "predicted_goal_paths": goal_paths,
+                "source_policy_final_state_path": next(
+                    branch["final_state_path"]
+                    for branch in source_anchor["branches"]
+                    if branch["name"] == "policy"
+                ),
+                "source_policy_actual_paths": next(
+                    branch["actual_paths"]
+                    for branch in source_anchor["branches"]
+                    if branch["name"] == "policy"
+                ),
                 "initial_geometry": initial_geometry,
                 "branches": branch_records,
                 "duration_seconds": time.time() - anchor_start,
@@ -275,6 +289,7 @@ def main() -> None:
         "action_source": "source_policy_plus_matched_geometric_direction",
         "goal_source": "copied_source_infer_joint_last_aligned_frame",
         "branch_initialization": source["branch_initialization"],
+        "source_model_sequence_reconstruction": "one_soft_reset_per_anchor",
         "checkpoint": source["checkpoint"],
         "dataset_stats_path": source["dataset_stats_path"],
         "total_model_inferences": 0,

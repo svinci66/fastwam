@@ -1,5 +1,11 @@
 # LIBERO directed exact-state imagination-reward result
 
+> **Temporarily invalidated:** the first attempted formal collection did not replay
+> the source collector's per-anchor LIBERO soft-reset sequence. Its flattened MuJoCo
+> states matched, but anchors 1--9 used mismatched model-level camera state relative
+> to the reused imagined goals. The numerical results below are retained only as an
+> audit trail and must not be cited. A corrected, cross-source-gated run is pending.
+
 ## Decision
 
 The frozen primary `raw_dual` reward passes every preregistered directed test. This
