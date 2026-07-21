@@ -68,6 +68,15 @@ def _configure_deterministic_algorithms(cfg: DictConfig) -> dict[str, Any]:
             torch.backends.cudnn.deterministic = True
         if torch.cuda.is_available():
             torch.backends.cuda.matmul.allow_tf32 = False
+            # Transformers 4.49 selects SDPA for SigLIP automatically.  The
+            # fused Flash and memory-efficient CUDA implementations can return
+            # different low-order bits across fresh processes even when
+            # torch.use_deterministic_algorithms(True) is enabled.  Those bits
+            # are enough to change the residual actor output and eventually the
+            # simulated trajectory, so strict audits use the math backend only.
+            torch.backends.cuda.enable_flash_sdp(False)
+            torch.backends.cuda.enable_mem_efficient_sdp(False)
+            torch.backends.cuda.enable_math_sdp(True)
     return {
         "enabled": enabled,
         "warn_only": warn_only,
@@ -75,6 +84,11 @@ def _configure_deterministic_algorithms(cfg: DictConfig) -> dict[str, Any]:
         "cudnn_benchmark": bool(torch.backends.cudnn.benchmark),
         "cudnn_deterministic": bool(torch.backends.cudnn.deterministic),
         "cuda_matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+        "cuda_flash_sdp_enabled": bool(torch.backends.cuda.flash_sdp_enabled()),
+        "cuda_mem_efficient_sdp_enabled": bool(
+            torch.backends.cuda.mem_efficient_sdp_enabled()
+        ),
+        "cuda_math_sdp_enabled": bool(torch.backends.cuda.math_sdp_enabled()),
     }
 
 
