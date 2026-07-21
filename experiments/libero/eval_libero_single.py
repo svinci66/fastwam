@@ -563,6 +563,9 @@ def run_single_episode(
                     "gt_frames": [imgs.copy()],
                     "pred_frames": predicted_future_frames,
                     "action_mode": action_mode,
+                    "action_noise_std": (
+                        action_noise_std if action_mode == "noise" else 0.0
+                    ),
                     "action_source": (
                         "direct_infer_action"
                         if bool(cfg.EVALUATION.get("imagination_use_direct_action", False))
@@ -771,11 +774,7 @@ def run_single_task(
                             "terminated": bool(clip.get("terminated", False)),
                             "truncated": bool(clip.get("truncated", False)),
                             "action_mode": str(clip.get("action_mode", "policy")),
-                            "action_noise_std": (
-                                action_noise_std
-                                if str(clip.get("action_mode", "policy")) == "noise"
-                                else 0.0
-                            ),
+                            "action_noise_std": float(clip.get("action_noise_std", 0.0)),
                             "action_source": str(clip.get("action_source", "infer_joint")),
                             "target_step": int(clip.get("target_step", 0)),
                             "effective_k": int(clip.get("effective_k", 0)),
