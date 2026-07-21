@@ -25,7 +25,7 @@ from fastwam.rl.rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
     compute_composite_reward,
-    compute_imagination_progress,
+    compute_imagination_reward,
 )
 
 
@@ -179,10 +179,11 @@ def build_replay(
             f"trial{int(record['trial_idx']):06d}"
         )
         budget = budgets.setdefault(episode_id, EpisodeShapingBudget.from_config(reward_config))
-        progress = compute_imagination_progress(
+        progress = compute_imagination_reward(
             features["current"],
             features["actual"],
             features["predicted_goal"],
+            reward_type=reward_config.imagination_reward_type,
             camera_weights=camera_weights,
             clip_value=reward_config.imagination_clip,
             alignment_valid=bool(record["alignment_valid"]),
@@ -235,6 +236,7 @@ def build_replay(
                 executed_actions=arrays["executed_actions"],
                 environment_rewards=arrays["environment_rewards"],
                 reward=breakdown,
+                imagination_reward_type=reward_config.imagination_reward_type,
             )
         )
     return replay
@@ -265,7 +267,20 @@ def main() -> None:
         camera_weights={"agent": args.agent_weight, "wrist": args.wrist_weight},
         imitation_dimension_scales=imitation_scales_array,
     )
-    output = replay.save(args.output_dir)
+    output = replay.save(
+        args.output_dir,
+        provenance={
+            "reward_encoder_version": args.reward_encoder_version,
+            "imagination_reward_type": reward_config.imagination_reward_type,
+            "camera_names": list(CAMERAS),
+            "camera_weights": {
+                "agent": float(args.agent_weight),
+                "wrist": float(args.wrist_weight),
+            },
+            "camera_image_size": 224,
+            "feature_fusion": "per_camera_l2_then_agent_wrist_concat_l2_v1",
+        },
+    )
     print(json.dumps({"output_dir": str(output), "num_transitions": len(replay)}, indent=2))
 
 

@@ -2,6 +2,7 @@ import torch
 
 from fastwam.rl.awr_trainer import (
     AWRConfig,
+    BalancedBatchSampler,
     advantage_weights,
     compute_awr_losses,
     masked_action_mse,
@@ -77,3 +78,14 @@ def test_awr_loss_runs_without_updating_frozen_fastwam():
     assert losses["critic_loss"].ndim == 0
     assert torch.isfinite(losses["actor_loss"])
     assert torch.isfinite(losses["critic_loss"])
+
+
+def test_balanced_batch_sampler_avoids_tiny_final_batch():
+    sampler = BalancedBatchSampler(
+        72,
+        64,
+        generator=torch.Generator().manual_seed(42),
+    )
+    batches = list(sampler)
+    assert [len(batch) for batch in batches] == [36, 36]
+    assert sorted(index for batch in batches for index in batch) == list(range(72))

@@ -13,7 +13,7 @@ from typing import Mapping
 import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from .models import ResidualActor, ValueCritic
 from .replay_buffer import ReplayBuffer
@@ -169,6 +169,26 @@ class ReplayTensorDataset(Dataset):
         return {key: value[index] for key, value in self.tensors.items()}
 
 
+class BalancedBatchSampler(Sampler[list[int]]):
+    """Shuffle once per epoch and avoid an overweight tiny final minibatch."""
+
+    def __init__(self, dataset_size: int, maximum_batch_size: int, *, generator: torch.Generator):
+        if dataset_size <= 0 or maximum_batch_size <= 0:
+            raise ValueError("dataset_size and maximum_batch_size must be positive")
+        self.dataset_size = int(dataset_size)
+        self.maximum_batch_size = int(maximum_batch_size)
+        self.generator = generator
+        self.num_batches = int(np.ceil(self.dataset_size / self.maximum_batch_size))
+
+    def __len__(self) -> int:
+        return self.num_batches
+
+    def __iter__(self):
+        shuffled = torch.randperm(self.dataset_size, generator=self.generator)
+        for batch in torch.tensor_split(shuffled, self.num_batches):
+            yield batch.tolist()
+
+
 def train_residual_awr(
     actor: ResidualActor,
     critic: ValueCritic,
@@ -188,11 +208,14 @@ def train_residual_awr(
     critic.to(device)
     dataset = ReplayTensorDataset(replay, returns)
     generator = torch.Generator().manual_seed(config.seed)
+    batch_sampler = BalancedBatchSampler(
+        len(dataset),
+        min(config.batch_size, len(dataset)),
+        generator=generator,
+    )
     loader = DataLoader(
         dataset,
-        batch_size=min(config.batch_size, len(dataset)),
-        shuffle=True,
-        generator=generator,
+        batch_sampler=batch_sampler,
     )
     actor_optimizer = torch.optim.AdamW(
         actor.parameters(), lr=config.actor_learning_rate, weight_decay=config.weight_decay
@@ -203,7 +226,7 @@ def train_residual_awr(
     history: list[dict[str, float]] = []
     for epoch in range(config.epochs):
         sums: dict[str, float] = {}
-        batches = 0
+        examples = 0
         actor.train()
         critic.train()
         for cpu_batch in loader:
@@ -228,10 +251,13 @@ def train_residual_awr(
             nn.utils.clip_grad_norm_(actor.parameters(), config.max_grad_norm)
             actor_optimizer.step()
 
-            batches += 1
+            batch_examples = int(batch["return_to_go"].shape[0])
+            examples += batch_examples
             for key, value in losses.items():
-                sums[key] = sums.get(key, 0.0) + float(value.detach().cpu())
-        history.append({"epoch": float(epoch), **{key: value / batches for key, value in sums.items()}})
+                sums[key] = sums.get(key, 0.0) + float(value.detach().cpu()) * batch_examples
+        history.append(
+            {"epoch": float(epoch), **{key: value / examples for key, value in sums.items()}}
+        )
     return history
 
 

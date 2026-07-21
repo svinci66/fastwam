@@ -84,7 +84,7 @@ def test_replay_round_trip_is_checksummed_and_lossless(tmp_path):
     )
     assert loaded.transitions[1].reward == replay.transitions[1].reward
     manifest = json.loads((output / "manifest.json").read_text())
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == 2
     assert manifest["num_transitions"] == 2
 
 

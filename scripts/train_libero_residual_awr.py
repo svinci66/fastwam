@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import random
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -60,6 +61,28 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def seed_training_process(seed: int) -> None:
+    """Seed every learner RNG before actor or critic construction."""
+
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _state_dict_sha256(module: torch.nn.Module) -> str:
+    digest = hashlib.sha256()
+    for name, tensor in sorted(module.state_dict().items()):
+        value = tensor.detach().cpu().contiguous()
+        digest.update(name.encode("utf-8"))
+        digest.update(str(value.dtype).encode("ascii"))
+        digest.update(str(tuple(value.shape)).encode("ascii"))
+        digest.update(value.numpy().tobytes())
+    return digest.hexdigest()
+
+
 def main() -> None:
     args = parse_args()
     if args.timeout_bootstrap_json is not None and args.timeout_bootstrap_value is not None:
@@ -71,8 +94,10 @@ def main() -> None:
     awr_config = AWRConfig(**cfg["awr"])
     reward_config.validate()
     awr_config.validate()
+    seed_training_process(awr_config.seed)
 
     replay = ReplayBuffer.load(args.replay_dir)
+    replay_manifest = json.loads((args.replay_dir / "manifest.json").read_text())
     imitation_scales = cfg.get("imitation_dimension_scales")
     imitation_scales_array = (
         None if imitation_scales is None else np.asarray(imitation_scales, dtype=np.float32)
@@ -132,6 +157,10 @@ def main() -> None:
     critic = ValueCritic(
         ValueCriticConfig(context_dim=context_dim, hidden_dims=tuple(cfg["critic_hidden_dims"]))
     )
+    initialization_sha256 = {
+        "actor": _state_dict_sha256(actor),
+        "critic": _state_dict_sha256(critic),
+    }
 
     summary = {
         "num_transitions": len(replay),
@@ -161,6 +190,13 @@ def main() -> None:
             else "none"
         ),
         "timeout_bootstrap_value": args.timeout_bootstrap_value,
+        "training_seed": awr_config.seed,
+        "initialization_sha256": initialization_sha256,
+        "reward_encoder_version": replay_manifest["reward_encoder_version"],
+        "imagination_reward_type": replay_manifest.get(
+            "imagination_reward_type", "progress_v1"
+        ),
+        "replay_schema_version": replay_manifest["schema_version"],
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     if args.validate_only:
@@ -191,6 +227,7 @@ def main() -> None:
         "awr_config": asdict(awr_config),
         "reward_config": asdict(reward_config),
         "replay_manifest_sha256": _sha256(args.replay_dir / "manifest.json"),
+        "replay_provenance": replay_manifest.get("provenance", {}),
         "summary": summary,
     }
     torch.save(checkpoint, args.output_dir / "checkpoint.pt")

@@ -22,7 +22,8 @@ from .rewards import (
 )
 
 
-REPLAY_SCHEMA_VERSION = 1
+REPLAY_SCHEMA_VERSION = 2
+_SUPPORTED_REPLAY_SCHEMA_VERSIONS = {1, REPLAY_SCHEMA_VERSION}
 _ARRAY_FILE = "arrays.npz"
 _METADATA_FILE = "transitions.jsonl"
 _MANIFEST_FILE = "manifest.json"
@@ -79,6 +80,7 @@ class ReplayTransition:
     executed_actions: np.ndarray
     environment_rewards: np.ndarray
     reward: RewardBreakdown
+    imagination_reward_type: str = "progress_v1"
 
     def validate(self) -> None:
         if not self.episode_id.strip():
@@ -96,6 +98,10 @@ class ReplayTransition:
         }
         if any(not value.strip() for value in versions.values()):
             raise ValueError(f"all component versions must be recorded, got {versions}")
+        if self.imagination_reward_type not in {"progress_v1", "delta_alignment_v1"}:
+            raise ValueError(
+                f"unsupported imagination_reward_type: {self.imagination_reward_type!r}"
+            )
         if self.behavior_mode not in {"policy", "noise", "zero", "residual"}:
             raise ValueError(f"unsupported behavior_mode: {self.behavior_mode!r}")
         if not np.isfinite(self.action_noise_std) or self.action_noise_std < 0.0:
@@ -222,6 +228,8 @@ class ReplayBuffer:
                 raise ValueError(f"transition shapes differ from replay schema: {mismatches}")
             if transition.reward_encoder_version != first.reward_encoder_version:
                 raise ValueError("a replay shard cannot mix reward encoder versions")
+            if transition.imagination_reward_type != first.imagination_reward_type:
+                raise ValueError("a replay shard cannot mix imagination reward types")
             if transition.target_k != first.target_k:
                 raise ValueError("a replay shard cannot mix target_k values")
         self.transitions.append(transition)
@@ -340,6 +348,12 @@ class ReplayBuffer:
         """
 
         config.validate()
+        reward_types = {transition.imagination_reward_type for transition in self.transitions}
+        if reward_types != {config.imagination_reward_type}:
+            raise ValueError(
+                "reward config cannot reinterpret replay imagination values: "
+                f"replay={sorted(reward_types)} config={config.imagination_reward_type!r}"
+            )
         order = sorted(
             range(len(self.transitions)),
             key=lambda index: (
@@ -372,7 +386,12 @@ class ReplayBuffer:
         totals = np.asarray([item.total for item in typed_breakdowns], dtype=np.float32)
         return totals, typed_breakdowns
 
-    def save(self, directory: str | Path) -> Path:
+    def save(
+        self,
+        directory: str | Path,
+        *,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> Path:
         if not self.transitions:
             raise ValueError("cannot save an empty replay")
         target = Path(directory).expanduser().resolve()
@@ -395,6 +414,8 @@ class ReplayBuffer:
                 "num_transitions": len(self.transitions),
                 "target_k": self.transitions[0].target_k,
                 "reward_encoder_version": self.transitions[0].reward_encoder_version,
+                "imagination_reward_type": self.transitions[0].imagination_reward_type,
+                "provenance": dict(provenance or {}),
                 "array_shapes": {key: list(value.shape) for key, value in arrays.items()},
                 "files": {
                     _ARRAY_FILE: {"sha256": _sha256(arrays_path)},
@@ -413,10 +434,11 @@ class ReplayBuffer:
     def load(cls, directory: str | Path, *, verify_checksums: bool = True) -> "ReplayBuffer":
         root = Path(directory).expanduser().resolve()
         manifest = json.loads((root / _MANIFEST_FILE).read_text())
-        if int(manifest.get("schema_version", -1)) != REPLAY_SCHEMA_VERSION:
+        schema_version = int(manifest.get("schema_version", -1))
+        if schema_version not in _SUPPORTED_REPLAY_SCHEMA_VERSIONS:
             raise ValueError(
                 f"unsupported replay schema {manifest.get('schema_version')}; "
-                f"expected {REPLAY_SCHEMA_VERSION}"
+                f"expected one of {sorted(_SUPPORTED_REPLAY_SCHEMA_VERSIONS)}"
             )
         if verify_checksums:
             for name, record in manifest["files"].items():
@@ -438,6 +460,8 @@ class ReplayBuffer:
         transitions = []
         for index, record in enumerate(metadata):
             reward = RewardBreakdown(**record.pop("reward"))
+            if schema_version == 1:
+                record.setdefault("imagination_reward_type", "progress_v1")
             transition = ReplayTransition(
                 **record,
                 observation_feature=arrays["observation_feature"][index],

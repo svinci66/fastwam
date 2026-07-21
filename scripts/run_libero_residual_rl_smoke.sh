@@ -259,6 +259,8 @@ NOISE_TRANSITIONS="${NOISE_ROOT}/libero_goal/imagination_transitions"
 REPLAY_DIR="${OUTPUT_ROOT}/replay"
 NO_IMAG_RUN="${OUTPUT_ROOT}/train_no_imagination"
 WITH_IMAG_RUN="${OUTPUT_ROOT}/train_with_imagination"
+NO_IMAG_EVAL="${OUTPUT_ROOT}/eval_no_imagination"
+WITH_IMAG_EVAL="${OUTPUT_ROOT}/eval_with_imagination"
 
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
@@ -273,9 +275,9 @@ if [[ -z "${GIT_COMMIT}" ]]; then
   echo "Error: project root is not a readable Git checkout: ${PROJECT_ROOT}" >&2
   exit 1
 fi
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  echo "Error: tracked files have uncommitted changes; refusing a non-reproducible smoke run." >&2
-  git status --short --untracked-files=no >&2
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  echo "Error: source checkout has uncommitted or untracked files; refusing a non-reproducible smoke run." >&2
+  git status --short --untracked-files=normal >&2
   exit 1
 fi
 
@@ -509,7 +511,35 @@ fi
 export NO_IMAG_HISTORY="${NO_IMAG_RUN}/history.json"
 export WITH_IMAG_HISTORY="${WITH_IMAG_RUN}/history.json"
 run_logged verify_histories "${PYTHON_BIN}" -c \
-  "import json, math, os; paths=[os.environ['NO_IMAG_HISTORY'], os.environ['WITH_IMAG_HISTORY']]; histories=[json.load(open(path)) for path in paths]; assert all(histories); bad=[(path, i, key, value) for path, history in zip(paths, histories) for i, row in enumerate(history) for key, value in row.items() if isinstance(value, (int, float)) and not math.isfinite(value)]; print('epochs=', [len(history) for history in histories]); print('last=', [history[-1] for history in histories]); print('non_finite=', bad); assert not bad"
+  "import json, math, os, pathlib, torch; paths=[os.environ['NO_IMAG_HISTORY'], os.environ['WITH_IMAG_HISTORY']]; histories=[json.load(open(path)) for path in paths]; assert all(histories); bad=[(path, i, key, value) for path, history in zip(paths, histories) for i, row in enumerate(history) for key, value in row.items() if isinstance(value, (int, float)) and not math.isfinite(value)]; checkpoints=[torch.load(pathlib.Path(path).with_name('checkpoint.pt'), map_location='cpu', weights_only=False) for path in paths]; init=[item['summary']['initialization_sha256'] for item in checkpoints]; print('epochs=', [len(history) for history in histories]); print('last=', [history[-1] for history in histories]); print('initialization_sha256=', init); print('non_finite=', bad); assert not bad; assert init[0] == init[1], init"
+
+if ! stage_done eval_no_imagination; then
+  run_logged eval_no_imagination "${PYTHON_BIN}" experiments/libero/eval_libero_single.py \
+    "${COMMON_EVAL_OVERRIDES[@]}" \
+    "EVALUATION.action_mode=residual" \
+    "EVALUATION.residual_checkpoint=${NO_IMAG_RUN}/checkpoint.pt" \
+    "EVALUATION.residual_encoder_path=${SIGLIP_MODEL_PATH}" \
+    "EVALUATION.residual_encoder_version=${SIGLIP_VERSION}" \
+    "EVALUATION.residual_encoder_dtype=no" \
+    "EVALUATION.output_dir=${NO_IMAG_EVAL}"
+  mark_done eval_no_imagination
+else
+  echo "[skip] eval_no_imagination"
+fi
+
+if ! stage_done eval_with_imagination; then
+  run_logged eval_with_imagination "${PYTHON_BIN}" experiments/libero/eval_libero_single.py \
+    "${COMMON_EVAL_OVERRIDES[@]}" \
+    "EVALUATION.action_mode=residual" \
+    "EVALUATION.residual_checkpoint=${WITH_IMAG_RUN}/checkpoint.pt" \
+    "EVALUATION.residual_encoder_path=${SIGLIP_MODEL_PATH}" \
+    "EVALUATION.residual_encoder_version=${SIGLIP_VERSION}" \
+    "EVALUATION.residual_encoder_dtype=no" \
+    "EVALUATION.output_dir=${WITH_IMAG_EVAL}"
+  mark_done eval_with_imagination
+else
+  echo "[skip] eval_with_imagination"
+fi
 
 echo "============================================================"
 echo "[complete] single-GPU residual-RL smoke passed"
@@ -517,4 +547,7 @@ echo "output_root=${OUTPUT_ROOT}"
 echo "replay=${REPLAY_DIR}"
 echo "no_imagination_checkpoint=${NO_IMAG_RUN}/checkpoint.pt"
 echo "with_imagination_checkpoint=${WITH_IMAG_RUN}/checkpoint.pt"
+echo "baseline_result=${POLICY_ROOT}/libero_goal/gpu0_task${TASK_ID}_results.json"
+echo "no_imagination_result=${NO_IMAG_EVAL}/libero_goal/gpu0_task${TASK_ID}_results.json"
+echo "with_imagination_result=${WITH_IMAG_EVAL}/libero_goal/gpu0_task${TASK_ID}_results.json"
 echo "============================================================"

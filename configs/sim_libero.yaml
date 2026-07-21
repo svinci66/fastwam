@@ -33,8 +33,23 @@ EVALUATION:
 
   # Initial imagination-reward validation. `zero` executes LIBERO no-ops;
   # `noise` perturbs the policy's non-gripper actions after denormalization.
-  action_mode: policy  # one of: policy, noise, zero
+  action_mode: policy  # one of: policy, noise, zero, residual
   action_noise_std: 0.15
+
+  # Optional frozen residual-AWR actor. Both paths are required when
+  # action_mode=residual. The actor corrects only the first replan_steps actions;
+  # its checkpoint must use the same horizon and action dimensions.
+  residual_checkpoint: null
+  residual_encoder_path: null
+  residual_encoder_version: null
+  # Only old pipeline-smoke checkpoints without embedded encoder provenance may
+  # opt into this override. Formal evaluation must leave it false.
+  residual_allow_legacy_provenance: false
+  residual_device: cuda
+  # `no` means fp32 and matches replay feature construction. Lower precision can
+  # be requested explicitly on memory-constrained evaluation hardware.
+  residual_encoder_dtype: "no"
+  residual_camera_image_size: 224
 
   # Exact-state counterfactual Reward V2 validation. The collector performs one
   # model inference per anchor and restores the same MuJoCo state for all branches.

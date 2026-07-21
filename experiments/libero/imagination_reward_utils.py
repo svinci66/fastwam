@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 
 
-ACTION_MODES = {"policy", "noise", "zero"}
+ACTION_MODES = {"policy", "noise", "zero", "residual"}
 LIBERO_CAMERA_NAMES = ("agent", "wrist")
 
 
@@ -116,6 +116,11 @@ def apply_action_mode(
 
     if mode == "policy":
         return result
+    if mode == "residual":
+        raise ValueError(
+            "action_mode='residual' requires OnlineResidualPolicy and cannot be "
+            "applied by the model-independent action-mode helper."
+        )
     if mode == "zero":
         result.fill(0.0)
         result[:, -1] = -1.0  # LIBERO's standard no-op gripper value.

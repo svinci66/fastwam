@@ -16,6 +16,9 @@ from typing import Mapping, Sequence
 import numpy as np
 
 
+IMAGINATION_REWARD_TYPES = ("progress_v1", "delta_alignment_v1")
+
+
 def _as_finite_vector(value: np.ndarray | Sequence[float], name: str) -> np.ndarray:
     vector = np.asarray(value, dtype=np.float32).reshape(-1)
     if vector.size == 0:
@@ -73,6 +76,7 @@ def _normalized_camera_weights(
 
 @dataclass(frozen=True)
 class ImaginationProgress:
+    reward_type: str
     distance_before: float
     distance_after: float
     raw_progress: float
@@ -124,9 +128,119 @@ def compute_imagination_progress(
     raw_progress = float(weighted_before - weighted_after)
     clipped = float(np.clip(raw_progress, -clip_value, clip_value)) if alignment_valid else 0.0
     return ImaginationProgress(
+        reward_type="progress_v1",
         distance_before=float(weighted_before),
         distance_after=float(weighted_after),
         raw_progress=raw_progress,
+        clipped_progress=clipped,
+        per_camera=per_camera,
+        camera_weights=normalized_weights,
+        alignment_valid=bool(alignment_valid),
+    )
+
+
+def _delta_alignment_reward(
+    current: np.ndarray | Sequence[float],
+    actual: np.ndarray | Sequence[float],
+    goal: np.ndarray | Sequence[float],
+    *,
+    eps: float = 1e-8,
+) -> dict[str, float]:
+    """Return direction alignment scaled down for visually static transitions."""
+
+    if eps <= 0.0:
+        raise ValueError(f"eps must be positive, got {eps}")
+    current_vector = _as_finite_vector(current, "current")
+    actual_vector = _as_finite_vector(actual, "actual")
+    goal_vector = _as_finite_vector(goal, "goal")
+    if not (current_vector.shape == actual_vector.shape == goal_vector.shape):
+        raise ValueError(
+            "current, actual, and goal feature shapes must match, got "
+            f"{current_vector.shape}, {actual_vector.shape}, and {goal_vector.shape}"
+        )
+    actual_delta = actual_vector - current_vector
+    imagined_delta = goal_vector - current_vector
+    actual_norm = float(np.linalg.norm(actual_delta))
+    imagined_norm = float(np.linalg.norm(imagined_delta))
+    denominator = actual_norm * imagined_norm
+    direction_alignment = (
+        0.0
+        if denominator <= eps
+        else float(np.clip(np.dot(actual_delta, imagined_delta) / denominator, -1.0, 1.0))
+    )
+    magnitude_ratio = float(min(actual_norm / max(imagined_norm, eps), 1.0))
+    return {
+        "actual_change_norm": actual_norm,
+        "imagined_change_norm": imagined_norm,
+        "direction_alignment": direction_alignment,
+        "magnitude_ratio": magnitude_ratio,
+        "delta_alignment_reward": direction_alignment * magnitude_ratio,
+    }
+
+
+def compute_imagination_reward(
+    current_features: Mapping[str, np.ndarray | Sequence[float]],
+    actual_features: Mapping[str, np.ndarray | Sequence[float]],
+    goal_features: Mapping[str, np.ndarray | Sequence[float]],
+    *,
+    reward_type: str,
+    camera_weights: Mapping[str, float] | None = None,
+    clip_value: float = 0.1,
+    alignment_valid: bool = True,
+) -> ImaginationProgress:
+    """Compute one explicitly versioned camera-aware imagination signal."""
+
+    reward_type = str(reward_type).strip()
+    if reward_type not in IMAGINATION_REWARD_TYPES:
+        raise ValueError(
+            f"unsupported imagination reward type {reward_type!r}; "
+            f"expected one of {IMAGINATION_REWARD_TYPES}"
+        )
+    if reward_type == "progress_v1":
+        return compute_imagination_progress(
+            current_features,
+            actual_features,
+            goal_features,
+            camera_weights=camera_weights,
+            clip_value=clip_value,
+            alignment_valid=alignment_valid,
+        )
+
+    if not np.isfinite(clip_value) or clip_value <= 0.0:
+        raise ValueError(f"clip_value must be finite and positive, got {clip_value}")
+    cameras = tuple(sorted(current_features))
+    if set(actual_features) != set(cameras) or set(goal_features) != set(cameras):
+        raise ValueError(
+            "current, actual, and goal feature dictionaries must have identical camera keys"
+        )
+    normalized_weights = _normalized_camera_weights(cameras, camera_weights)
+    per_camera: dict[str, dict[str, float]] = {}
+    weighted_before = 0.0
+    weighted_after = 0.0
+    weighted_reward = 0.0
+    for camera in cameras:
+        before = cosine_distance(current_features[camera], goal_features[camera])
+        after = cosine_distance(actual_features[camera], goal_features[camera])
+        delta = _delta_alignment_reward(
+            current_features[camera], actual_features[camera], goal_features[camera]
+        )
+        per_camera[camera] = {
+            "distance_before": before,
+            "distance_after": after,
+            "progress": before - after,
+            **delta,
+        }
+        weighted_before += normalized_weights[camera] * before
+        weighted_after += normalized_weights[camera] * after
+        weighted_reward += normalized_weights[camera] * delta["delta_alignment_reward"]
+
+    raw_reward = float(weighted_reward)
+    clipped = float(np.clip(raw_reward, -clip_value, clip_value)) if alignment_valid else 0.0
+    return ImaginationProgress(
+        reward_type=reward_type,
+        distance_before=float(weighted_before),
+        distance_after=float(weighted_after),
+        raw_progress=raw_reward,
         clipped_progress=clipped,
         per_camera=per_camera,
         camera_weights=normalized_weights,
@@ -148,14 +262,24 @@ class CompositeRewardConfig:
     success_weight: float = 1.0
     imitation_weight: float = 0.1
     imagination_weight: float = 1.0
+    imagination_reward_type: str = "progress_v1"
     step_penalty: float = 0.0
     imagination_clip: float = 0.1
     max_imagination_to_success_ratio: float = 0.5
 
     def validate(self) -> None:
-        numeric = asdict(self)
+        numeric = {
+            key: value
+            for key, value in asdict(self).items()
+            if key != "imagination_reward_type"
+        }
         if any(not np.isfinite(float(value)) for value in numeric.values()):
             raise ValueError(f"all reward settings must be finite, got {numeric}")
+        if self.imagination_reward_type not in IMAGINATION_REWARD_TYPES:
+            raise ValueError(
+                "imagination_reward_type must be one of "
+                f"{IMAGINATION_REWARD_TYPES}, got {self.imagination_reward_type!r}"
+            )
         if self.success_bonus <= 0.0:
             raise ValueError("success_bonus must be positive")
         if self.environment_weight < 0.0:

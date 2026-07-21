@@ -44,6 +44,7 @@ from fastwam.datasets.lerobot.processors.fastwam_processor import FastWAMProcess
 from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
 from fastwam.utils.pytorch_utils import set_global_seed
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
+from fastwam.rl.online_policy import OnlineResidualPolicy
 from libero.libero import benchmark
 from action_ensembler import ActionEnsembler
 
@@ -305,6 +306,28 @@ def _validate_imagination_reward_cfg(cfg: DictConfig) -> None:
     noise_std = float(cfg.EVALUATION.get("action_noise_std", 0.15))
     if noise_std < 0:
         raise ValueError(f"EVALUATION.action_noise_std must be non-negative, got {noise_std}.")
+    residual_checkpoint = cfg.EVALUATION.get("residual_checkpoint")
+    residual_encoder_path = cfg.EVALUATION.get("residual_encoder_path")
+    residual_encoder_version = cfg.EVALUATION.get("residual_encoder_version")
+    if action_mode == "residual":
+        if (
+            residual_checkpoint is None
+            or residual_encoder_path is None
+            or residual_encoder_version is None
+        ):
+            raise ValueError(
+                "EVALUATION.action_mode=residual requires residual_checkpoint, "
+                "residual_encoder_path, and residual_encoder_version."
+            )
+    elif (
+        residual_checkpoint is not None
+        or residual_encoder_path is not None
+        or residual_encoder_version is not None
+    ):
+        raise ValueError(
+            "residual checkpoint/encoder settings may only be set when "
+            "EVALUATION.action_mode=residual."
+        )
 
     if not bool(cfg.EVALUATION.get("save_imagination_transitions", False)):
         return
@@ -501,6 +524,7 @@ def run_single_episode(
     input_w: int,
     input_h: int,
     model_device: str,
+    residual_policy: Optional[OnlineResidualPolicy] = None,
 ) -> tuple[bool, list, list[dict[str, Any]], Optional[float]]:
     max_steps = _get_max_steps(cfg.EVALUATION.task_suite_name)
     replan_steps = int(cfg.EVALUATION.get("replan_steps", 5))
@@ -526,6 +550,10 @@ def run_single_episode(
     action_noise_std = float(cfg.EVALUATION.get("action_noise_std", 0.15))
     base_seed = 0 if cfg.get("seed") is None else int(cfg.seed)
     action_rng = np.random.default_rng(base_seed + episode_idx * 100_003)
+    if (action_mode == "residual") != (residual_policy is not None):
+        raise ValueError(
+            "OnlineResidualPolicy must be provided if and only if action_mode='residual'."
+        )
 
     t = 0
     done = False
@@ -550,12 +578,24 @@ def run_single_episode(
                 model_device=model_device,
             )
             baseline_action_chunk = np.asarray(action_chunk, dtype=np.float32).copy()
-            action_chunk = apply_action_mode(
-                action_chunk,
-                mode=action_mode,
-                noise_std=action_noise_std,
-                rng=action_rng,
-            )
+            residual_output = None
+            if action_mode == "residual":
+                residual_output = residual_policy.correct_action_chunk(
+                    camera_images={
+                        "agent": imgs["image"],
+                        "wrist": imgs["wrist_image"],
+                    },
+                    proprio=_extract_sim_state(obs),
+                    baseline_actions=baseline_action_chunk,
+                )
+                action_chunk = residual_output.corrected_actions
+            else:
+                action_chunk = apply_action_mode(
+                    action_chunk,
+                    mode=action_mode,
+                    noise_std=action_noise_std,
+                    rng=action_rng,
+                )
             if predicted_future_frames is not None:
                 current_replan_idx += 1
                 current_predicted_future_clip = {
@@ -567,7 +607,9 @@ def run_single_episode(
                         action_noise_std if action_mode == "noise" else 0.0
                     ),
                     "action_source": (
-                        "direct_infer_action"
+                        "residual_actor"
+                        if action_mode == "residual"
+                        else "direct_infer_action"
                         if bool(cfg.EVALUATION.get("imagination_use_direct_action", False))
                         else "infer_joint"
                     ),
@@ -580,6 +622,14 @@ def run_single_episode(
                     "executed_actions": [],
                     "sim_rewards": [],
                 }
+                if residual_output is not None:
+                    current_predicted_future_clip.update(
+                        residual_checkpoint=residual_policy.checkpoint_path,
+                        residual_encoder_path=residual_policy.encoder_path,
+                        residual_encoder_version=residual_policy.encoder_version,
+                        residual_rms=residual_output.residual_rms,
+                        residual_max_abs=residual_output.residual_max_abs,
+                    )
             else:
                 current_predicted_future_clip = None
             current_replan_step = 0
@@ -686,6 +736,7 @@ def run_single_task(
     input_w: int,
     input_h: int,
     model_device: str,
+    residual_policy: Optional[OnlineResidualPolicy] = None,
 ) -> dict:
     env, task_description = get_libero_env(task, LIBERO_ENV_RESOLUTION, cfg.get("seed"))
     visualize_future_video = bool(cfg.EVALUATION.get("visualize_future_video", False))
@@ -703,6 +754,12 @@ def run_single_task(
     results["imagination_transition_count"] = 0
     results["valid_imagination_transition_count"] = 0
     results["episode_policy_steps"] = []
+    if residual_policy is not None:
+        results["residual_checkpoint"] = residual_policy.checkpoint_path
+        results["residual_encoder_path"] = residual_policy.encoder_path
+        results["residual_encoder_version"] = residual_policy.encoder_version
+        results["episode_residual_rms"] = []
+        results["residual_rms_mean"] = None
 
     for trial_idx in range(int(cfg.EVALUATION.num_trials)):
         success, replay_images, predicted_future_video_clips, episode_mean_psnr = run_single_episode(
@@ -717,6 +774,7 @@ def run_single_task(
             input_w=input_w,
             input_h=input_h,
             model_device=model_device,
+            residual_policy=residual_policy,
         )
         if success:
             results["successes"] += 1
@@ -729,6 +787,15 @@ def run_single_task(
             sum(int(clip.get("effective_k", 0)) for clip in predicted_future_video_clips)
         )
         results["episode_policy_steps"].append(episode_policy_steps)
+        if residual_policy is not None:
+            residual_values = [
+                float(clip["residual_rms"])
+                for clip in predicted_future_video_clips
+                if clip.get("residual_rms") is not None
+            ]
+            results["episode_residual_rms"].append(
+                None if not residual_values else float(np.mean(residual_values))
+            )
 
         save_rollout_video(
             video_dir,
@@ -794,6 +861,16 @@ def run_single_task(
                             "predictor_version": str(cfg.ckpt),
                             "reward_encoder_version": "raw_images_not_encoded",
                         }
+                        if clip.get("residual_checkpoint") is not None:
+                            metadata.update(
+                                residual_checkpoint=str(clip["residual_checkpoint"]),
+                                residual_encoder_path=str(clip["residual_encoder_path"]),
+                                residual_encoder_version=str(
+                                    clip["residual_encoder_version"]
+                                ),
+                                residual_rms=float(clip["residual_rms"]),
+                                residual_max_abs=float(clip["residual_max_abs"]),
+                            )
                         target_k = int(clip.get("target_step", 0))
                         effective_k = int(clip.get("effective_k", 0))
                         baseline_actions = np.asarray(clip["baseline_actions"], dtype=np.float32)
@@ -841,6 +918,12 @@ def run_single_task(
         valid_episode_psnr = [x for x in results["episode_future_video_psnr"] if x is not None]
         if len(valid_episode_psnr) > 0:
             results["future_video_psnr_mean"] = float(np.mean(valid_episode_psnr))
+    if residual_policy is not None:
+        valid_residual_rms = [
+            value for value in results["episode_residual_rms"] if value is not None
+        ]
+        if valid_residual_rms:
+            results["residual_rms_mean"] = float(np.mean(valid_residual_rms))
     return results
 
 
@@ -871,6 +954,33 @@ def eval_single_process(cfg: DictConfig):
     _load_model_checkpoint(model, str(cfg.ckpt))
     model = model.to(model_device).eval()
 
+    action_mode = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
+    residual_policy = None
+    if action_mode == "residual":
+        residual_device = str(cfg.EVALUATION.get("residual_device", model_device))
+        residual_dtype = _mixed_precision_to_model_dtype(
+            str(cfg.EVALUATION.get("residual_encoder_dtype", "bf16"))
+        )
+        residual_policy = OnlineResidualPolicy.from_checkpoint(
+            checkpoint_path=str(cfg.EVALUATION.residual_checkpoint),
+            encoder_path=str(cfg.EVALUATION.residual_encoder_path),
+            device=residual_device,
+            encoder_dtype=residual_dtype,
+            encoder_version=str(cfg.EVALUATION.residual_encoder_version),
+            camera_image_size=int(
+                cfg.EVALUATION.get("residual_camera_image_size", 224)
+            ),
+            allow_legacy_provenance=bool(
+                cfg.EVALUATION.get("residual_allow_legacy_provenance", False)
+            ),
+        )
+        logging.info(
+            "Loaded online residual actor from %s with encoder %s on %s.",
+            residual_policy.checkpoint_path,
+            residual_policy.encoder_path,
+            residual_device,
+        )
+
     dataset_stats_path = _resolve_dataset_stats_path(cfg)
     dataset_stats = load_dataset_stats_from_json(str(dataset_stats_path))
     processor: FastWAMProcessor = instantiate(cfg.data.train.processor).eval()
@@ -884,6 +994,17 @@ def eval_single_process(cfg: DictConfig):
         action_horizon = int(action_horizon_cfg)
     if action_horizon <= 0:
         raise ValueError(f"EVALUATION.action_horizon must be positive, got {action_horizon}")
+    if residual_policy is not None:
+        replan_steps = int(cfg.EVALUATION.get("replan_steps", 5))
+        if residual_policy.action_horizon != replan_steps:
+            raise ValueError(
+                "Residual actor action_horizon must equal EVALUATION.replan_steps: "
+                f"actor={residual_policy.action_horizon} replan_steps={replan_steps}."
+            )
+        if residual_policy.action_dim != 7:
+            raise ValueError(
+                f"LIBERO residual actor action_dim must be 7, got {residual_policy.action_dim}."
+            )
 
     video_size = cfg.data.train.get("video_size", [224, 224])
     if len(video_size) != 2:
@@ -941,6 +1062,7 @@ def eval_single_process(cfg: DictConfig):
         input_w=input_w,
         input_h=input_h,
         model_device=model_device,
+        residual_policy=residual_policy,
     )
     results.update(task_results)
 

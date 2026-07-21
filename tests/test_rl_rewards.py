@@ -4,6 +4,7 @@ from fastwam.rl.rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
     compute_composite_reward,
+    compute_imagination_reward,
     compute_imagination_progress,
 )
 
@@ -37,6 +38,29 @@ def test_invalid_temporal_alignment_masks_imagination_shaping():
     )
     assert result.raw_progress > 0.0
     assert result.clipped_progress == 0.0
+
+
+def test_delta_alignment_rewards_matched_direction_and_suppresses_static_change():
+    current = {"agent": np.array([1.0, 0.0]), "wrist": np.array([1.0, 0.0])}
+    goal = {"agent": np.array([0.0, 1.0]), "wrist": np.array([0.0, 1.0])}
+    matched = compute_imagination_reward(
+        current,
+        goal,
+        goal,
+        reward_type="delta_alignment_v1",
+        camera_weights={"agent": 0.5, "wrist": 0.5},
+        clip_value=1.0,
+    )
+    static = compute_imagination_reward(
+        current,
+        current,
+        goal,
+        reward_type="delta_alignment_v1",
+        camera_weights={"agent": 0.5, "wrist": 0.5},
+        clip_value=1.0,
+    )
+    assert np.isclose(matched.raw_progress, 1.0)
+    assert static.raw_progress == 0.0
 
 
 def test_episode_budget_keeps_total_absolute_imagination_below_half_success_bonus():

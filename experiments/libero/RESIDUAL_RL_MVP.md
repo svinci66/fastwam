@@ -2,8 +2,8 @@
 
 ## Scope
 
-This is a resource-bounded first RL implementation for testing whether the frozen
-FastWAM imagination-progress signal improves control. It is deliberately split into
+This is a resource-bounded first RL implementation for testing whether a frozen
+FastWAM imagination-consistency signal improves control. It is deliberately split into
 three jobs:
 
 ```text
@@ -29,6 +29,9 @@ gripper command.
 - Every transition represents the action chunk that was actually executed, not the
   unexecuted remainder of the 32-step FastWAM prediction.
 - The first protocol uses `target_k=8`, aligned to the `t+8` predicted video frame.
+- The corrected protocol explicitly versions its imagination formula and uses
+  `delta_alignment_v1`: equal-camera alignment between actual and imagined feature
+  changes, scaled toward zero for visually static transitions.
 - `effective_k`, raw per-step simulator rewards, next proprio, `terminated`, and
   `truncated` are stored separately.
 - A partial chunk is not marked imagination-aligned unless it has a matched predicted
@@ -80,7 +83,8 @@ toolchains, datasets, and checkpoints remain outside Git under `/data/share`.
 
 After activating the already configured FastWAM environment, the orchestration script
 runs CUDA/import/unit checks, policy and noise collection, replay construction, both
-validate-only jobs, both matched learner jobs, and finite-history verification:
+validate-only jobs, both matched learner jobs, matched-initialization verification,
+and one residual evaluation episode for each checkpoint:
 
 ```bash
 bash scripts/run_libero_residual_rl_smoke.sh \
@@ -97,7 +101,7 @@ If the original FastWAM setup requires explicit paths, add:
   --model-base-path /server/checkpoints
 ```
 
-The smoke defaults are task 3, seed 42, one episode per behavior, `K=8`, four
+The smoke defaults are task 3, seed 42, one episode per behavior/evaluation, `K=8`, four
 diffusion steps, and noise standard deviation 0.075. Run only through replay validation
 with `--no-train`. A failed job can be continued with the identical command plus
 `--resume`; the script freezes its path, seed, task, inference, noise, camera, and
@@ -196,7 +200,8 @@ python experiments/libero/build_residual_rl_replay.py \
   --wrist-weight 0.5
 ```
 
-Equal camera weights reproduce the frozen validation metric. If camera weights are
+Equal camera weights reproduce the prospectively supported directed-counterfactual
+`raw_dual` metric. If camera weights are
 changed, select and freeze them on a separate development split before building the
 formal replay. Do not tune weights on the final evaluation task and then report that
 same task as held-out evidence.
@@ -245,13 +250,44 @@ python scripts/train_libero_residual_awr.py \
   --timeout-bootstrap-value 0.0
 ```
 
-The two jobs use identical transitions, actor/critic capacity, optimizer settings,
-seeds, and update counts. Their only intended reward difference is
+The two jobs use identical transitions, actor/critic initialization hashes, capacity,
+optimizer settings, seeds, balanced minibatches, and update counts. Their only intended reward difference is
 `imagination_weight: 0.0` versus `1.0`.
 
-The frozen FastWAM policy remains the no-RL baseline. A server rollout adapter that
-loads the residual checkpoint and performs fixed-seed A/B/C evaluation is the next
-implementation step; do not interpret offline actor loss as a task-success result.
+The frozen FastWAM policy remains the no-RL baseline. The LIBERO evaluator can load a
+trained residual checkpoint, reconstruct the same frozen two-camera SigLIP feature
+used by the replay, and apply the bounded residual to each FastWAM action chunk. Keep
+the task IDs, initial-state seeds, inference settings, and trial counts identical for
+the baseline, no-imagination, and with-imagination jobs.
+
+Example residual evaluation:
+
+```bash
+conda run -n fastwam env PYTHONPATH=.:./src \
+python experiments/libero/eval_libero_single.py \
+  task=libero_uncond_2cam224_1e-4 \
+  ckpt=/server/checkpoints/libero_uncond_2cam224.pt \
+  seed=42 \
+  EVALUATION.dataset_stats_path=/server/checkpoints/libero_uncond_2cam224_dataset_stats.json \
+  EVALUATION.task_suite_name=libero_goal \
+  EVALUATION.task_id=3 \
+  EVALUATION.num_trials=10 \
+  EVALUATION.action_horizon=32 \
+  EVALUATION.replan_steps=8 \
+  EVALUATION.num_inference_steps=4 \
+  EVALUATION.imagination_use_direct_action=true \
+  EVALUATION.action_mode=residual \
+  EVALUATION.residual_checkpoint=/server/runs/task3_seed42_with_imagination/checkpoint.pt \
+  EVALUATION.residual_encoder_path=/server/checkpoints/siglip-so400m-patch14-384 \
+  EVALUATION.residual_encoder_version=google/siglip-so400m-patch14-384@IMMUTABLE_REVISION \
+  EVALUATION.residual_encoder_dtype=no \
+  EVALUATION.output_dir=/server/eval/task3_seed42_with_imagination
+```
+
+Use the same command with the no-imagination checkpoint for the reward ablation and
+with `EVALUATION.action_mode=policy` (omitting the residual options) for the frozen
+FastWAM baseline. A single episode is only a smoke test; report the predeclared task
+set and trial count for the formal comparison.
 
 ## Outputs
 
@@ -263,8 +299,9 @@ history.json
 run_config.json
 ```
 
-`checkpoint.pt` contains actor and critic weights, their exact configurations, the
-reward/AWR configurations, a replay-manifest checksum, and dataset summary. It does not
+`checkpoint.pt` contains actor and critic weights, their exact configurations and
+initialization hashes, reward/AWR configurations, a replay-manifest checksum, frozen
+encoder/camera provenance, and dataset summary. It does not
 contain or modify the released FastWAM checkpoint.
 
 ## Current non-goals
