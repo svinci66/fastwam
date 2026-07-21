@@ -525,7 +525,7 @@ def run_single_episode(
     input_h: int,
     model_device: str,
     residual_policy: Optional[OnlineResidualPolicy] = None,
-) -> tuple[bool, list, list[dict[str, Any]], Optional[float]]:
+) -> tuple[bool, list, list[dict[str, Any]], Optional[float], int, Optional[float]]:
     max_steps = _get_max_steps(cfg.EVALUATION.task_suite_name)
     replan_steps = int(cfg.EVALUATION.get("replan_steps", 5))
     num_steps_wait = int(cfg.EVALUATION.get("num_steps_wait", 5))
@@ -546,6 +546,8 @@ def run_single_episode(
     current_predicted_future_clip: Optional[dict[str, Any]] = None
     current_replan_step = 0
     current_replan_idx = -1
+    episode_policy_steps = 0
+    episode_residual_values: list[float] = []
     action_mode = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
     action_noise_std = float(cfg.EVALUATION.get("action_noise_std", 0.15))
     base_seed = 0 if cfg.get("seed") is None else int(cfg.seed)
@@ -589,6 +591,7 @@ def run_single_episode(
                     baseline_actions=baseline_action_chunk,
                 )
                 action_chunk = residual_output.corrected_actions
+                episode_residual_values.append(float(residual_output.residual_rms))
             else:
                 action_chunk = apply_action_mode(
                     action_chunk,
@@ -645,6 +648,7 @@ def run_single_episode(
 
         executed_action = np.asarray(pending_actions.pop(0), dtype=np.float32)
         obs, sim_reward, done, _ = env.step(executed_action)
+        episode_policy_steps += 1
         if current_predicted_future_clip is not None:
             current_predicted_future_clip["executed_actions"].append(executed_action.copy())
             current_predicted_future_clip["sim_rewards"].append(float(sim_reward))
@@ -719,7 +723,17 @@ def run_single_episode(
     episode_mean_psnr = (
         float(np.mean(episode_future_clip_psnr)) if len(episode_future_clip_psnr) > 0 else None
     )
-    return bool(done), replay_images, predicted_future_video_clips, episode_mean_psnr
+    episode_residual_rms = (
+        float(np.mean(episode_residual_values)) if episode_residual_values else None
+    )
+    return (
+        bool(done),
+        replay_images,
+        predicted_future_video_clips,
+        episode_mean_psnr,
+        episode_policy_steps,
+        episode_residual_rms,
+    )
 
 
 def run_single_task(
@@ -762,7 +776,14 @@ def run_single_task(
         results["residual_rms_mean"] = None
 
     for trial_idx in range(int(cfg.EVALUATION.num_trials)):
-        success, replay_images, predicted_future_video_clips, episode_mean_psnr = run_single_episode(
+        (
+            success,
+            replay_images,
+            predicted_future_video_clips,
+            episode_mean_psnr,
+            episode_policy_steps,
+            episode_residual_rms,
+        ) = run_single_episode(
             env=env,
             initial_state=initial_states[trial_idx],
             task_description=task_description,
@@ -783,19 +804,9 @@ def run_single_task(
             results["failure_episodes"].append(trial_idx)
         if visualize_future_video:
             results["episode_future_video_psnr"].append(episode_mean_psnr)
-        episode_policy_steps = int(
-            sum(int(clip.get("effective_k", 0)) for clip in predicted_future_video_clips)
-        )
-        results["episode_policy_steps"].append(episode_policy_steps)
+        results["episode_policy_steps"].append(int(episode_policy_steps))
         if residual_policy is not None:
-            residual_values = [
-                float(clip["residual_rms"])
-                for clip in predicted_future_video_clips
-                if clip.get("residual_rms") is not None
-            ]
-            results["episode_residual_rms"].append(
-                None if not residual_values else float(np.mean(residual_values))
-            )
+            results["episode_residual_rms"].append(episode_residual_rms)
 
         save_rollout_video(
             video_dir,
