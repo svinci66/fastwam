@@ -503,6 +503,8 @@ def _predict_action_chunk(
         "tiled": bool(cfg.EVALUATION.get("tiled", False)),
     }
     visualize_future_video = bool(cfg.EVALUATION.get("visualize_future_video", False))
+    save_rollout_video_enabled = bool(cfg.EVALUATION.get("save_rollout_video", True))
+    save_prediction_videos = bool(cfg.EVALUATION.get("save_prediction_videos", True))
     predicted_future_frames = None
     if visualize_future_video:
         infer_kwargs["num_video_frames"] = _get_num_video_frames(cfg)
@@ -941,13 +943,14 @@ def run_single_task(
             action_audit["trial_index"] = int(trial_idx)
             results["episode_action_audit"].append(action_audit)
 
-        save_rollout_video(
-            video_dir,
-            replay_images,
-            f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
-            success=success,
-            task_description=task_description,
-        )
+        if save_rollout_video_enabled:
+            save_rollout_video(
+                video_dir,
+                replay_images,
+                f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
+                success=success,
+                task_description=task_description,
+            )
         if visualize_future_video:
             if len(predicted_future_video_clips) == 0:
                 logging.warning(
@@ -961,15 +964,16 @@ def run_single_task(
                 for clip in predicted_future_video_clips:
                     all_gt_frames.extend(clip["gt_frames"])
                     all_pred_frames.extend(clip["pred_frames"])
-                    save_prediction_video(
-                        predicted_video_dir,
-                        clip["gt_frames"],
-                        clip["pred_frames"],
-                        f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
-                        clip["replan_idx"],
-                        success=success,
-                        task_description=task_description,
-                    )
+                    if save_prediction_videos:
+                        save_prediction_video(
+                            predicted_video_dir,
+                            clip["gt_frames"],
+                            clip["pred_frames"],
+                            f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
+                            clip["replan_idx"],
+                            success=success,
+                            task_description=task_description,
+                        )
                     if save_imagination_transitions:
                         replan_idx = int(clip["replan_idx"])
                         alignment_valid = bool(clip.get("alignment_valid", False))
@@ -1054,15 +1058,16 @@ def run_single_task(
                         )
                         results["imagination_transition_count"] += 1
                         results["valid_imagination_transition_count"] += int(alignment_valid)
-                save_prediction_video(
-                    predicted_video_dir,
-                    all_gt_frames,
-                    all_pred_frames,
-                    f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
-                    "all",
-                    success=success,
-                    task_description=task_description,
-                )
+                if save_prediction_videos:
+                    save_prediction_video(
+                        predicted_video_dir,
+                        all_gt_frames,
+                        all_pred_frames,
+                        f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
+                        "all",
+                        success=success,
+                        task_description=task_description,
+                    )
 
     if visualize_future_video:
         valid_episode_psnr = [x for x in results["episode_future_video_psnr"] if x is not None]

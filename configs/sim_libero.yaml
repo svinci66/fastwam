@@ -30,6 +30,11 @@ EVALUATION:
   use_action_ensembler: false
   visualize_future_video: false
   save_imagination_transitions: false
+  # Transition collection needs the aligned PNG triplets, not the considerably
+  # larger diagnostic MP4 files. Keep both switches on by default for backward
+  # compatible interactive evaluation; multi-task collection disables them.
+  save_rollout_video: true
+  save_prediction_videos: true
   # Record per-replan hashes for initial state, observations, proprio, baseline
   # action, residual action, and corrected action without saving raw tensors.
   record_action_hashes: false
