@@ -61,6 +61,21 @@ nvidia-smi
 conda run -n fastwam python -c "import torch; assert torch.cuda.is_available()"
 ```
 
+For the persistent AIMP server layout used by this project, restore the conda
+environment, CUDA toolchain, LIBERO paths, model paths, caches, and rendering backend
+in one command after every container restart:
+
+```bash
+source /data/share/1919650160032350208/sj/fastwam/FastWAM-git/scripts/activate_fastwam_runtime.sh
+fastwam_runtime_check
+```
+
+The activation script chooses NVIDIA EGL when the container runtime exposes the
+NVIDIA graphics capability. Compute-only containers automatically use the persistent
+OSMesa fallback. Override the automatic choice before sourcing with
+`FASTWAM_RENDER_REQUEST=egl` or `FASTWAM_RENDER_REQUEST=osmesa`. Large environments,
+toolchains, datasets, and checkpoints remain outside Git under `/data/share`.
+
 ## Recommended: one-command single-GPU smoke
 
 After activating the already configured FastWAM environment, the orchestration script
