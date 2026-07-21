@@ -61,6 +61,9 @@ EVALUATION:
   # be requested explicitly on memory-constrained evaluation hardware.
   residual_encoder_dtype: "no"
   residual_camera_image_size: 224
+  # Frozen FastWAM UMT5 feature used by formal multi-task residual AWR.  The
+  # identifier includes the registered encoder hash and the pooling contract.
+  language_encoder_version: wan_umt5_xxl_9c8818c2cbea55eca56c7b447df170da_masked_mean_v1
 
   # Exact-state counterfactual Reward V2 validation. The collector performs one
   # model inference per anchor and restores the same MuJoCo state for all branches.

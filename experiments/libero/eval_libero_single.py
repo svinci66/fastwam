@@ -562,6 +562,7 @@ def run_single_episode(
     input_h: int,
     model_device: str,
     residual_policy: Optional[OnlineResidualPolicy] = None,
+    language_feature: Optional[np.ndarray] = None,
 ) -> tuple[
     bool,
     list,
@@ -645,6 +646,7 @@ def run_single_episode(
                     },
                     proprio=_extract_sim_state(obs),
                     baseline_actions=baseline_action_chunk,
+                    language_feature=language_feature,
                 )
                 action_chunk = residual_output.corrected_actions
                 episode_residual_values.append(float(residual_output.residual_rms))
@@ -673,6 +675,10 @@ def run_single_episode(
                     audit_record["observation_feature_sha256"] = array_sha256(
                         residual_output.observation_feature
                     )
+                    if language_feature is not None:
+                        audit_record["language_feature_sha256"] = array_sha256(
+                            language_feature
+                        )
                 action_audit["replans"].append(audit_record)
             if predicted_future_frames is not None:
                 current_replan_idx += 1
@@ -700,6 +706,8 @@ def run_single_episode(
                     "executed_actions": [],
                     "sim_rewards": [],
                 }
+                if language_feature is not None:
+                    current_predicted_future_clip["language_feature"] = language_feature.copy()
                 if residual_output is not None:
                     current_predicted_future_clip.update(
                         residual_checkpoint=residual_policy.checkpoint_path,
@@ -854,6 +862,27 @@ def run_single_task(
         results["episode_future_video_psnr"] = []
         results["future_video_psnr_mean"] = None
     save_imagination_transitions = bool(cfg.EVALUATION.get("save_imagination_transitions", False))
+    needs_language_feature = save_imagination_transitions or (
+        residual_policy is not None and residual_policy.requires_language_conditioning
+    )
+    language_feature = None
+    language_encoder_version = None
+    if needs_language_feature:
+        if not hasattr(model, "encode_prompt_pooled"):
+            raise ValueError("FastWAM model does not expose encode_prompt_pooled")
+        language_prompt = DEFAULT_PROMPT.format(task=task_description)
+        pooled = model.encode_prompt_pooled([language_prompt])
+        language_feature = pooled[0].detach().cpu().numpy().astype(np.float32, copy=False)
+        language_encoder_version = str(
+            cfg.EVALUATION.get("language_encoder_version", "")
+        ).strip()
+        if not language_encoder_version:
+            raise ValueError(
+                "EVALUATION.language_encoder_version is required when collecting or using "
+                "language-conditioned residual data"
+            )
+        results["language_encoder_version"] = language_encoder_version
+        results["language_feature_sha256"] = array_sha256(language_feature)
     results["action_mode"] = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
     results["imagination_transition_count"] = 0
     results["valid_imagination_transition_count"] = 0
@@ -894,6 +923,7 @@ def run_single_task(
             input_h=input_h,
             model_device=model_device,
             residual_policy=residual_policy,
+            language_feature=language_feature,
         )
         if success:
             results["successes"] += 1
@@ -974,6 +1004,9 @@ def run_single_task(
                             "policy_version": str(cfg.ckpt),
                             "predictor_version": str(cfg.ckpt),
                             "reward_encoder_version": "raw_images_not_encoded",
+                            "language_encoder_version": language_encoder_version,
+                            "language_pooling": "umt5_masked_mean_v1",
+                            "language_prompt_template": DEFAULT_PROMPT,
                         }
                         if clip.get("residual_checkpoint") is not None:
                             metadata.update(
@@ -1014,6 +1047,9 @@ def run_single_task(
                                 ),
                                 "executed_actions": executed_actions,
                                 "environment_rewards": environment_rewards,
+                                "language_feature": np.asarray(
+                                    clip["language_feature"], dtype=np.float32
+                                ),
                             },
                         )
                         results["imagination_transition_count"] += 1
@@ -1082,6 +1118,9 @@ def eval_single_process(cfg: DictConfig):
             device=residual_device,
             encoder_dtype=residual_dtype,
             encoder_version=str(cfg.EVALUATION.residual_encoder_version),
+            language_encoder_version=str(
+                cfg.EVALUATION.get("language_encoder_version", "")
+            ),
             camera_image_size=int(
                 cfg.EVALUATION.get("residual_camera_image_size", 224)
             ),

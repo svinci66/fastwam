@@ -22,8 +22,8 @@ from .rewards import (
 )
 
 
-REPLAY_SCHEMA_VERSION = 2
-_SUPPORTED_REPLAY_SCHEMA_VERSIONS = {1, REPLAY_SCHEMA_VERSION}
+REPLAY_SCHEMA_VERSION = 3
+_SUPPORTED_REPLAY_SCHEMA_VERSIONS = {1, 2, REPLAY_SCHEMA_VERSION}
 _ARRAY_FILE = "arrays.npz"
 _METADATA_FILE = "transitions.jsonl"
 _MANIFEST_FILE = "manifest.json"
@@ -81,6 +81,8 @@ class ReplayTransition:
     environment_rewards: np.ndarray
     reward: RewardBreakdown
     imagination_reward_type: str = "progress_v1"
+    language_feature: np.ndarray | None = None
+    language_encoder_version: str | None = None
 
     def validate(self) -> None:
         if not self.episode_id.strip():
@@ -128,6 +130,15 @@ class ReplayTransition:
             )
         if self.reward.alignment_valid != self.alignment_valid:
             raise ValueError("reward and transition alignment_valid flags disagree")
+
+        if (self.language_feature is None) != (self.language_encoder_version is None):
+            raise ValueError(
+                "language_feature and language_encoder_version must be recorded together"
+            )
+        if self.language_feature is not None:
+            _finite_float32(self.language_feature, "language_feature", ndim=1)
+            if not str(self.language_encoder_version).strip():
+                raise ValueError("language_encoder_version must not be empty")
 
         observation = _finite_float32(self.observation_feature, "observation_feature", ndim=1)
         next_observation = _finite_float32(
@@ -178,6 +189,7 @@ class ReplayTransition:
             "executed_actions",
             "environment_rewards",
             "reward",
+            "language_feature",
         }
         result = {
             key: value
@@ -228,6 +240,13 @@ class ReplayBuffer:
                 raise ValueError(f"transition shapes differ from replay schema: {mismatches}")
             if transition.reward_encoder_version != first.reward_encoder_version:
                 raise ValueError("a replay shard cannot mix reward encoder versions")
+            if (transition.language_feature is None) != (first.language_feature is None):
+                raise ValueError("a replay shard cannot mix transitions with and without language")
+            if transition.language_feature is not None:
+                if transition.language_feature.shape != first.language_feature.shape:
+                    raise ValueError("language feature shapes differ within replay shard")
+                if transition.language_encoder_version != first.language_encoder_version:
+                    raise ValueError("a replay shard cannot mix language encoder versions")
             if transition.imagination_reward_type != first.imagination_reward_type:
                 raise ValueError("a replay shard cannot mix imagination reward types")
             if transition.target_k != first.target_k:
@@ -238,7 +257,7 @@ class ReplayBuffer:
     def arrays(self) -> dict[str, np.ndarray]:
         if not self.transitions:
             raise ValueError("cannot materialize an empty replay")
-        return {
+        arrays = {
             "observation_feature": np.stack(
                 [item.observation_feature for item in self.transitions]
             ).astype(np.float32),
@@ -274,6 +293,11 @@ class ReplayBuffer:
                 [item.reward.total for item in self.transitions], dtype=np.float32
             ),
         }
+        if self.transitions[0].language_feature is not None:
+            arrays["language_feature"] = np.stack(
+                [item.language_feature for item in self.transitions]
+            ).astype(np.float32)
+        return arrays
 
     def monte_carlo_returns(
         self,
@@ -414,6 +438,7 @@ class ReplayBuffer:
                 "num_transitions": len(self.transitions),
                 "target_k": self.transitions[0].target_k,
                 "reward_encoder_version": self.transitions[0].reward_encoder_version,
+                "language_encoder_version": self.transitions[0].language_encoder_version,
                 "imagination_reward_type": self.transitions[0].imagination_reward_type,
                 "provenance": dict(provenance or {}),
                 "array_shapes": {key: list(value.shape) for key, value in arrays.items()},
@@ -462,6 +487,8 @@ class ReplayBuffer:
             reward = RewardBreakdown(**record.pop("reward"))
             if schema_version == 1:
                 record.setdefault("imagination_reward_type", "progress_v1")
+            if schema_version < 3:
+                record.setdefault("language_encoder_version", None)
             transition = ReplayTransition(
                 **record,
                 observation_feature=arrays["observation_feature"][index],
@@ -472,6 +499,11 @@ class ReplayBuffer:
                 baseline_actions=arrays["baseline_actions"][index],
                 executed_actions=arrays["executed_actions"][index],
                 environment_rewards=arrays["environment_rewards"][index],
+                language_feature=(
+                    arrays["language_feature"][index]
+                    if "language_feature" in arrays
+                    else None
+                ),
                 reward=reward,
             )
             transitions.append(transition)

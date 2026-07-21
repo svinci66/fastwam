@@ -32,6 +32,7 @@ class AWRConfig:
     epochs: int = 20
     max_grad_norm: float = 1.0
     use_goal_conditioning: bool = False
+    balance_tasks: bool = False
     seed: int = 42
 
     def validate(self) -> None:
@@ -118,7 +119,12 @@ def compute_awr_losses(
         batch["goal_feature"],
         use_goal_conditioning=config.use_goal_conditioning,
     )
-    values = critic(context)
+    language_feature = batch.get("language_feature")
+    values = critic(
+        context,
+        baseline_actions=batch["baseline_actions"],
+        language_feature=language_feature,
+    )
     returns = batch["return_to_go"]
     critic_loss = torch.mean(torch.square(values - returns))
     weights = advantage_weights(
@@ -128,7 +134,11 @@ def compute_awr_losses(
         maximum=config.max_advantage_weight,
         normalize=config.normalize_advantage_weights,
     )
-    predicted_actions = actor(context, batch["baseline_actions"])
+    predicted_actions = actor(
+        context,
+        batch["baseline_actions"],
+        language_feature=language_feature,
+    )
     action_error = masked_action_mse(
         predicted_actions,
         batch["executed_actions"],
@@ -161,6 +171,13 @@ class ReplayTensorDataset(Dataset):
             "effective_k": torch.from_numpy(arrays["effective_k"]),
             "return_to_go": torch.from_numpy(returns),
         }
+        if "language_feature" in arrays:
+            self.tensors["language_feature"] = torch.from_numpy(arrays["language_feature"])
+        task_keys = [(item.task_suite, item.task_id) for item in replay.transitions]
+        unique_tasks = {key: index for index, key in enumerate(sorted(set(task_keys)))}
+        self.task_group_ids = torch.tensor(
+            [unique_tasks[key] for key in task_keys], dtype=torch.int64
+        )
 
     def __len__(self) -> int:
         return int(self.tensors["return_to_go"].shape[0])
@@ -189,6 +206,50 @@ class BalancedBatchSampler(Sampler[list[int]]):
             yield batch.tolist()
 
 
+class TaskBalancedBatchSampler(Sampler[list[int]]):
+    """Draw task-uniform minibatches while keeping a fixed epoch sample budget."""
+
+    def __init__(
+        self,
+        task_group_ids: torch.Tensor,
+        maximum_batch_size: int,
+        *,
+        generator: torch.Generator,
+    ):
+        labels = torch.as_tensor(task_group_ids, dtype=torch.int64).reshape(-1)
+        if labels.numel() <= 0 or maximum_batch_size <= 0:
+            raise ValueError("task labels and maximum_batch_size must be non-empty/positive")
+        self.groups = [
+            torch.nonzero(labels == label, as_tuple=False).flatten()
+            for label in torch.unique(labels, sorted=True)
+        ]
+        self.dataset_size = int(labels.numel())
+        self.maximum_batch_size = int(maximum_batch_size)
+        self.generator = generator
+        self.num_batches = int(np.ceil(self.dataset_size / self.maximum_batch_size))
+
+    def __len__(self) -> int:
+        return self.num_batches
+
+    def __iter__(self):
+        queues: list[list[int]] = [[] for _ in self.groups]
+
+        def draw(group_index: int) -> int:
+            if not queues[group_index]:
+                group = self.groups[group_index]
+                order = torch.randperm(len(group), generator=self.generator)
+                queues[group_index] = group[order].tolist()
+            return queues[group_index].pop()
+
+        sizes = [len(batch) for batch in torch.tensor_split(torch.arange(self.dataset_size), self.num_batches)]
+        offset = int(torch.randint(len(self.groups), (1,), generator=self.generator).item())
+        for batch_size in sizes:
+            batch = [draw((offset + slot) % len(self.groups)) for slot in range(batch_size)]
+            offset = (offset + batch_size) % len(self.groups)
+            order = torch.randperm(len(batch), generator=self.generator).tolist()
+            yield [batch[index] for index in order]
+
+
 def train_residual_awr(
     actor: ResidualActor,
     critic: ValueCritic,
@@ -208,8 +269,10 @@ def train_residual_awr(
     critic.to(device)
     dataset = ReplayTensorDataset(replay, returns)
     generator = torch.Generator().manual_seed(config.seed)
-    batch_sampler = BalancedBatchSampler(
-        len(dataset),
+    sampler_type = TaskBalancedBatchSampler if config.balance_tasks else BalancedBatchSampler
+    sampler_input = dataset.task_group_ids if config.balance_tasks else len(dataset)
+    batch_sampler = sampler_type(
+        sampler_input,
         min(config.batch_size, len(dataset)),
         generator=generator,
     )
@@ -239,7 +302,11 @@ def train_residual_awr(
                 batch["goal_feature"],
                 use_goal_conditioning=config.use_goal_conditioning,
             )
-            critic_values = critic(context)
+            critic_values = critic(
+                context,
+                baseline_actions=batch["baseline_actions"],
+                language_feature=batch.get("language_feature"),
+            )
             critic_loss = torch.mean(torch.square(critic_values - batch["return_to_go"]))
             critic_loss.backward()
             nn.utils.clip_grad_norm_(critic.parameters(), config.max_grad_norm)

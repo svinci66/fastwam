@@ -129,6 +129,11 @@ def main() -> None:
     proprio_dim = int(arrays["proprio"].shape[1])
     action_horizon = int(arrays["baseline_actions"].shape[1])
     action_dim = int(arrays["baseline_actions"].shape[2])
+    language_feature_dim = (
+        int(arrays["language_feature"].shape[1])
+        if "language_feature" in arrays
+        else 0
+    )
     action_mask = (
         np.arange(action_horizon)[None, :] < arrays["effective_k"][:, None]
     )[..., None]
@@ -148,14 +153,29 @@ def main() -> None:
     if awr_config.use_goal_conditioning:
         context_dim += feature_dim
     model_cfg = dict(cfg["model"])
+    language_embedding_dim = int(model_cfg.get("language_embedding_dim", 0))
+    if language_embedding_dim > 0 and language_feature_dim == 0:
+        raise ValueError(
+            "model requests language conditioning but replay has no language_feature array"
+        )
     model_cfg.update(
         context_dim=context_dim,
         action_horizon=action_horizon,
         action_dim=action_dim,
+        language_feature_dim=(language_feature_dim if language_embedding_dim > 0 else 0),
     )
-    actor = ResidualActor(ResidualActorConfig(**model_cfg))
+    actor_config = ResidualActorConfig(**model_cfg)
+    actor = ResidualActor(actor_config)
     critic = ValueCritic(
-        ValueCriticConfig(context_dim=context_dim, hidden_dims=tuple(cfg["critic_hidden_dims"]))
+        ValueCriticConfig(
+            context_dim=context_dim,
+            hidden_dims=tuple(cfg["critic_hidden_dims"]),
+            action_horizon=action_horizon,
+            action_dim=action_dim,
+            language_feature_dim=actor_config.language_feature_dim,
+            language_embedding_dim=actor_config.language_embedding_dim,
+            baseline_action_embedding_dim=actor_config.baseline_action_embedding_dim,
+        )
     )
     initialization_sha256 = {
         "actor": _state_dict_sha256(actor),
@@ -168,11 +188,24 @@ def main() -> None:
         "proprio_dim": proprio_dim,
         "action_horizon": action_horizon,
         "action_dim": action_dim,
+        "language_feature_dim": language_feature_dim,
+        "language_conditioning": actor_config.language_feature_dim > 0,
+        "baseline_action_conditioning": actor_config.baseline_action_embedding_dim > 0,
         "executed_residual_rms": executed_residual_rms,
         "behavior_mode_counts": {
             mode: sum(transition.behavior_mode == mode for transition in replay.transitions)
             for mode in sorted({transition.behavior_mode for transition in replay.transitions})
         },
+        "task_transition_counts": {
+            f"{suite}/task{task_id}": sum(
+                transition.task_suite == suite and transition.task_id == task_id
+                for transition in replay.transitions
+            )
+            for suite, task_id in sorted(
+                {(transition.task_suite, transition.task_id) for transition in replay.transitions}
+            )
+        },
+        "task_balancing": awr_config.balance_tasks,
         "context_dim": context_dim,
         "reward_mean": float(np.mean(transition_rewards)),
         "reward_min": float(np.min(transition_rewards)),
@@ -193,6 +226,7 @@ def main() -> None:
         "training_seed": awr_config.seed,
         "initialization_sha256": initialization_sha256,
         "reward_encoder_version": replay_manifest["reward_encoder_version"],
+        "language_encoder_version": replay_manifest.get("language_encoder_version"),
         "imagination_reward_type": replay_manifest.get(
             "imagination_reward_type", "progress_v1"
         ),
@@ -219,7 +253,7 @@ def main() -> None:
         device=device_name,
     )
     checkpoint = {
-        "format": "fastwam_residual_awr_v1",
+        "format": "fastwam_residual_awr_v2",
         "actor": actor.state_dict(),
         "critic": critic.state_dict(),
         "actor_config": actor.export_config(),

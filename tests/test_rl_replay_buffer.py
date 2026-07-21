@@ -18,6 +18,7 @@ def make_transition(
     terminated: bool = False,
     truncated: bool = False,
     imagination_progress: float = 0.05,
+    with_language: bool = False,
 ) -> ReplayTransition:
     baseline = np.zeros((8, 7), dtype=np.float32)
     executed = baseline.copy()
@@ -65,6 +66,10 @@ def make_transition(
         executed_actions=executed,
         environment_rewards=np.zeros(8, dtype=np.float32),
         reward=reward,
+        language_feature=(
+            np.array([0.25, -0.5, 1.0], dtype=np.float32) if with_language else None
+        ),
+        language_encoder_version=("umt5-test-v1" if with_language else None),
     )
 
 
@@ -84,8 +89,20 @@ def test_replay_round_trip_is_checksummed_and_lossless(tmp_path):
     )
     assert loaded.transitions[1].reward == replay.transitions[1].reward
     manifest = json.loads((output / "manifest.json").read_text())
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["num_transitions"] == 2
+
+
+def test_language_conditioned_replay_round_trip(tmp_path):
+    transition = make_transition("episode-language", 0, terminated=True, with_language=True)
+    output = ReplayBuffer([transition]).save(tmp_path / "language-replay")
+    loaded = ReplayBuffer.load(output)
+    np.testing.assert_array_equal(
+        loaded.transitions[0].language_feature,
+        transition.language_feature,
+    )
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["language_encoder_version"] == "umt5-test-v1"
 
 
 def test_replay_checksum_detects_tampering(tmp_path):

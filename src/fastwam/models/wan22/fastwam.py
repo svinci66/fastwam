@@ -199,7 +199,7 @@ class FastWAM(torch.nn.Module):
         return height, width, num_frames
 
     @torch.no_grad()
-    def encode_prompt(self, prompt: Union[str, Sequence[str]]):
+    def _encode_prompt_tokens(self, prompt: Union[str, Sequence[str]]):
         if self.text_encoder is None or self.tokenizer is None:
             raise ValueError(
                 "Prompt encoding requires loaded text encoder/tokenizer. "
@@ -213,8 +213,23 @@ class FastWAM(torch.nn.Module):
         seq_lens = mask.gt(0).sum(dim=1).long()
         for i, v in enumerate(seq_lens):
             prompt_emb[i, v:] = 0
-        mask = torch.ones_like(mask)
         return prompt_emb.to(device=self.device), mask
+
+    @torch.no_grad()
+    def encode_prompt(self, prompt: Union[str, Sequence[str]]):
+        prompt_emb, token_mask = self._encode_prompt_tokens(prompt)
+        # Preserve the released FastWAM cross-attention behavior.  Residual-RL
+        # pooling below intentionally uses the true tokenizer mask instead.
+        return prompt_emb, torch.ones_like(token_mask)
+
+    @torch.no_grad()
+    def encode_prompt_pooled(self, prompt: Union[str, Sequence[str]]) -> torch.Tensor:
+        """Return one frozen UMT5 feature per instruction using masked mean pooling."""
+
+        prompt_emb, token_mask = self._encode_prompt_tokens(prompt)
+        weights = token_mask.to(dtype=prompt_emb.dtype).unsqueeze(-1)
+        pooled = (prompt_emb * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1.0)
+        return pooled.float()
 
     def _append_proprio_to_context(
         self,

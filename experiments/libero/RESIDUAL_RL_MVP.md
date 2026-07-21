@@ -289,6 +289,28 @@ with `EVALUATION.action_mode=policy` (omitting the residual options) for the fro
 FastWAM baseline. A single episode is only a smoke test; report the predeclared task
 set and trial count for the formal comparison.
 
+## Formal multi-task conditioning
+
+The cross-task learner must use the two matched configs below instead of the original
+single-task smoke configs:
+
+```text
+configs/rl/libero_residual_awr_multitask.yaml
+configs/rl/libero_residual_awr_multitask_no_imagination.yaml
+```
+
+For every task, the collector now computes one masked-mean feature from FastWAM's
+frozen Wan UMT5-XXL prompt encoder and stores it in replay schema v3.  SigLIP remains
+the frozen two-camera observation/reward encoder; it is not used as the instruction
+encoder.  Both actor and critic receive the state context, the UMT5 instruction
+feature, and the frozen FastWAM baseline action chunk.  The formal configs also draw
+task-uniform minibatches so a large task shard cannot dominate training.
+
+Old schema-v1/v2 replay shards and v1 residual checkpoints remain readable, but they
+do not acquire language conditioning retroactively.  Formal multi-task training must
+therefore recollect/export schema-v3 transitions and must record the immutable UMT5
+encoder/pooling identifier.
+
 ## Outputs
 
 The learner writes:

@@ -3,6 +3,7 @@ import torch
 from fastwam.rl.awr_trainer import (
     AWRConfig,
     BalancedBatchSampler,
+    TaskBalancedBatchSampler,
     advantage_weights,
     compute_awr_losses,
     masked_action_mse,
@@ -89,3 +90,91 @@ def test_balanced_batch_sampler_avoids_tiny_final_batch():
     batches = list(sampler)
     assert [len(batch) for batch in batches] == [36, 36]
     assert sorted(index for batch in batches for index in batch) == list(range(72))
+
+
+def test_actor_and_critic_use_language_and_baseline_conditioning():
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=4,
+            action_horizon=2,
+            action_dim=3,
+            hidden_dims=(8,),
+            language_feature_dim=5,
+            language_embedding_dim=3,
+            baseline_action_embedding_dim=4,
+            residual_scale=(0.05, 0.1, 0.0),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+        )
+    )
+    critic = ValueCritic(
+        ValueCriticConfig(
+            context_dim=4,
+            hidden_dims=(8,),
+            action_horizon=2,
+            action_dim=3,
+            language_feature_dim=5,
+            language_embedding_dim=3,
+            baseline_action_embedding_dim=4,
+        )
+    )
+    context = torch.randn(2, 4)
+    baseline = torch.randn(2, 2, 3)
+    language = torch.randn(2, 5)
+    assert actor(context, baseline, language).shape == baseline.shape
+    assert critic(context, baseline, language).shape == (2,)
+
+
+def test_awr_loss_passes_formal_conditioning_to_actor_and_critic():
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=6,
+            action_horizon=2,
+            action_dim=3,
+            hidden_dims=(8,),
+            language_feature_dim=5,
+            language_embedding_dim=3,
+            baseline_action_embedding_dim=4,
+            residual_scale=(0.05, 0.1, 0.0),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+        )
+    )
+    critic = ValueCritic(
+        ValueCriticConfig(
+            context_dim=6,
+            hidden_dims=(8,),
+            action_horizon=2,
+            action_dim=3,
+            language_feature_dim=5,
+            language_embedding_dim=3,
+            baseline_action_embedding_dim=4,
+        )
+    )
+    batch = {
+        "observation_feature": torch.randn(4, 2),
+        "proprio": torch.randn(4, 4),
+        "goal_feature": torch.randn(4, 2),
+        "language_feature": torch.randn(4, 5),
+        "baseline_actions": torch.zeros(4, 2, 3),
+        "executed_actions": torch.randn(4, 2, 3) * 0.01,
+        "effective_k": torch.tensor([2, 2, 1, 2]),
+        "return_to_go": torch.tensor([1.0, 0.5, -0.5, 0.0]),
+    }
+    losses = compute_awr_losses(actor, critic, batch, AWRConfig())
+    assert torch.isfinite(losses["actor_loss"])
+    assert torch.isfinite(losses["critic_loss"])
+
+
+def test_task_balanced_sampler_oversamples_small_task_without_changing_epoch_size():
+    labels = torch.tensor([0] * 8 + [1] * 2)
+    sampler = TaskBalancedBatchSampler(
+        labels,
+        5,
+        generator=torch.Generator().manual_seed(42),
+    )
+    indices = [index for batch in sampler for index in batch]
+    sampled_labels = labels[indices]
+    assert len(indices) == len(labels)
+    assert int((sampled_labels == 0).sum()) == 5
+    assert int((sampled_labels == 1).sum()) == 5

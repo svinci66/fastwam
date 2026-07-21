@@ -48,6 +48,39 @@ def test_residual_checkpoint_loader_rejects_goal_conditioning(tmp_path: Path):
         load_residual_actor_checkpoint(path, device="cpu")
 
 
+def test_residual_checkpoint_loader_keeps_v1_backward_compatibility(tmp_path: Path):
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=4,
+            action_horizon=2,
+            action_dim=3,
+            residual_scale=(0.05, 0.1, 0.0),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+        )
+    )
+    legacy_config = actor.export_config()
+    for key in (
+        "language_feature_dim",
+        "language_embedding_dim",
+        "baseline_action_embedding_dim",
+    ):
+        legacy_config.pop(key)
+    path = tmp_path / "legacy-checkpoint.pt"
+    torch.save(
+        {
+            "format": "fastwam_residual_awr_v1",
+            "actor": actor.state_dict(),
+            "actor_config": legacy_config,
+            "awr_config": {"use_goal_conditioning": False},
+        },
+        path,
+    )
+    loaded, payload = load_residual_actor_checkpoint(path, device="cpu")
+    assert payload["format"] == "fastwam_residual_awr_v1"
+    assert loaded.config.language_feature_dim == 0
+
+
 def test_online_residual_policy_corrects_prefix_and_preserves_gripper():
     config = ResidualActorConfig(
         context_dim=4,
@@ -88,3 +121,42 @@ def test_online_residual_policy_corrects_prefix_and_preserves_gripper():
     assert np.all(output.residual_actions[:, 0] > 0.0)
     assert np.all(output.residual_actions[:, 1] < 0.0)
     np.testing.assert_array_equal(output.residual_actions[:, -1], 0.0)
+
+
+def test_online_language_conditioning_is_required_when_checkpoint_uses_it():
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=4,
+            action_horizon=2,
+            action_dim=3,
+            hidden_dims=(4,),
+            language_feature_dim=5,
+            language_embedding_dim=3,
+            baseline_action_embedding_dim=2,
+            residual_scale=(0.05, 0.1, 0.0),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+        )
+    )
+    policy = OnlineResidualPolicy(
+        actor=actor,
+        image_processor=None,
+        vision_encoder=torch.nn.Identity(),
+        device="cpu",
+        encoder_dtype=torch.float32,
+        checkpoint_path="checkpoint.pt",
+        encoder_path="encoder",
+        encoder_version="encoder-v1",
+    )
+    kwargs = {
+        "observation_feature": np.ones(2, dtype=np.float32),
+        "proprio": np.ones(2, dtype=np.float32),
+        "baseline_actions": np.zeros((2, 3), dtype=np.float32),
+    }
+    with pytest.raises(ValueError, match="language_feature is required"):
+        policy.correct_from_feature(**kwargs)
+    output = policy.correct_from_feature(
+        **kwargs,
+        language_feature=np.ones(5, dtype=np.float32),
+    )
+    assert output.corrected_actions.shape == (2, 3)

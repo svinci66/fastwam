@@ -190,6 +190,8 @@ def build_replay(
         )
         with np.load(record["arrays_path"], allow_pickle=False) as payload:
             arrays = {key: payload[key] for key in payload.files}
+        language_feature = arrays.get("language_feature")
+        language_encoder_version = record.get("language_encoder_version")
         target_k = int(record["target_step"])
         effective_k = int(record["effective_k"])
         breakdown = compute_composite_reward(
@@ -237,6 +239,8 @@ def build_replay(
                 environment_rewards=arrays["environment_rewards"],
                 reward=breakdown,
                 imagination_reward_type=reward_config.imagination_reward_type,
+                language_feature=language_feature,
+                language_encoder_version=language_encoder_version,
             )
         )
     return replay
@@ -253,6 +257,27 @@ def main() -> None:
         None if imitation_scales is None else np.asarray(imitation_scales, dtype=np.float32)
     )
     records = discover_records(args.input_dir)
+    language_versions = {
+        str(record["language_encoder_version"])
+        for record in records
+        if record.get("language_encoder_version") is not None
+    }
+    records_with_language = sum(
+        record.get("language_encoder_version") is not None for record in records
+    )
+    if records_with_language not in {0, len(records)}:
+        raise ValueError("raw transitions cannot mix records with and without language features")
+    if len(language_versions) > 1:
+        raise ValueError(f"raw transitions mix language encoder versions: {language_versions}")
+    language_prompt_templates = {
+        str(record["language_prompt_template"])
+        for record in records
+        if record.get("language_prompt_template") is not None
+    }
+    if records_with_language and len(language_prompt_templates) != 1:
+        raise ValueError(
+            "language-conditioned raw transitions must share one prompt template"
+        )
     encoded = encode_record_images(
         records,
         encoder_path=args.encoder_path,
@@ -279,6 +304,17 @@ def main() -> None:
             },
             "camera_image_size": 224,
             "feature_fusion": "per_camera_l2_then_agent_wrist_concat_l2_v1",
+            "language_encoder_version": (
+                next(iter(language_versions)) if language_versions else None
+            ),
+            "language_pooling": (
+                "umt5_masked_mean_v1" if language_versions else None
+            ),
+            "language_prompt_template": (
+                next(iter(language_prompt_templates))
+                if language_prompt_templates
+                else None
+            ),
         },
     )
     print(json.dumps({"output_dir": str(output), "num_transitions": len(replay)}, indent=2))

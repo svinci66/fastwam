@@ -14,7 +14,11 @@ from .models import ResidualActor, ResidualActorConfig
 
 
 LIBERO_RESIDUAL_CAMERA_NAMES = ("agent", "wrist")
-RESIDUAL_CHECKPOINT_FORMAT = "fastwam_residual_awr_v1"
+RESIDUAL_CHECKPOINT_FORMAT = "fastwam_residual_awr_v2"
+_SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS = {
+    "fastwam_residual_awr_v1",
+    RESIDUAL_CHECKPOINT_FORMAT,
+}
 RESIDUAL_FEATURE_FUSION = "per_camera_l2_then_agent_wrist_concat_l2_v1"
 
 
@@ -39,10 +43,10 @@ def load_residual_actor_checkpoint(
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(payload, dict):
         raise ValueError(f"Residual checkpoint must be a mapping, got {type(payload)}")
-    if payload.get("format") != RESIDUAL_CHECKPOINT_FORMAT:
+    if payload.get("format") not in _SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS:
         raise ValueError(
             f"Unsupported residual checkpoint format {payload.get('format')!r}; "
-            f"expected {RESIDUAL_CHECKPOINT_FORMAT!r}."
+            f"expected one of {sorted(_SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS)}."
         )
     if not isinstance(payload.get("actor"), dict) or not isinstance(
         payload.get("actor_config"), dict
@@ -130,6 +134,7 @@ class OnlineResidualPolicy:
         checkpoint_path: str | Path,
         encoder_path: str | Path,
         encoder_version: str,
+        language_encoder_version: str | None = None,
         camera_image_size: int = 224,
     ):
         if camera_image_size <= 0:
@@ -142,6 +147,11 @@ class OnlineResidualPolicy:
         self.checkpoint_path = str(Path(checkpoint_path).expanduser().resolve())
         self.encoder_path = str(Path(encoder_path).expanduser().resolve())
         self.encoder_version = str(encoder_version)
+        self.language_encoder_version = (
+            None
+            if language_encoder_version is None
+            else str(language_encoder_version).strip()
+        )
         self.camera_image_size = int(camera_image_size)
 
     @classmethod
@@ -153,6 +163,7 @@ class OnlineResidualPolicy:
         device: torch.device | str,
         encoder_dtype: torch.dtype,
         encoder_version: str,
+        language_encoder_version: str | None = None,
         camera_image_size: int = 224,
         allow_legacy_provenance: bool = False,
     ) -> "OnlineResidualPolicy":
@@ -217,6 +228,31 @@ class OnlineResidualPolicy:
                 "Residual actor context_dim does not match feature_dim + proprio_dim: "
                 f"actor={actor.config.context_dim} expected={expected_context_dim}."
             )
+        if actor.config.language_feature_dim > 0:
+            if int(summary.get("language_feature_dim", -1)) != actor.config.language_feature_dim:
+                raise ValueError(
+                    "Residual language feature dimension is inconsistent between actor and summary."
+                )
+            checkpoint_language_version = (
+                ""
+                if not isinstance(provenance, dict)
+                else str(provenance.get("language_encoder_version", "")).strip()
+            )
+            requested_language_version = str(language_encoder_version or "").strip()
+            if not checkpoint_language_version:
+                raise ValueError(
+                    "Language-conditioned residual checkpoint lacks language encoder provenance."
+                )
+            if not requested_language_version:
+                raise ValueError(
+                    "language_encoder_version is required for a language-conditioned checkpoint."
+                )
+            if checkpoint_language_version != requested_language_version:
+                raise ValueError(
+                    "Residual language encoder provenance mismatch: "
+                    f"checkpoint={checkpoint_language_version!r} "
+                    f"requested={requested_language_version!r}."
+                )
         return cls(
             actor=actor,
             image_processor=image_processor,
@@ -226,6 +262,7 @@ class OnlineResidualPolicy:
             checkpoint_path=checkpoint_path,
             encoder_path=encoder_path,
             encoder_version=encoder_version,
+            language_encoder_version=language_encoder_version,
             camera_image_size=camera_image_size,
         )
 
@@ -236,6 +273,10 @@ class OnlineResidualPolicy:
     @property
     def action_dim(self) -> int:
         return int(self.actor.config.action_dim)
+
+    @property
+    def requires_language_conditioning(self) -> bool:
+        return self.actor.config.language_feature_dim > 0
 
     def encode_observation(self, camera_images: Mapping[str, Any]) -> np.ndarray:
         if set(camera_images) != set(LIBERO_RESIDUAL_CAMERA_NAMES):
@@ -271,6 +312,7 @@ class OnlineResidualPolicy:
         observation_feature: np.ndarray,
         proprio: np.ndarray,
         baseline_actions: np.ndarray,
+        language_feature: np.ndarray | None = None,
     ) -> ResidualPolicyOutput:
         feature = np.asarray(observation_feature, dtype=np.float32).reshape(-1)
         state = np.asarray(proprio, dtype=np.float32).reshape(-1)
@@ -300,8 +342,24 @@ class OnlineResidualPolicy:
             .unsqueeze(0)
             .to(self.device)
         )
+        actor_language = None
+        if self.requires_language_conditioning:
+            if language_feature is None:
+                raise ValueError("language_feature is required by this residual checkpoint")
+            language = np.asarray(language_feature, dtype=np.float32).reshape(-1)
+            expected_language = (self.actor.config.language_feature_dim,)
+            if language.shape != expected_language or not np.all(np.isfinite(language)):
+                raise ValueError(
+                    f"language_feature must be finite with shape {expected_language}, "
+                    f"got {language.shape}"
+                )
+            actor_language = torch.from_numpy(language).unsqueeze(0).to(self.device)
         with torch.inference_mode():
-            corrected_prefix = self.actor(actor_context, actor_baseline)[0].cpu().numpy()
+            corrected_prefix = self.actor(
+                actor_context,
+                actor_baseline,
+                language_feature=actor_language,
+            )[0].cpu().numpy()
         corrected = baseline.copy()
         corrected[: self.action_horizon] = corrected_prefix
         residual = corrected_prefix - baseline[: self.action_horizon]
@@ -319,9 +377,11 @@ class OnlineResidualPolicy:
         camera_images: Mapping[str, Any],
         proprio: np.ndarray,
         baseline_actions: np.ndarray,
+        language_feature: np.ndarray | None = None,
     ) -> ResidualPolicyOutput:
         return self.correct_from_feature(
             observation_feature=self.encode_observation(camera_images),
             proprio=proprio,
             baseline_actions=baseline_actions,
+            language_feature=language_feature,
         )
