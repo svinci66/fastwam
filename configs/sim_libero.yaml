@@ -17,6 +17,9 @@ EVALUATION:
   task_suite_name: libero_spatial
   task_id: 0
   num_trials: 50
+  # Optional exact LIBERO initial-state indices. When set, this replaces
+  # range(num_trials) and is useful for paired determinism audits.
+  trial_indices: null
   output_dir: ./evaluate_results/libero/${hydra:runtime.choices.task}/${now:%Y%m%d_%H%M%S}
 
   # Runtime behavior
@@ -27,6 +30,14 @@ EVALUATION:
   use_action_ensembler: false
   visualize_future_video: false
   save_imagination_transitions: false
+  # Record per-replan hashes for initial state, observations, proprio, baseline
+  # action, residual action, and corrected action without saving raw tensors.
+  record_action_hashes: false
+  # Determinism-audit mode. The environment flag preserves the MuJoCo model
+  # across resets; the algorithm flag enables deterministic PyTorch kernels.
+  deterministic_env: false
+  deterministic_algorithms: false
+  deterministic_warn_only: true
   # Keep the released direct policy's infer_action output while separately
   # collecting its predicted future video for reward validation.
   imagination_use_direct_action: false

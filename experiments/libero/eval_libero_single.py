@@ -2,6 +2,7 @@ import json
 import inspect
 import logging
 import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,7 @@ from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_js
 from fastwam.utils.pytorch_utils import set_global_seed
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
 from fastwam.rl.online_policy import OnlineResidualPolicy
+from fastwam.rl.audit import array_sha256, resolve_trial_indices
 from libero.libero import benchmark
 from action_ensembler import ActionEnsembler
 
@@ -53,6 +55,27 @@ OmegaConf.register_new_resolver("max", lambda x: max(x))
 OmegaConf.register_new_resolver("split", lambda s, idx: s.split("/")[int(idx)])
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
+def _configure_deterministic_algorithms(cfg: DictConfig) -> dict[str, Any]:
+    enabled = bool(cfg.EVALUATION.get("deterministic_algorithms", False))
+    warn_only = bool(cfg.EVALUATION.get("deterministic_warn_only", True))
+    if enabled:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        torch.use_deterministic_algorithms(True, warn_only=warn_only)
+        if torch.backends.cudnn.is_available():
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = False
+    return {
+        "enabled": enabled,
+        "warn_only": warn_only,
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        "cudnn_benchmark": bool(torch.backends.cudnn.benchmark),
+        "cudnn_deterministic": bool(torch.backends.cudnn.deterministic),
+        "cuda_matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+    }
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -525,7 +548,15 @@ def run_single_episode(
     input_h: int,
     model_device: str,
     residual_policy: Optional[OnlineResidualPolicy] = None,
-) -> tuple[bool, list, list[dict[str, Any]], Optional[float], int, Optional[float]]:
+) -> tuple[
+    bool,
+    list,
+    list[dict[str, Any]],
+    Optional[float],
+    int,
+    Optional[float],
+    Optional[dict[str, Any]],
+]:
     max_steps = _get_max_steps(cfg.EVALUATION.task_suite_name)
     replan_steps = int(cfg.EVALUATION.get("replan_steps", 5))
     num_steps_wait = int(cfg.EVALUATION.get("num_steps_wait", 5))
@@ -548,6 +579,16 @@ def run_single_episode(
     current_replan_idx = -1
     episode_policy_steps = 0
     episode_residual_values: list[float] = []
+    action_replan_index = -1
+    record_action_hashes = bool(cfg.EVALUATION.get("record_action_hashes", False))
+    action_audit = (
+        {
+            "initial_state_sha256": array_sha256(initial_state),
+            "replans": [],
+        }
+        if record_action_hashes
+        else None
+    )
     action_mode = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
     action_noise_std = float(cfg.EVALUATION.get("action_noise_std", 0.15))
     base_seed = 0 if cfg.get("seed") is None else int(cfg.seed)
@@ -568,6 +609,7 @@ def run_single_episode(
             continue
 
         if len(pending_actions) == 0:
+            action_replan_index += 1
             action_chunk, imgs, predicted_future_frames = _predict_action_chunk(
                 obs=obs,
                 task_description=task_description,
@@ -599,6 +641,25 @@ def run_single_episode(
                     noise_std=action_noise_std,
                     rng=action_rng,
                 )
+            if action_audit is not None:
+                audit_record = {
+                    "replan_index": action_replan_index,
+                    "agent_image_sha256": array_sha256(imgs["image"]),
+                    "wrist_image_sha256": array_sha256(imgs["wrist_image"]),
+                    "proprio_sha256": array_sha256(_extract_sim_state(obs)),
+                    "baseline_actions_sha256": array_sha256(baseline_action_chunk),
+                    "corrected_actions_sha256": array_sha256(action_chunk),
+                    "executed_prefix_sha256": array_sha256(action_chunk[:replan_steps]),
+                    "residual_actions_sha256": None,
+                }
+                if residual_output is not None:
+                    audit_record["residual_actions_sha256"] = array_sha256(
+                        residual_output.residual_actions
+                    )
+                    audit_record["observation_feature_sha256"] = array_sha256(
+                        residual_output.observation_feature
+                    )
+                action_audit["replans"].append(audit_record)
             if predicted_future_frames is not None:
                 current_replan_idx += 1
                 current_predicted_future_clip = {
@@ -726,6 +787,12 @@ def run_single_episode(
     episode_residual_rms = (
         float(np.mean(episode_residual_values)) if episode_residual_values else None
     )
+    if action_audit is not None:
+        action_audit.update(
+            final_sim_state_sha256=array_sha256(env.get_sim_state()),
+            policy_steps=episode_policy_steps,
+            success=bool(done),
+        )
     return (
         bool(done),
         replay_images,
@@ -733,6 +800,7 @@ def run_single_episode(
         episode_mean_psnr,
         episode_policy_steps,
         episode_residual_rms,
+        action_audit,
     )
 
 
@@ -751,8 +819,16 @@ def run_single_task(
     input_h: int,
     model_device: str,
     residual_policy: Optional[OnlineResidualPolicy] = None,
+    trial_indices: Optional[list[int]] = None,
 ) -> dict:
-    env, task_description = get_libero_env(task, LIBERO_ENV_RESOLUTION, cfg.get("seed"))
+    seed = 0 if cfg.get("seed") is None else int(cfg.seed)
+    deterministic_env = bool(cfg.EVALUATION.get("deterministic_env", False))
+    if deterministic_env:
+        random.seed(seed)
+        np.random.seed(seed)
+    env, task_description = get_libero_env(task, LIBERO_ENV_RESOLUTION, seed)
+    if deterministic_env:
+        env.env.hard_reset = False
     visualize_future_video = bool(cfg.EVALUATION.get("visualize_future_video", False))
     results = {
         "successes": 0,
@@ -774,8 +850,15 @@ def run_single_task(
         results["residual_encoder_version"] = residual_policy.encoder_version
         results["episode_residual_rms"] = []
         results["residual_rms_mean"] = None
+    record_action_hashes = bool(cfg.EVALUATION.get("record_action_hashes", False))
+    if record_action_hashes:
+        results["episode_action_audit"] = []
 
-    for trial_idx in range(int(cfg.EVALUATION.num_trials)):
+    if trial_indices is None:
+        trial_indices = list(range(int(cfg.EVALUATION.num_trials)))
+    results["trial_indices"] = list(trial_indices)
+
+    for trial_idx in trial_indices:
         (
             success,
             replay_images,
@@ -783,6 +866,7 @@ def run_single_task(
             episode_mean_psnr,
             episode_policy_steps,
             episode_residual_rms,
+            action_audit,
         ) = run_single_episode(
             env=env,
             initial_state=initial_states[trial_idx],
@@ -807,6 +891,11 @@ def run_single_task(
         results["episode_policy_steps"].append(int(episode_policy_steps))
         if residual_policy is not None:
             results["episode_residual_rms"].append(episode_residual_rms)
+        if record_action_hashes:
+            if action_audit is None:
+                raise RuntimeError("Action audit was requested but not returned")
+            action_audit["trial_index"] = int(trial_idx)
+            results["episode_action_audit"].append(action_audit)
 
         save_rollout_video(
             video_dir,
@@ -941,6 +1030,7 @@ def run_single_task(
 @hydra.main(version_base="1.3", config_path="../../configs", config_name="sim_libero.yaml")
 def eval_single_process(cfg: DictConfig):
     start_time = time.time()
+    determinism = _configure_deterministic_algorithms(cfg)
     partial_state = PartialState()
     partial_state.config = cfg
 
@@ -1042,16 +1132,27 @@ def eval_single_process(cfg: DictConfig):
     task_suite = benchmark_dict[cfg.EVALUATION.task_suite_name]()
     task = task_suite.get_task(cfg.EVALUATION.task_id)
     initial_states = task_suite.get_task_init_states(cfg.EVALUATION.task_id)
-
-    while len(initial_states) < int(cfg.EVALUATION.num_trials):
-        initial_states.extend(initial_states[: (int(cfg.EVALUATION.num_trials) - len(initial_states))])
+    explicit_trial_indices = cfg.EVALUATION.get("trial_indices", None)
+    trial_indices = resolve_trial_indices(
+        num_trials=int(cfg.EVALUATION.num_trials),
+        trial_indices=explicit_trial_indices,
+        available_states=len(initial_states),
+    )
+    if explicit_trial_indices is None:
+        while len(initial_states) < int(cfg.EVALUATION.num_trials):
+            initial_states.extend(
+                initial_states[: (int(cfg.EVALUATION.num_trials) - len(initial_states))]
+            )
 
     results = {
         "task_suite": cfg.EVALUATION.task_suite_name,
         "task_id": cfg.EVALUATION.task_id,
         "task_description": None,
         "successes": 0,
-        "total_episodes": int(cfg.EVALUATION.num_trials),
+        "total_episodes": len(trial_indices),
+        "trial_indices": trial_indices,
+        "deterministic_env": bool(cfg.EVALUATION.get("deterministic_env", False)),
+        "deterministic_algorithms": determinism,
         "gpu_id": int(cfg.gpu_id),
         "success_episodes": [],
         "failure_episodes": [],
@@ -1074,6 +1175,7 @@ def eval_single_process(cfg: DictConfig):
         input_h=input_h,
         model_device=model_device,
         residual_policy=residual_policy,
+        trial_indices=trial_indices,
     )
     results.update(task_results)
 
@@ -1087,7 +1189,7 @@ def eval_single_process(cfg: DictConfig):
 
     print(
         f"Task {cfg.EVALUATION.task_id} completed: "
-        f"{results['successes']}/{cfg.EVALUATION.num_trials} successes"
+        f"{results['successes']}/{results['total_episodes']} successes"
     )
     if results.get("future_video_psnr_mean") is not None:
         print(f"Task {cfg.EVALUATION.task_id} future-video PSNR mean: {results['future_video_psnr_mean']:.4f}")
