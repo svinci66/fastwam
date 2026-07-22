@@ -17,6 +17,7 @@ import numpy as np
 from .rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
+    IMAGINATION_REWARD_TYPES,
     RewardBreakdown,
     compute_composite_reward,
 )
@@ -100,7 +101,7 @@ class ReplayTransition:
         }
         if any(not value.strip() for value in versions.values()):
             raise ValueError(f"all component versions must be recorded, got {versions}")
-        if self.imagination_reward_type not in {"progress_v1", "delta_alignment_v1"}:
+        if self.imagination_reward_type not in IMAGINATION_REWARD_TYPES:
             raise ValueError(
                 f"unsupported imagination_reward_type: {self.imagination_reward_type!r}"
             )

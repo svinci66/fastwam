@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -7,6 +8,7 @@ from fastwam.rl.replay_buffer import ReplayBuffer, ReplayTransition
 from fastwam.rl.rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
+    GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
     compute_composite_reward,
 )
 
@@ -103,6 +105,19 @@ def test_language_conditioned_replay_round_trip(tmp_path):
     )
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["language_encoder_version"] == "umt5-test-v1"
+
+
+def test_replay_accepts_global_camera_normalized_reward_type(tmp_path):
+    transition = replace(
+        make_transition("episode-normalized", 0, terminated=True),
+        imagination_reward_type=GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
+    )
+    output = ReplayBuffer([transition]).save(tmp_path / "normalized-replay")
+    loaded = ReplayBuffer.load(output)
+    assert (
+        loaded.transitions[0].imagination_reward_type
+        == GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE
+    )
 
 
 def test_replay_checksum_detects_tampering(tmp_path):
