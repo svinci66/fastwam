@@ -503,8 +503,6 @@ def _predict_action_chunk(
         "tiled": bool(cfg.EVALUATION.get("tiled", False)),
     }
     visualize_future_video = bool(cfg.EVALUATION.get("visualize_future_video", False))
-    save_rollout_video_enabled = bool(cfg.EVALUATION.get("save_rollout_video", True))
-    save_prediction_videos = bool(cfg.EVALUATION.get("save_prediction_videos", True))
     predicted_future_frames = None
     if visualize_future_video:
         infer_kwargs["num_video_frames"] = _get_num_video_frames(cfg)
@@ -854,6 +852,8 @@ def run_single_task(
     if deterministic_env:
         env.env.hard_reset = False
     visualize_future_video = bool(cfg.EVALUATION.get("visualize_future_video", False))
+    save_rollout_video_enabled = bool(cfg.EVALUATION.get("save_rollout_video", True))
+    save_prediction_videos = bool(cfg.EVALUATION.get("save_prediction_videos", True))
     results = {
         "successes": 0,
         "failure_episodes": [],
