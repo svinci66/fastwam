@@ -17,6 +17,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 GPU_ID="0"
 STATE_INDICES="5"
 TASK_IDS="0 1 2 3 4 5 6 7 8 9"
+VARIANTS="baseline no_imagination imagination"
 NUM_INFERENCE_STEPS="4"
 SEED="42"
 RESUME="0"
@@ -27,7 +28,8 @@ usage() {
   printf '%s\n' "          --siglip-version ID --no-imagination-checkpoint PATH"
   printf '%s\n' "          --imagination-checkpoint PATH"
   printf '%s\n' "Optional: --output-root PATH --libero-root PATH --model-base-path PATH"
-  printf '%s\n' "          --gpu-id N --state-indices CSV --inference-steps N --resume"
+  printf '%s\n' "          --gpu-id N --state-indices CSV --variants LIST"
+  printf '%s\n' "          --inference-steps N --resume"
 }
 
 require_value() {
@@ -52,10 +54,18 @@ while (($# > 0)); do
     --model-base-path) require_value "$1" "${2:-}"; MODEL_BASE_PATH="$2"; shift 2 ;;
     --gpu-id) require_value "$1" "${2:-}"; GPU_ID="$2"; shift 2 ;;
     --state-indices) require_value "$1" "${2:-}"; STATE_INDICES="$2"; shift 2 ;;
+    --variants) require_value "$1" "${2:-}"; VARIANTS="$2"; shift 2 ;;
     --inference-steps) require_value "$1" "${2:-}"; NUM_INFERENCE_STEPS="$2"; shift 2 ;;
     --resume) RESUME="1"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Error: unknown option %s\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+for variant in ${VARIANTS}; do
+  case "${variant}" in
+    baseline|no_imagination|imagination) ;;
+    *) printf 'Error: unsupported variant %s\n' "${variant}" >&2; exit 2 ;;
   esac
 done
 
@@ -135,6 +145,7 @@ run_logged() {
 printf '%s\n' \
   "git_commit=${GIT_COMMIT}" \
   "task_ids=${TASK_IDS}" \
+  "variants=${VARIANTS}" \
   "state_indices=${STATE_INDICES}" \
   "inference_steps=${NUM_INFERENCE_STEPS}" \
   "seed=${SEED}" \
@@ -177,7 +188,7 @@ COMMON_OVERRIDES=(
 )
 
 for task_id in ${TASK_IDS}; do
-  for variant in baseline no_imagination imagination; do
+  for variant in ${VARIANTS}; do
     stage="eval_task${task_id}_${variant}"
     output_dir="${OUTPUT_ROOT}/${variant}/task$(printf '%02d' "${task_id}")"
     result_file="${output_dir}/libero_goal/gpu0_task${task_id}_results.json"
