@@ -214,16 +214,16 @@ if ! stage_done build_replay; then
     "${INPUT_DIR_ARGS[@]}" --output-dir "${REPLAY_DIR}" \
     --encoder-path "${SIGLIP_MODEL_PATH}" \
     --reward-encoder-version "${SIGLIP_VERSION}" \
-    --reward-config configs/rl/libero_residual_awr_multitask.yaml \
+    --reward-config configs/rl/libero_residual_awr_multitask_global_camera_norm.yaml \
     --device cuda --batch-size "${SIGLIP_BATCH_SIZE}" --agent-weight 0.5 --wrist-weight 0.5
   mark_done build_replay
 fi
 
 if ! stage_done validate; then
   for variant in no_imagination imagination; do
-    config="configs/rl/libero_residual_awr_multitask_no_imagination.yaml"
+    config="configs/rl/libero_residual_awr_multitask_global_camera_norm_no_imagination.yaml"
     if [[ "${variant}" == "imagination" ]]; then
-      config="configs/rl/libero_residual_awr_multitask.yaml"
+      config="configs/rl/libero_residual_awr_multitask_global_camera_norm.yaml"
     fi
     run_logged "validate_${variant}" "${PYTHON_BIN}" scripts/train_libero_residual_awr.py \
       --config "${config}" --replay-dir "${REPLAY_DIR}" \
@@ -234,10 +234,10 @@ if ! stage_done validate; then
 fi
 
 for variant in no_imagination imagination; do
-  config="configs/rl/libero_residual_awr_multitask_no_imagination.yaml"
+  config="configs/rl/libero_residual_awr_multitask_global_camera_norm_no_imagination.yaml"
   output_dir="${OUTPUT_ROOT}/train_no_imagination"
   if [[ "${variant}" == "imagination" ]]; then
-    config="configs/rl/libero_residual_awr_multitask.yaml"
+    config="configs/rl/libero_residual_awr_multitask_global_camera_norm.yaml"
     output_dir="${OUTPUT_ROOT}/train_with_imagination"
   fi
   stage="train_${variant}"

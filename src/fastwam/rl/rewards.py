@@ -16,7 +16,12 @@ from typing import Mapping, Sequence
 import numpy as np
 
 
-IMAGINATION_REWARD_TYPES = ("progress_v1", "delta_alignment_v1")
+GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE = "delta_alignment_global_camera_norm_v1"
+IMAGINATION_REWARD_TYPES = (
+    "progress_v1",
+    "delta_alignment_v1",
+    GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
+)
 
 
 def _as_finite_vector(value: np.ndarray | Sequence[float], name: str) -> np.ndarray:
@@ -185,6 +190,7 @@ def compute_imagination_reward(
     *,
     reward_type: str,
     camera_weights: Mapping[str, float] | None = None,
+    camera_normalization: Mapping[str, Mapping[str, float]] | None = None,
     clip_value: float = 0.1,
     alignment_valid: bool = True,
 ) -> ImaginationProgress:
@@ -197,6 +203,11 @@ def compute_imagination_reward(
             f"expected one of {IMAGINATION_REWARD_TYPES}"
         )
     if reward_type == "progress_v1":
+        if camera_normalization is not None:
+            raise ValueError(
+                "camera_normalization may only be used with "
+                f"{GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE}"
+            )
         return compute_imagination_progress(
             current_features,
             actual_features,
@@ -218,6 +229,24 @@ def compute_imagination_reward(
     weighted_before = 0.0
     weighted_after = 0.0
     weighted_reward = 0.0
+    normalized_reward = 0.0
+    if reward_type == GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE:
+        if camera_normalization is None:
+            raise ValueError(
+                f"{GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE} requires camera_normalization"
+            )
+        missing = set(cameras) - set(camera_normalization)
+        extra = set(camera_normalization) - set(cameras)
+        if missing or extra:
+            raise ValueError(
+                "camera normalization keys mismatch: "
+                f"missing={sorted(missing)} extra={sorted(extra)}"
+            )
+    elif camera_normalization is not None:
+        raise ValueError(
+            "camera_normalization may only be used with "
+            f"{GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE}"
+        )
     for camera in cameras:
         before = cosine_distance(current_features[camera], goal_features[camera])
         after = cosine_distance(actual_features[camera], goal_features[camera])
@@ -232,9 +261,29 @@ def compute_imagination_reward(
         }
         weighted_before += normalized_weights[camera] * before
         weighted_after += normalized_weights[camera] * after
-        weighted_reward += normalized_weights[camera] * delta["delta_alignment_reward"]
+        camera_reward = delta["delta_alignment_reward"]
+        weighted_reward += normalized_weights[camera] * camera_reward
+        if camera_normalization is not None:
+            settings = camera_normalization[camera]
+            center = float(settings.get("center", np.nan))
+            scale = float(settings.get("scale", np.nan))
+            if not np.isfinite(center):
+                raise ValueError(f"camera normalization center must be finite for {camera}")
+            if not np.isfinite(scale) or scale <= 0.0:
+                raise ValueError(f"camera normalization scale must be positive for {camera}")
+            normalized = (camera_reward - center) / scale
+            per_camera[camera].update(
+                normalization_center=center,
+                normalization_scale=scale,
+                normalized_delta_alignment=normalized,
+            )
+            normalized_reward += normalized_weights[camera] * normalized
 
-    raw_reward = float(weighted_reward)
+    raw_reward = (
+        float(clip_value * np.tanh(normalized_reward))
+        if reward_type == GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE
+        else float(weighted_reward)
+    )
     clipped = float(np.clip(raw_reward, -clip_value, clip_value)) if alignment_valid else 0.0
     return ImaginationProgress(
         reward_type=reward_type,

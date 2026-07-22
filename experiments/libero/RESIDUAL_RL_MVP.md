@@ -29,9 +29,10 @@ gripper command.
 - Every transition represents the action chunk that was actually executed, not the
   unexecuted remainder of the 32-step FastWAM prediction.
 - The first protocol uses `target_k=8`, aligned to the `t+8` predicted video frame.
-- The corrected protocol explicitly versions its imagination formula and uses
-  `delta_alignment_v1`: equal-camera alignment between actual and imagined feature
-  changes, scaled toward zero for visually static transitions.
+- The corrected protocol explicitly versions its imagination formula. Historical
+  runs use `delta_alignment_v1`; formal multi-task runs use
+  `delta_alignment_global_camera_norm_v1`, which fits one task-balanced global median
+  and IQR per camera and applies a shared `0.1 * tanh(...)` transform.
 - `effective_k`, raw per-step simulator rewards, next proprio, `terminated`, and
   `truncated` are stored separately.
 - A partial chunk is not marked imagination-aligned unless it has a matched predicted
@@ -291,12 +292,12 @@ set and trial count for the formal comparison.
 
 ## Formal multi-task conditioning
 
-The cross-task learner must use the two matched configs below instead of the original
-single-task smoke configs:
+The cross-task learner must use the two matched globally normalized configs below
+instead of the original single-task smoke configs:
 
 ```text
-configs/rl/libero_residual_awr_multitask.yaml
-configs/rl/libero_residual_awr_multitask_no_imagination.yaml
+configs/rl/libero_residual_awr_multitask_global_camera_norm.yaml
+configs/rl/libero_residual_awr_multitask_global_camera_norm_no_imagination.yaml
 ```
 
 For every task, the collector now computes one masked-mean feature from FastWAM's
@@ -310,6 +311,12 @@ Old schema-v1/v2 replay shards and v1 residual checkpoints remain readable, but 
 do not acquire language conditioning retroactively.  Formal multi-task training must
 therefore recollect/export schema-v3 transitions and must record the immutable UMT5
 encoder/pooling identifier.
+
+The replay builder fits one global agent-camera center/scale and one global
+wrist-camera center/scale using only aligned training transitions. Every task has
+equal total weight in these robust statistics even when trajectory lengths differ.
+The frozen values and quartiles are stored in replay provenance and copied into the
+learner checkpoint. No reward normalization is computed during online inference.
 
 ## Outputs
 

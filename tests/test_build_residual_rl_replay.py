@@ -1,6 +1,9 @@
 import numpy as np
 
-from experiments.libero.build_residual_rl_replay import build_replay
+from experiments.libero.build_residual_rl_replay import (
+    build_replay,
+    fit_task_balanced_camera_normalization,
+)
 from experiments.libero.imagination_reward_utils import save_aligned_transition
 from fastwam.rl.rewards import CompositeRewardConfig
 
@@ -82,6 +85,7 @@ def test_replay_builder_uses_dual_camera_features_and_recorded_actions(tmp_path)
         reward_encoder_version="siglip-sha",
         reward_config=CompositeRewardConfig(imitation_weight=0.0),
         camera_weights={"agent": 0.5, "wrist": 0.5},
+        camera_normalization=None,
         imitation_dimension_scales=None,
     )
     transition = replay.transitions[0]
@@ -90,3 +94,42 @@ def test_replay_builder_uses_dual_camera_features_and_recorded_actions(tmp_path)
     assert transition.reward.environment_component == 0.0
     np.testing.assert_array_equal(transition.executed_actions, executed)
     assert transition.observation_feature.shape == (4,)
+
+
+def test_global_camera_normalization_gives_each_task_equal_total_weight():
+    def encoded(actual_value: float):
+        current = np.array([1.0, 0.0], dtype=np.float32)
+        goal = np.array([0.0, 1.0], dtype=np.float32)
+        actual = np.array([1.0 - actual_value, actual_value], dtype=np.float32)
+        return {
+            "current": {"agent": current, "wrist": current},
+            "actual": {"agent": actual, "wrist": actual},
+            "predicted_goal": {"agent": goal, "wrist": goal},
+        }
+
+    task_zero = {
+        "task_suite": "libero_goal",
+        "task_id": 0,
+        "alignment_valid": True,
+    }
+    task_one = {
+        "task_suite": "libero_goal",
+        "task_id": 1,
+        "alignment_valid": True,
+    }
+    base = fit_task_balanced_camera_normalization(
+        [task_zero, task_one],
+        [encoded(0.1), encoded(0.9)],
+    )
+    duplicated = fit_task_balanced_camera_normalization(
+        [task_zero] * 10 + [task_one],
+        [encoded(0.1)] * 10 + [encoded(0.9)],
+    )
+    assert base["num_tasks"] == 2
+    assert duplicated["num_tasks"] == 2
+    for camera in ("agent", "wrist"):
+        for key in ("center", "scale", "q25", "q75"):
+            assert np.isclose(
+                base["cameras"][camera][key],
+                duplicated["cameras"][camera][key],
+            )

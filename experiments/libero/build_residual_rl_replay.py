@@ -24,6 +24,7 @@ from fastwam.rl.replay_buffer import ReplayBuffer, ReplayTransition
 from fastwam.rl.rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
+    GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
     compute_composite_reward,
     compute_imagination_reward,
 )
@@ -154,6 +155,117 @@ def _combined_feature(camera_features: dict[str, np.ndarray]) -> np.ndarray:
     return combined / norm
 
 
+def _weighted_quantile(
+    values: np.ndarray,
+    weights: np.ndarray,
+    quantile: float,
+) -> float:
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    weights = np.asarray(weights, dtype=np.float64).reshape(-1)
+    if values.shape != weights.shape or values.size == 0:
+        raise ValueError("weighted quantile values and weights must be non-empty and aligned")
+    if not 0.0 <= quantile <= 1.0:
+        raise ValueError(f"quantile must be in [0, 1], got {quantile}")
+    if np.any(~np.isfinite(values)) or np.any(~np.isfinite(weights)):
+        raise ValueError("weighted quantile inputs must be finite")
+    if np.any(weights < 0.0) or float(np.sum(weights)) <= 0.0:
+        raise ValueError("weighted quantile weights must be non-negative with positive sum")
+
+    order = np.argsort(values, kind="stable")
+    ordered_values = values[order]
+    ordered_weights = weights[order]
+    unique_values, starts = np.unique(ordered_values, return_index=True)
+    unique_weights = np.add.reduceat(ordered_weights, starts)
+    positive = unique_weights > 0.0
+    unique_values = unique_values[positive]
+    unique_weights = unique_weights[positive]
+    total = float(np.sum(unique_weights))
+    positions = (np.cumsum(unique_weights) - 0.5 * unique_weights) / total
+    return float(
+        np.interp(
+            quantile,
+            positions,
+            unique_values,
+            left=unique_values[0],
+            right=unique_values[-1],
+        )
+    )
+
+
+def fit_task_balanced_camera_normalization(
+    records: list[dict[str, Any]],
+    encoded: list[dict[str, dict[str, np.ndarray]]],
+) -> dict[str, Any]:
+    """Fit one global robust transform while giving every task equal total weight."""
+
+    if len(records) != len(encoded):
+        raise ValueError("record and feature counts differ")
+    valid_indices = [
+        index for index, record in enumerate(records) if bool(record["alignment_valid"])
+    ]
+    if not valid_indices:
+        raise ValueError("global camera normalization requires valid aligned transitions")
+    task_counts: dict[tuple[str, int], int] = {}
+    for index in valid_indices:
+        record = records[index]
+        task = (str(record["task_suite"]), int(record["task_id"]))
+        task_counts[task] = task_counts.get(task, 0) + 1
+    if any(count <= 0 for count in task_counts.values()):
+        raise RuntimeError("internal task-count error while fitting camera normalization")
+
+    weights = np.asarray(
+        [
+            1.0
+            / task_counts[
+                (str(records[index]["task_suite"]), int(records[index]["task_id"]))
+            ]
+            for index in valid_indices
+        ],
+        dtype=np.float64,
+    )
+    camera_scores = {camera: [] for camera in CAMERAS}
+    for index in valid_indices:
+        features = encoded[index]
+        raw = compute_imagination_reward(
+            features["current"],
+            features["actual"],
+            features["predicted_goal"],
+            reward_type="delta_alignment_v1",
+            camera_weights={camera: 1.0 for camera in CAMERAS},
+            clip_value=1.0,
+            alignment_valid=True,
+        )
+        for camera in CAMERAS:
+            camera_scores[camera].append(
+                float(raw.per_camera[camera]["delta_alignment_reward"])
+            )
+
+    cameras: dict[str, dict[str, float]] = {}
+    for camera in CAMERAS:
+        values = np.asarray(camera_scores[camera], dtype=np.float64)
+        q25 = _weighted_quantile(values, weights, 0.25)
+        median = _weighted_quantile(values, weights, 0.5)
+        q75 = _weighted_quantile(values, weights, 0.75)
+        iqr = q75 - q25
+        if not np.isfinite(iqr) or iqr <= 1e-8:
+            raise ValueError(
+                f"task-balanced global {camera} IQR must exceed 1e-8, got {iqr}"
+            )
+        cameras[camera] = {
+            "center": median,
+            "scale": iqr,
+            "q25": q25,
+            "q75": q75,
+        }
+    return {
+        "type": "task_balanced_global_camera_median_iqr_tanh_v1",
+        "task_balanced": True,
+        "num_tasks": len(task_counts),
+        "num_valid_transitions": len(valid_indices),
+        "cameras": cameras,
+    }
+
+
 def build_replay(
     records: list[dict[str, Any]],
     encoded: list[dict[str, dict[str, np.ndarray]]],
@@ -161,7 +273,8 @@ def build_replay(
     reward_encoder_version: str,
     reward_config: CompositeRewardConfig,
     camera_weights: dict[str, float],
-    imitation_dimension_scales: np.ndarray | None,
+    camera_normalization: dict[str, dict[str, float]] | None = None,
+    imitation_dimension_scales: np.ndarray | None = None,
 ) -> ReplayBuffer:
     if len(records) != len(encoded):
         raise ValueError("record and feature counts differ")
@@ -185,6 +298,7 @@ def build_replay(
             features["predicted_goal"],
             reward_type=reward_config.imagination_reward_type,
             camera_weights=camera_weights,
+            camera_normalization=camera_normalization,
             clip_value=reward_config.imagination_clip,
             alignment_valid=bool(record["alignment_valid"]),
         )
@@ -284,12 +398,26 @@ def main() -> None:
         device=args.device,
         batch_size=args.batch_size,
     )
+    normalization = None
+    if reward_config.imagination_reward_type == GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE:
+        normalization = fit_task_balanced_camera_normalization(records, encoded)
     replay = build_replay(
         records,
         encoded,
         reward_encoder_version=args.reward_encoder_version,
         reward_config=reward_config,
         camera_weights={"agent": args.agent_weight, "wrist": args.wrist_weight},
+        camera_normalization=(
+            None
+            if normalization is None
+            else {
+                camera: {
+                    "center": float(settings["center"]),
+                    "scale": float(settings["scale"]),
+                }
+                for camera, settings in normalization["cameras"].items()
+            }
+        ),
         imitation_dimension_scales=imitation_scales_array,
     )
     output = replay.save(
@@ -302,6 +430,7 @@ def main() -> None:
                 "agent": float(args.agent_weight),
                 "wrist": float(args.wrist_weight),
             },
+            "camera_normalization": normalization,
             "camera_image_size": 224,
             "feature_fusion": "per_camera_l2_then_agent_wrist_concat_l2_v1",
             "language_encoder_version": (

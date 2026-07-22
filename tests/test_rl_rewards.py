@@ -3,6 +3,7 @@ import numpy as np
 from fastwam.rl.rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
+    GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
     compute_composite_reward,
     compute_imagination_reward,
     compute_imagination_progress,
@@ -61,6 +62,39 @@ def test_delta_alignment_rewards_matched_direction_and_suppresses_static_change(
     )
     assert np.isclose(matched.raw_progress, 1.0)
     assert static.raw_progress == 0.0
+
+
+def test_global_camera_normalization_preserves_soft_bounded_differences():
+    current = {"agent": np.array([1.0, 0.0]), "wrist": np.array([1.0, 0.0])}
+    goal = {"agent": np.array([0.0, 1.0]), "wrist": np.array([0.0, 1.0])}
+    actual = {"agent": goal["agent"], "wrist": current["wrist"]}
+    result = compute_imagination_reward(
+        current,
+        actual,
+        goal,
+        reward_type=GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
+        camera_weights={"agent": 0.5, "wrist": 0.5},
+        camera_normalization={
+            "agent": {"center": 0.0, "scale": 1.0},
+            "wrist": {"center": 0.0, "scale": 1.0},
+        },
+        clip_value=0.1,
+    )
+    assert np.isclose(result.raw_progress, 0.1 * np.tanh(0.5))
+    assert 0.0 < result.raw_progress < 0.1
+    assert result.clipped_progress == result.raw_progress
+
+
+def test_global_camera_normalization_requires_frozen_statistics():
+    features = {"agent": np.array([1.0, 0.0]), "wrist": np.array([1.0, 0.0])}
+    goals = {"agent": np.array([0.0, 1.0]), "wrist": np.array([0.0, 1.0])}
+    with np.testing.assert_raises_regex(ValueError, "requires camera_normalization"):
+        compute_imagination_reward(
+            features,
+            goals,
+            goals,
+            reward_type=GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
+        )
 
 
 def test_episode_budget_keeps_total_absolute_imagination_below_half_success_bonus():

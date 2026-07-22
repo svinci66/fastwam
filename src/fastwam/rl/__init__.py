@@ -16,6 +16,7 @@ from .replay_buffer import REPLAY_SCHEMA_VERSION, ReplayBuffer, ReplayTransition
 from .rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
+    GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
     IMAGINATION_REWARD_TYPES,
     RewardBreakdown,
     compute_composite_reward,
@@ -26,6 +27,7 @@ from .rewards import (
 __all__ = [
     "CompositeRewardConfig",
     "EpisodeShapingBudget",
+    "GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE",
     "IMAGINATION_REWARD_TYPES",
     "REPLAY_SCHEMA_VERSION",
     "ReplayBuffer",
