@@ -43,6 +43,9 @@ EVALUATION:
   deterministic_env: false
   deterministic_algorithms: false
   deterministic_warn_only: true
+  # Optional order-independent task/state RNG streams for resumable paired runs.
+  independent_episode_seeds: false
+  action_seed_stream: 0
   # Keep the released direct policy's infer_action output while separately
   # collecting its predicted future video for reward validation.
   imagination_use_direct_action: false
