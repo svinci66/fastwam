@@ -53,6 +53,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override IQL epochs without changing the frozen experiment config.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Override the IQL seed while preserving every other experiment setting.",
+    )
     return parser.parse_args()
 
 
@@ -91,6 +97,8 @@ def main() -> None:
     iql_values = dict(cfg["iql"])
     if args.epochs is not None:
         iql_values["epochs"] = args.epochs
+    if args.seed is not None:
+        iql_values["seed"] = args.seed
     iql_config = IQLConfig(**iql_values)
     reward_config = CompositeRewardConfig(**cfg["reward"])
     iql_config.validate()

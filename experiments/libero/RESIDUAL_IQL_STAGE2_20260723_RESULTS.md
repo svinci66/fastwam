@@ -139,18 +139,27 @@ therefore does not change the stochastic sequence assigned to a state. Paired
 behaviors share a FastWAM policy seed but use distinct action-noise streams. The raw
 collection audit verifies both properties before replay construction.
 
-The script then builds the globally normalized two-camera replay, validates both IQL
-configs, and trains the matched pair. It is ready for a GPU server, but the 900
-episodes have not been collected by this local implementation run.
+The formal local collection and replay gate subsequently completed:
+
+```text
+episodes:             900
+successful / failed: 804 / 96
+replay transitions:  15,836
+aligned transitions: 15,133
+```
+
+The globally normalized two-camera replay passes both matched IQL config checks.
+Detailed integrity, saturation, and paired reward-direction results are recorded in
+`RESIDUAL_IQL_FORMAL_REPLAY_20260723_RESULTS.md`.
 
 ## Next gate
 
-1. Keep held-out states `5..9` fixed and do not use them for reward tuning.
-2. The task-3 collection pilot passed with 28 failures in 90 episodes and no
-   structural audit errors.
-3. Resume the same output root over the remaining nine tasks.
-4. Build and audit the globally normalized all-task replay.
-5. Train at least three seeds and reserve states `35..49` for the final comparison.
+1. Keep validation states `5..9` and final states `35..49` outside training.
+2. Copy the accepted 415 MB replay to the GPU server.
+3. Train matched no-imagination / imagination pairs at seeds 42, 43, and 44.
+4. Reject non-finite runs or pairs whose initialization hashes differ.
+5. Evaluate the paired checkpoints on validation states `5..9` before touching the
+   final state set.
 
 Do not claim IQL or imagination-reward success improvement until the paired online
 gate is complete.

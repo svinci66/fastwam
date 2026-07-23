@@ -9,11 +9,12 @@ OUTPUT_ROOT=""
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DEVICE="cuda"
 EPOCHS=""
+SEED=""
 
 usage() {
   printf '%s\n' "Train matched no-imagination / imagination residual-IQL actors."
   printf '%s\n' "Required: --replay-dir PATH --output-root PATH"
-  printf '%s\n' "Optional: --device cuda|cpu --epochs N"
+  printf '%s\n' "Optional: --device cuda|cpu --epochs N --seed N"
 }
 
 require_value() {
@@ -29,6 +30,7 @@ while (($# > 0)); do
     --output-root) require_value "$1" "${2:-}"; OUTPUT_ROOT="$2"; shift 2 ;;
     --device) require_value "$1" "${2:-}"; DEVICE="$2"; shift 2 ;;
     --epochs) require_value "$1" "${2:-}"; EPOCHS="$2"; shift 2 ;;
+    --seed) require_value "$1" "${2:-}"; SEED="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Error: unknown option %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -51,6 +53,9 @@ cd "${PROJECT_ROOT}"
 COMMON_ARGS=(--replay-dir "${REPLAY_DIR}" --device "${DEVICE}")
 if [[ -n "${EPOCHS}" ]]; then
   COMMON_ARGS+=(--epochs "${EPOCHS}")
+fi
+if [[ -n "${SEED}" ]]; then
+  COMMON_ARGS+=(--seed "${SEED}")
 fi
 
 for variant in no_imagination imagination; do
