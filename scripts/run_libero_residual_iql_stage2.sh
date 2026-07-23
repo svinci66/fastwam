@@ -26,13 +26,15 @@ NUM_INFERENCE_STEPS="4"
 SIGLIP_BATCH_SIZE="32"
 RESUME="0"
 SKIP_TRAIN="0"
+COLLECT_ONLY="0"
 
 usage() {
   printf '%s\n' "Run resumable LIBERO Goal stage-2 residual-IQL data and training."
   printf '%s\n' "Required: --checkpoint PATH --dataset-stats PATH --siglip-path PATH"
   printf '%s\n' "Optional: --output-root PATH --libero-root PATH --model-base-path PATH"
   printf '%s\n' "          --gpu-id N --task-ids CSV --state-indices CSV"
-  printf '%s\n' "          --noise-stds CSV --inference-steps N --skip-train --resume"
+  printf '%s\n' "          --noise-stds CSV --inference-steps N"
+  printf '%s\n' "          --collect-only --skip-train --resume"
 }
 
 require_value() {
@@ -56,6 +58,7 @@ while (($# > 0)); do
     --state-indices) require_value "$1" "${2:-}"; STATE_INDICES="$2"; shift 2 ;;
     --noise-stds) require_value "$1" "${2:-}"; NOISE_STDS="${2//,/ }"; shift 2 ;;
     --inference-steps) require_value "$1" "${2:-}"; NUM_INFERENCE_STEPS="$2"; shift 2 ;;
+    --collect-only) COLLECT_ONLY="1"; shift ;;
     --skip-train) SKIP_TRAIN="1"; shift ;;
     --resume) RESUME="1"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -244,6 +247,12 @@ for task_id in "${TASK_ID_ARRAY[@]}"; do
     fi
   done
 done
+
+if [[ "${COLLECT_ONLY}" == "1" ]]; then
+  printf 'Collection complete. Resume the same output root without --collect-only to build the replay and train: %s\n' \
+    "${OUTPUT_ROOT}"
+  exit 0
+fi
 
 TASK_ID_ARGS=("${TASK_ID_ARRAY[@]}")
 TRIAL_INDEX_ARGS=("${STATE_INDEX_ARRAY[@]}")

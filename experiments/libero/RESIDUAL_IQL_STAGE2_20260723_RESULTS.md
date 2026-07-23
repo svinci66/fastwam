@@ -15,9 +15,12 @@ accepted 1,573-transition normalized replay
 
 This proves that the normalized imagination reward reaches a stronger offline-RL
 learner and changes its deployed residual actor. It does **not** prove an online
-success-rate improvement. The current replay remains success-heavy, and the local
-NVIDIA driver was unavailable after the machine restart, so no LIBERO rollout was
-attached to this implementation run.
+success-rate improvement. The current replay remains success-heavy.
+
+The subsequent local held-out rollout is recorded in
+`RESIDUAL_IQL_HELDOUT_20260723_RESULTS.md`: the matched no-imagination and
+imagination actors achieved `50/50` and `49/50`, respectively. The deployment gate
+passed, but the success-improvement hypothesis did not.
 
 ## Algorithm boundary
 
@@ -142,11 +145,10 @@ episodes have not been collected by this local implementation run.
 
 ## Next gate
 
-1. Restore the local NVIDIA driver or run on the GPU server.
-2. Evaluate the two 20-epoch IQL actors on held-out states `5..9` under strict,
-   paired seeds.
-3. Treat that as a diagnostic only because its replay is success-heavy.
-4. If the actors load and execute safely, collect the 900-episode stage-2 replay.
+1. Keep held-out states `5..9` fixed and do not use them for reward tuning.
+2. Collect the task-3 portion of the formal noisy replay as a resumable pilot.
+3. Audit failure coverage and imagined/observed transition validity.
+4. Continue the same collection root over all ten tasks when the pilot passes.
 5. Train at least three seeds and reserve states `35..49` for the final comparison.
 
 Do not claim IQL or imagination-reward success improvement until the paired online
