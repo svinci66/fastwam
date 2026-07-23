@@ -146,9 +146,10 @@ episodes have not been collected by this local implementation run.
 ## Next gate
 
 1. Keep held-out states `5..9` fixed and do not use them for reward tuning.
-2. Collect the task-3 portion of the formal noisy replay as a resumable pilot.
-3. Audit failure coverage and imagined/observed transition validity.
-4. Continue the same collection root over all ten tasks when the pilot passes.
+2. The task-3 collection pilot passed with 28 failures in 90 episodes and no
+   structural audit errors.
+3. Resume the same output root over the remaining nine tasks.
+4. Build and audit the globally normalized all-task replay.
 5. Train at least three seeds and reserve states `35..49` for the final comparison.
 
 Do not claim IQL or imagination-reward success improvement until the paired online

@@ -130,3 +130,7 @@ collection audit shows adequate failures and valid imagined/observed pairs.
 The stage-2 runner supports `--collect-only` so a task subset can be collected and
 audited before replay construction without contaminating held-out states or
 prematurely training on a partial replay.
+
+The task-3 pilot subsequently passed with `62/90` successes, `28/90` failures, and
+`2,925` structurally valid raw records. See
+`RESIDUAL_IQL_TASK3_COLLECTION_PILOT_20260723_RESULTS.md`.
