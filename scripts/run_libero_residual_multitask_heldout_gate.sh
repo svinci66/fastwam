@@ -185,6 +185,8 @@ COMMON_OVERRIDES=(
   "EVALUATION.deterministic_algorithms=true"
   "EVALUATION.deterministic_warn_only=false"
   "EVALUATION.record_action_hashes=true"
+  "EVALUATION.independent_episode_seeds=true"
+  "EVALUATION.action_seed_stream=0"
 )
 
 for task_id in ${TASK_IDS}; do
