@@ -81,6 +81,32 @@ def test_residual_checkpoint_loader_keeps_v1_backward_compatibility(tmp_path: Pa
     assert loaded.config.language_feature_dim == 0
 
 
+def test_residual_checkpoint_loader_accepts_iql_actor(tmp_path: Path):
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=4,
+            action_horizon=2,
+            action_dim=3,
+            residual_scale=(0.05, 0.1, 0.0),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+        )
+    )
+    path = tmp_path / "iql-checkpoint.pt"
+    torch.save(
+        {
+            "format": "fastwam_residual_iql_v1",
+            "actor": actor.state_dict(),
+            "actor_config": actor.export_config(),
+            "iql_config": {"use_goal_conditioning": False},
+        },
+        path,
+    )
+    loaded, payload = load_residual_actor_checkpoint(path, device="cpu")
+    assert payload["format"] == "fastwam_residual_iql_v1"
+    assert loaded.config.context_dim == 4
+
+
 def test_online_residual_policy_corrects_prefix_and_preserves_gripper():
     config = ResidualActorConfig(
         context_dim=4,

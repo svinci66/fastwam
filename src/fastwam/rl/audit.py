@@ -10,6 +10,33 @@ from typing import Any
 import numpy as np
 
 
+def derive_episode_seed(
+    *,
+    base_seed: int,
+    task_id: int,
+    trial_index: int,
+    stream: int = 0,
+) -> int:
+    """Derive an order-independent uint32 seed for one task/state/stream.
+
+    Explicit task and trial terms prevent a resumed or reordered collection from
+    changing the stochastic action sequence assigned to an initial state.  The
+    stream term separates, for example, medium-noise and strong-noise behavior
+    while keeping their frozen FastWAM policy seed identical.
+    """
+
+    values = {
+        "base_seed": int(base_seed),
+        "task_id": int(task_id),
+        "trial_index": int(trial_index),
+        "stream": int(stream),
+    }
+    if values["task_id"] < 0 or values["trial_index"] < 0 or values["stream"] < 0:
+        raise ValueError(f"task_id, trial_index, and stream must be non-negative: {values}")
+    payload = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:4], byteorder="little")
+
+
 def array_sha256(value: Any) -> str:
     """Hash an array together with its exact dtype and shape."""
 

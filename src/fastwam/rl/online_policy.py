@@ -18,6 +18,7 @@ RESIDUAL_CHECKPOINT_FORMAT = "fastwam_residual_awr_v2"
 _SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS = {
     "fastwam_residual_awr_v1",
     RESIDUAL_CHECKPOINT_FORMAT,
+    "fastwam_residual_iql_v1",
 }
 RESIDUAL_FEATURE_FUSION = "per_camera_l2_then_agent_wrist_concat_l2_v1"
 
@@ -52,10 +53,14 @@ def load_residual_actor_checkpoint(
         payload.get("actor_config"), dict
     ):
         raise ValueError("Residual checkpoint must contain actor and actor_config mappings.")
-    awr_config = payload.get("awr_config")
-    if not isinstance(awr_config, dict):
-        raise ValueError("Residual checkpoint must contain an awr_config mapping.")
-    if bool(awr_config.get("use_goal_conditioning", False)):
+    learner_config = payload.get("awr_config")
+    if payload.get("format") == "fastwam_residual_iql_v1":
+        learner_config = payload.get("iql_config")
+    if not isinstance(learner_config, dict):
+        raise ValueError(
+            "Residual checkpoint must contain the matching AWR or IQL config mapping."
+        )
+    if bool(learner_config.get("use_goal_conditioning", False)):
         raise ValueError(
             "Online residual evaluation currently requires use_goal_conditioning=false."
         )

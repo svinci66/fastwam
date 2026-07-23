@@ -5,7 +5,14 @@ collection and learner updates can therefore run in separate processes, or at
 different times on a single GPU.
 """
 
-from .models import ResidualActor, ResidualActorConfig, ValueCritic, ValueCriticConfig
+from .models import (
+    ActionValueCritic,
+    ActionValueCriticConfig,
+    ResidualActor,
+    ResidualActorConfig,
+    ValueCritic,
+    ValueCriticConfig,
+)
 from .online_policy import (
     OnlineResidualPolicy,
     ResidualPolicyOutput,
@@ -32,6 +39,8 @@ __all__ = [
     "REPLAY_SCHEMA_VERSION",
     "ReplayBuffer",
     "ReplayTransition",
+    "ActionValueCritic",
+    "ActionValueCriticConfig",
     "ResidualActor",
     "ResidualActorConfig",
     "OnlineResidualPolicy",

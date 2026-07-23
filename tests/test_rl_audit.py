@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from fastwam.rl.audit import array_sha256, resolve_trial_indices
+from fastwam.rl.audit import array_sha256, derive_episode_seed, resolve_trial_indices
 
 
 def test_array_sha256_is_stable_for_equivalent_contiguous_values():
@@ -22,6 +22,20 @@ def test_resolve_trial_indices_defaults_to_num_trials():
     assert resolve_trial_indices(
         num_trials=3, trial_indices=None, available_states=10
     ) == [0, 1, 2]
+
+
+def test_episode_seed_is_order_independent_and_separates_streams():
+    first = derive_episode_seed(base_seed=42, task_id=3, trial_index=11, stream=1)
+    repeated = derive_episode_seed(base_seed=42, task_id=3, trial_index=11, stream=1)
+    different_task = derive_episode_seed(
+        base_seed=42, task_id=4, trial_index=11, stream=1
+    )
+    different_stream = derive_episode_seed(
+        base_seed=42, task_id=3, trial_index=11, stream=2
+    )
+    assert first == repeated
+    assert len({first, different_task, different_stream}) == 3
+    assert 0 <= first < 2**32
 
 
 def test_resolve_trial_indices_preserves_valid_explicit_order():

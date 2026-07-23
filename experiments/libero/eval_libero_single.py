@@ -46,7 +46,7 @@ from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_js
 from fastwam.utils.pytorch_utils import set_global_seed
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
 from fastwam.rl.online_policy import OnlineResidualPolicy
-from fastwam.rl.audit import array_sha256, resolve_trial_indices
+from fastwam.rl.audit import array_sha256, derive_episode_seed, resolve_trial_indices
 from libero.libero import benchmark
 from action_ensembler import ActionEnsembler
 
@@ -563,6 +563,7 @@ def run_single_episode(
     model_device: str,
     residual_policy: Optional[OnlineResidualPolicy] = None,
     language_feature: Optional[np.ndarray] = None,
+    action_seed: Optional[int] = None,
 ) -> tuple[
     bool,
     list,
@@ -607,7 +608,12 @@ def run_single_episode(
     action_mode = str(cfg.EVALUATION.get("action_mode", "policy")).strip().lower()
     action_noise_std = float(cfg.EVALUATION.get("action_noise_std", 0.15))
     base_seed = 0 if cfg.get("seed") is None else int(cfg.seed)
-    action_rng = np.random.default_rng(base_seed + episode_idx * 100_003)
+    resolved_action_seed = (
+        base_seed + episode_idx * 100_003
+        if action_seed is None
+        else int(action_seed)
+    )
+    action_rng = np.random.default_rng(resolved_action_seed)
     if (action_mode == "residual") != (residual_policy is not None):
         raise ValueError(
             "OnlineResidualPolicy must be provided if and only if action_mode='residual'."
@@ -902,8 +908,50 @@ def run_single_task(
     if trial_indices is None:
         trial_indices = list(range(int(cfg.EVALUATION.num_trials)))
     results["trial_indices"] = list(trial_indices)
+    independent_episode_seeds = bool(
+        cfg.EVALUATION.get("independent_episode_seeds", False)
+    )
+    action_seed_stream = int(cfg.EVALUATION.get("action_seed_stream", 0))
+    if action_seed_stream < 0:
+        raise ValueError("EVALUATION.action_seed_stream must be non-negative")
+    if independent_episode_seeds:
+        results["episode_seed_records"] = []
 
     for trial_idx in trial_indices:
+        policy_seed = (
+            derive_episode_seed(
+                base_seed=seed,
+                task_id=int(cfg.EVALUATION.task_id),
+                trial_index=trial_idx,
+                stream=0,
+            )
+            if independent_episode_seeds
+            else seed
+        )
+        action_seed = (
+            derive_episode_seed(
+                base_seed=seed,
+                task_id=int(cfg.EVALUATION.task_id),
+                trial_index=trial_idx,
+                stream=action_seed_stream + 1,
+            )
+            if independent_episode_seeds
+            else seed + trial_idx * 100_003
+        )
+        if independent_episode_seeds:
+            random.seed(policy_seed)
+            np.random.seed(policy_seed)
+            torch.manual_seed(policy_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(policy_seed)
+            results["episode_seed_records"].append(
+                {
+                    "trial_index": int(trial_idx),
+                    "policy_seed": int(policy_seed),
+                    "action_seed": int(action_seed),
+                    "action_seed_stream": action_seed_stream,
+                }
+            )
         (
             success,
             replay_images,
@@ -926,6 +974,7 @@ def run_single_task(
             model_device=model_device,
             residual_policy=residual_policy,
             language_feature=language_feature,
+            action_seed=action_seed,
         )
         if success:
             results["successes"] += 1
@@ -995,14 +1044,10 @@ def run_single_task(
                             "effective_k": int(clip.get("effective_k", 0)),
                             "episode_policy_steps": episode_policy_steps,
                             "alignment_valid": alignment_valid,
-                            "policy_seed": None if cfg.get("seed") is None else int(cfg.seed),
+                            "policy_seed": int(policy_seed),
                             "env_seed": None if cfg.get("seed") is None else int(cfg.seed),
                             "goal_seed": None if cfg.get("seed") is None else int(cfg.seed),
-                            "action_seed": (
-                                trial_idx * 100_003
-                                if cfg.get("seed") is None
-                                else int(cfg.seed) + trial_idx * 100_003
-                            ),
+                            "action_seed": int(action_seed),
                             "goal_frame_index": int(clip.get("goal_frame_index", -1)),
                             "goal_tau": float(clip.get("effective_k", 0)),
                             "policy_version": str(cfg.ckpt),
