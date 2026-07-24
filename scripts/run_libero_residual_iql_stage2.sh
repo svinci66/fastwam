@@ -18,6 +18,7 @@ OUTPUT_ROOT="${IQL_STAGE2_ROOT:-}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 GPU_ID="0"
 SEED="42"
+TASK_SUITE="${LIBERO_TASK_SUITE:-libero_goal}"
 TASK_IDS="0 1 2 3 4 5 6 7 8 9"
 STATE_INDICES="0,1,2,3,4,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34"
 NOISE_STDS="0.075 0.15"
@@ -29,10 +30,11 @@ SKIP_TRAIN="0"
 COLLECT_ONLY="0"
 
 usage() {
-  printf '%s\n' "Run resumable LIBERO Goal stage-2 residual-IQL data and training."
+  printf '%s\n' "Run resumable LIBERO stage-2 residual-IQL data and training."
   printf '%s\n' "Required: --checkpoint PATH --dataset-stats PATH --siglip-path PATH"
   printf '%s\n' "Optional: --output-root PATH --libero-root PATH --model-base-path PATH"
-  printf '%s\n' "          --gpu-id N --task-ids CSV --state-indices CSV"
+  printf '%s\n' "          --gpu-id N --task-suite {libero_goal,libero_10}"
+  printf '%s\n' "          --task-ids CSV --state-indices CSV"
   printf '%s\n' "          --noise-stds CSV --inference-steps N"
   printf '%s\n' "          --collect-only --skip-train --resume"
 }
@@ -54,6 +56,7 @@ while (($# > 0)); do
     --libero-root) require_value "$1" "${2:-}"; LIBERO_ROOT="$2"; shift 2 ;;
     --model-base-path) require_value "$1" "${2:-}"; MODEL_BASE_PATH="$2"; shift 2 ;;
     --gpu-id) require_value "$1" "${2:-}"; GPU_ID="$2"; shift 2 ;;
+    --task-suite) require_value "$1" "${2:-}"; TASK_SUITE="$2"; shift 2 ;;
     --task-ids) require_value "$1" "${2:-}"; TASK_IDS="${2//,/ }"; shift 2 ;;
     --state-indices) require_value "$1" "${2:-}"; STATE_INDICES="$2"; shift 2 ;;
     --noise-stds) require_value "$1" "${2:-}"; NOISE_STDS="${2//,/ }"; shift 2 ;;
@@ -65,6 +68,15 @@ while (($# > 0)); do
     *) printf 'Error: unknown option %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+case "${TASK_SUITE}" in
+  libero_goal|libero_10) ;;
+  *)
+    printf 'Error: stage-2 currently supports task suites libero_goal and libero_10, got %s.\n' \
+      "${TASK_SUITE}" >&2
+    exit 2
+    ;;
+esac
 
 for path_spec in \
   "checkpoint:${CHECKPOINT}" \
@@ -100,7 +112,7 @@ if [[ -z "${SIGLIP_VERSION}" ]]; then
   SIGLIP_VERSION="google/siglip-so400m-patch14-384@$(basename "${SIGLIP_MODEL_PATH}")"
 fi
 if [[ -z "${OUTPUT_ROOT}" ]]; then
-  OUTPUT_ROOT="${PROJECT_ROOT}/../runs/libero_goal_iql_stage2_$(date +%Y%m%d_%H%M%S)"
+  OUTPUT_ROOT="${PROJECT_ROOT}/../runs/${TASK_SUITE}_iql_stage2_$(date +%Y%m%d_%H%M%S)"
 fi
 if [[ -e "${OUTPUT_ROOT}" && "${RESUME}" != "1" ]]; then
   printf 'Output root exists; pass --resume or choose a new path: %s\n' "${OUTPUT_ROOT}" >&2
@@ -110,11 +122,16 @@ mkdir -p "${OUTPUT_ROOT}"
 OUTPUT_ROOT="$(readlink -f "${OUTPUT_ROOT}")"
 LOG_DIR="${OUTPUT_ROOT}/logs"
 STAGE_DIR="${OUTPUT_ROOT}/.stages"
-mkdir -p "${LOG_DIR}" "${STAGE_DIR}"
+NUMBA_CACHE_DIR="${OUTPUT_ROOT}/numba_cache"
+MPLCONFIGDIR="${OUTPUT_ROOT}/matplotlib"
+mkdir -p "${LOG_DIR}" "${STAGE_DIR}" "${NUMBA_CACHE_DIR}" "${MPLCONFIGDIR}"
 
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export DIFFSYNTH_MODEL_BASE_PATH="${MODEL_BASE_PATH}"
+export MPLCONFIGDIR
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
+export NUMBA_CACHE_DIR
 export PYTHONNOUSERSITE=1
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export TOKENIZERS_PARALLELISM=false
@@ -166,6 +183,7 @@ noise_tag() {
 printf '%s\n' \
   "git_commit=${GIT_COMMIT}" \
   "output_root=${OUTPUT_ROOT}" \
+  "task_suite=${TASK_SUITE}" \
   "task_ids=${TASK_IDS}" \
   "state_indices=${STATE_INDICES}" \
   "noise_stds=${NOISE_STDS}" \
@@ -186,7 +204,7 @@ COMMON_EVAL_OVERRIDES=(
   "seed=${SEED}"
   "EVALUATION.device=cuda"
   "EVALUATION.dataset_stats_path=${DATASET_STATS_PATH}"
-  "EVALUATION.task_suite_name=libero_goal"
+  "EVALUATION.task_suite_name=${TASK_SUITE}"
   "EVALUATION.num_trials=${NUM_TRIALS}"
   "EVALUATION.trial_indices=${TRIAL_INDICES}"
   "EVALUATION.num_steps_wait=30"
@@ -201,6 +219,9 @@ COMMON_EVAL_OVERRIDES=(
   "EVALUATION.imagination_use_direct_action=true"
   "EVALUATION.binarize_gripper=true"
   "EVALUATION.use_action_ensembler=false"
+  "EVALUATION.deterministic_env=true"
+  "EVALUATION.deterministic_algorithms=true"
+  "EVALUATION.deterministic_warn_only=false"
   "EVALUATION.independent_episode_seeds=true"
 )
 
@@ -226,7 +247,7 @@ for task_id in "${TASK_ID_ARRAY[@]}"; do
     action_stream="${behavior_streams[behavior_index]}"
     stage="collect_task${task_id}_${behavior}"
     output_dir="${OUTPUT_ROOT}/raw/task$(printf '%02d' "${task_id}")/${behavior}"
-    transition_dir="${output_dir}/libero_goal/imagination_transitions"
+    transition_dir="${output_dir}/${TASK_SUITE}/imagination_transitions"
     if ! stage_done "${stage}"; then
       mode_args=(
         "EVALUATION.action_mode=${mode}"
@@ -259,6 +280,7 @@ TRIAL_INDEX_ARGS=("${STATE_INDEX_ARRAY[@]}")
 if ! stage_done audit_raw; then
   run_logged audit_raw "${PYTHON_BIN}" experiments/libero/audit_multitask_collection.py \
     --collection-root "${OUTPUT_ROOT}/raw" \
+    --task-suite "${TASK_SUITE}" \
     --task-ids "${TASK_ID_ARGS[@]}" \
     --trial-indices "${TRIAL_INDEX_ARGS[@]}" \
     --expected-noise-stds "${NOISE_STD_ARRAY[@]}" \
@@ -271,10 +293,10 @@ if ! stage_done build_replay; then
   INPUT_DIR_ARGS=()
   for task_id in "${TASK_ID_ARRAY[@]}"; do
     task_dir="${OUTPUT_ROOT}/raw/task$(printf '%02d' "${task_id}")"
-    INPUT_DIR_ARGS+=(--input-dir "${task_dir}/policy/libero_goal/imagination_transitions")
+    INPUT_DIR_ARGS+=(--input-dir "${task_dir}/policy/${TASK_SUITE}/imagination_transitions")
     for noise_std in "${NOISE_STD_ARRAY[@]}"; do
       tag="$(noise_tag "${noise_std}")"
-      INPUT_DIR_ARGS+=(--input-dir "${task_dir}/noise_${tag}/libero_goal/imagination_transitions")
+      INPUT_DIR_ARGS+=(--input-dir "${task_dir}/noise_${tag}/${TASK_SUITE}/imagination_transitions")
     done
   done
   run_logged build_replay "${PYTHON_BIN}" experiments/libero/build_residual_rl_replay.py \

@@ -15,6 +15,7 @@ import numpy as np
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collection-root", type=Path, required=True)
+    parser.add_argument("--task-suite", type=str, required=True)
     parser.add_argument("--task-ids", type=int, nargs="+", required=True)
     parser.add_argument("--trial-indices", type=int, nargs="+", required=True)
     parser.add_argument(
@@ -62,6 +63,9 @@ def _load_records(collection_root: Path) -> list[tuple[Path, dict[str, Any], dic
 
 def main() -> None:
     args = parse_args()
+    expected_suite = args.task_suite.strip()
+    if not expected_suite:
+        raise ValueError("task suite must be non-empty")
     expected_tasks = set(args.task_ids)
     expected_trials = set(args.trial_indices)
     expected_noise_stds = (
@@ -94,12 +98,18 @@ def main() -> None:
     episode_seeds: dict[tuple[int, str, int], tuple[int, int]] = {}
 
     for metadata_path, metadata, arrays in records:
+        task_suite = str(metadata.get("task_suite", "")).strip()
         task_id = int(metadata["task_id"])
         raw_mode = str(metadata["action_mode"])
         mode = _behavior_label(
             metadata, distinguish_noise=expected_noise_stds is not None
         )
         trial_idx = int(metadata["trial_idx"])
+        if task_suite != expected_suite:
+            structural_errors.append(
+                f"unexpected task suite {task_suite!r} in {metadata_path}; "
+                f"expected {expected_suite!r}"
+            )
         if task_id not in expected_tasks:
             structural_errors.append(f"unexpected task {task_id} in {metadata_path}")
         if raw_mode not in {"policy", "noise"} or mode not in required_modes:
@@ -210,6 +220,7 @@ def main() -> None:
     failures = Counter(task_id for (task_id, _, _), success in episode_outcomes.items() if not success)
     report = {
         "collection_root": str(args.collection_root.resolve()),
+        "expected_task_suite": expected_suite,
         "expected_task_ids": sorted(expected_tasks),
         "expected_trial_indices": sorted(expected_trials),
         "expected_behaviors": list(required_modes),

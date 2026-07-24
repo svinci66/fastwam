@@ -196,6 +196,7 @@ for trial_idx in "${STATE_INDEX_ARRAY[@]}"; do TRIAL_INDEX_ARGS+=("${trial_idx}"
 if ! stage_done audit_raw; then
   run_logged audit_raw "${PYTHON_BIN}" experiments/libero/audit_multitask_collection.py \
     --collection-root "${OUTPUT_ROOT}/raw" \
+    --task-suite libero_goal \
     --task-ids "${TASK_ID_ARGS[@]}" \
     --trial-indices "${TRIAL_INDEX_ARGS[@]}" \
     --output-json "${OUTPUT_ROOT}/raw_collection_audit.json"
