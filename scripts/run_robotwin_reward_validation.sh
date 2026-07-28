@@ -53,6 +53,10 @@ for task_name in "${task_names[@]}"; do
       for (( trial=trial_offset; trial<trial_offset+batch_episodes; trial++ )); do
         episode_dir="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/${mode_tag}/episode_$(printf '%04d' "${trial}")"
         [[ -f "${episode_dir}/replan_0000/metadata.json" ]] || complete=false
+        if [[ "${mode_tag}" != "policy" ]]; then
+          policy_current="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/policy/episode_$(printf '%04d' "${trial}")/replan_0000/current.png"
+          cmp -s "${episode_dir}/replan_0000/current.png" "${policy_current}" || complete=false
+        fi
       done
       if [[ "${complete}" == true ]]; then
         printf '[robotwin-reward] skip complete task=%s mode=%s trials=%d..%d\n' \
@@ -75,6 +79,7 @@ for task_name in "${task_names[@]}"; do
           "EVALUATION.eval_num_episodes=${batch_episodes}" \
           "EVALUATION.trial_offset=${trial_offset}" \
           "EVALUATION.environment_start_seed=${environment_start_seed}" \
+          "EVALUATION.environment_episode_offset=${trial_offset}" \
           "EVALUATION.num_inference_steps=${INFERENCE_STEPS}" \
           EVALUATION.replan_steps=24 \
           "EVALUATION.action_mode=${mode}" \

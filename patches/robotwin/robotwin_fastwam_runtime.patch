@@ -20,3 +20,6 @@ diff --git a/script/eval_policy.py b/script/eval_policy.py
 +    test_num = int(usr_args.get("eval_num_episodes", 100))
 +    if test_num < 1:
 +        raise ValueError(f"eval_num_episodes must be positive, got {test_num}")
+@@ -205 +205 @@ def eval_policy(task_name,
+-    now_id = 0
++    now_id = int(usr_args.get("environment_episode_offset", 0))

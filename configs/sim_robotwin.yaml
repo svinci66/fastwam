@@ -41,6 +41,7 @@ EVALUATION:
   action_noise_seed: 20260728
   trial_offset: 0
   environment_start_seed: null
+  environment_episode_offset: 0
   fixed_instruction: null
   save_imagination_transitions: false
   deterministic_algorithms: true

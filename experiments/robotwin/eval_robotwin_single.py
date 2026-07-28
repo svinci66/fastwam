@@ -233,6 +233,9 @@ def main(cfg: DictConfig):
     _append_override(
         overrides, "environment_start_seed", cfg.EVALUATION.environment_start_seed
     )
+    _append_override(
+        overrides, "environment_episode_offset", cfg.EVALUATION.environment_episode_offset
+    )
     _append_override(overrides, "fixed_instruction", cfg.EVALUATION.fixed_instruction)
     _append_override(
         overrides,
