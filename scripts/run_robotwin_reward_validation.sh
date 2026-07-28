@@ -36,6 +36,20 @@ noise_stds=(0.0 0.1 0.3)
 output_dir="${PROJECT_ROOT}/evaluate_results/robotwin/${OUTPUT_NAME}"
 raw_output_dir="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384/${OUTPUT_NAME}"
 
+episode_is_complete() {
+  local task_name="$1"
+  local mode_tag="$2"
+  local trial="$3"
+  local episode_dir policy_current
+  episode_dir="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/${mode_tag}/episode_$(printf '%04d' "${trial}")"
+  python3 "${PROJECT_ROOT}/experiments/robotwin/check_episode_complete.py" \
+    "${episode_dir}" || return 1
+  if [[ "${mode_tag}" != "policy" ]]; then
+    policy_current="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/policy/episode_$(printf '%04d' "${trial}")/replan_0000/current.png"
+    cmp -s "${episode_dir}/replan_0000/current.png" "${policy_current}" || return 1
+  fi
+}
+
 for task_name in "${task_names[@]}"; do
   instruction="$(instruction_for_task "${task_name}")"
   for index in "${!modes[@]}"; do
@@ -44,24 +58,20 @@ for task_name in "${task_names[@]}"; do
     mode_tag="policy"
     [[ "${mode}" == "policy" ]] || mode_tag="noise_$(printf '%.3f' "${noise_std}")"
     trial_offset=0
-    batch_index=0
     while (( trial_offset < EPISODES )); do
-      remaining="$(( EPISODES - trial_offset ))"
-      batch_episodes="${MAX_EPISODES_PER_PROCESS}"
-      (( batch_episodes > remaining )) && batch_episodes="${remaining}"
-      complete=true
-      for (( trial=trial_offset; trial<trial_offset+batch_episodes; trial++ )); do
-        episode_dir="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/${mode_tag}/episode_$(printf '%04d' "${trial}")"
-        [[ -f "${episode_dir}/replan_0000/metadata.json" ]] || complete=false
-        if [[ "${mode_tag}" != "policy" ]]; then
-          policy_current="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/policy/episode_$(printf '%04d' "${trial}")/replan_0000/current.png"
-          cmp -s "${episode_dir}/replan_0000/current.png" "${policy_current}" || complete=false
-        fi
+      if episode_is_complete "${task_name}" "${mode_tag}" "${trial_offset}"; then
+        printf '[robotwin-reward] skip complete task=%s mode=%s trial=%d\n' \
+          "${task_name}" "${mode_tag}" "${trial_offset}"
+        trial_offset="$(( trial_offset + 1 ))"
+        continue
+      fi
+      batch_episodes=1
+      while (( batch_episodes < MAX_EPISODES_PER_PROCESS )); do
+        next_trial="$(( trial_offset + batch_episodes ))"
+        (( next_trial >= EPISODES )) && break
+        episode_is_complete "${task_name}" "${mode_tag}" "${next_trial}" && break
+        batch_episodes="$(( batch_episodes + 1 ))"
       done
-      if [[ "${complete}" == true ]]; then
-        printf '[robotwin-reward] skip complete task=%s mode=%s trials=%d..%d\n' \
-          "${task_name}" "${mode_tag}" "${trial_offset}" "$(( trial_offset + batch_episodes - 1 ))"
-      else
         environment_start_seed="$(( 100000 * (1 + BASE_SEED) + trial_offset ))"
         printf '[robotwin-reward] task=%s mode=%s trials=%d..%d env_seed=%d\n' \
           "${task_name}" "${mode_tag}" "${trial_offset}" \
@@ -88,9 +98,7 @@ for task_name in "${task_names[@]}"; do
           "EVALUATION.fixed_instruction=${instruction}" \
           EVALUATION.save_imagination_transitions=true \
           "EVALUATION.output_dir=${output_dir}"
-      fi
       trial_offset="$(( trial_offset + batch_episodes ))"
-      batch_index="$(( batch_index + 1 ))"
     done
   done
 done
