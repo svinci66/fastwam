@@ -235,12 +235,18 @@ def analyze(
         grouped[(str(row["task_name"]), int(row["trial_idx"]), str(row["behavior"]))].append(row)
     episodes: list[dict[str, Any]] = []
     for (task, trial, behavior), values in sorted(grouped.items()):
+        initial_hashes = {str(row["initial_observation_sha256"]) for row in values}
+        if len(initial_hashes) != 1:
+            raise ValueError(
+                f"Episode {task}/{trial}/{behavior} contains multiple initial-state hashes"
+            )
         episodes.append(
             {
                 "task_name": task,
                 "trial_idx": trial,
                 "behavior": behavior,
                 "success": bool(any(row["episode_success"] for row in values)),
+                "initial_observation_sha256": next(iter(initial_hashes)),
                 "num_transitions": len(values),
                 "mean_imagination_reward": float(
                     np.mean([row["imagination_reward"] for row in values])
@@ -256,16 +262,30 @@ def analyze(
     )
     mild = noise_levels[0] if len(noise_levels) >= 1 else None
     strong = noise_levels[-1] if len(noise_levels) >= 2 else None
-    paired: dict[tuple[str, int], dict[str, float]] = defaultdict(dict)
+    paired: dict[tuple[str, int], dict[str, dict[str, Any]]] = defaultdict(dict)
     for episode in episodes:
-        paired[(episode["task_name"], episode["trial_idx"])][episode["behavior"]] = episode[
-            "mean_imagination_reward"
-        ]
+        paired[(episode["task_name"], episode["trial_idx"])][episode["behavior"]] = episode
     complete = [
         item for item in paired.values()
         if mild is not None and strong is not None and {"policy", mild, strong} <= set(item)
     ]
-    full_order = [item["policy"] > item[mild] > item[strong] for item in complete]
+    full_order = [
+        item["policy"]["mean_imagination_reward"]
+        > item[mild]["mean_imagination_reward"]
+        > item[strong]["mean_imagination_reward"]
+        for item in complete
+    ]
+    initial_state_matches = [
+        len(
+            {
+                item["policy"]["initial_observation_sha256"],
+                item[mild]["initial_observation_sha256"],
+                item[strong]["initial_observation_sha256"],
+            }
+        )
+        == 1
+        for item in complete
+    ]
     correct_shuffled = [
         bool(row["correct_beats_shuffled"])
         for row in valid_rows
@@ -296,6 +316,9 @@ def analyze(
         episode["mean_imagination_reward"] for episode in episodes if not episode["success"]
     ]
     ordering_fraction = _mean([float(value) for value in full_order])
+    initial_state_match_fraction = _mean(
+        [float(value) for value in initial_state_matches]
+    )
     shuffled_fraction = _mean([float(value) for value in correct_shuffled])
     success_gt_failure = bool(
         success_rewards and failure_rewards and np.mean(success_rewards) > np.mean(failure_rewards)
@@ -303,6 +326,7 @@ def analyze(
     sample_ready = len(complete) >= minimum_paired_trials
     gates = {
         "minimum_sample_ready": sample_ready,
+        "paired_initial_state_match_eq_1": initial_state_match_fraction == 1.0,
         "temporal_record_integrity_ge_0_95": record_integrity_fraction >= 0.95,
         "policy_gt_mild_gt_strong_ge_0_70": (
             ordering_fraction is not None and ordering_fraction >= 0.70
@@ -322,6 +346,7 @@ def analyze(
         "temporal_record_integrity_fraction": record_integrity_fraction,
         "clip_saturation_fraction": saturation_fraction,
         "paired_policy_gt_mild_gt_strong_fraction": ordering_fraction,
+        "paired_initial_state_match_fraction": initial_state_match_fraction,
         "correct_goal_beats_shuffled_fraction": shuffled_fraction,
         "mean_reward_success": _mean(success_rewards),
         "mean_reward_failure": _mean(failure_rewards),
