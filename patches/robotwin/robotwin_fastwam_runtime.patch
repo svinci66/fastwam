@@ -1,0 +1,22 @@
+diff --git a/envs/_base_task.py b/envs/_base_task.py
+--- a/envs/_base_task.py
++++ b/envs/_base_task.py
+@@ -1485 +1485,6 @@ class Base_Task(gym.Env):
+-            self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
++            try:
++                self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
++            except (BrokenPipeError, OSError) as exc:
++                print(f"Warning: disabling eval video after ffmpeg pipe failure: {exc}")
++                self.eval_video_path = None
++                self.eval_video_ffmpeg = None
+diff --git a/script/eval_policy.py b/script/eval_policy.py
+--- a/script/eval_policy.py
++++ b/script/eval_policy.py
+@@ -159 +159 @@ def main(usr_args):
+-    st_seed = 100000 * (1 + seed)
++    st_seed = int(usr_args.get("environment_start_seed", 100000 * (1 + seed)))
+@@ -161 +161,3 @@ def main(usr_args):
+-    test_num = 100
++    test_num = int(usr_args.get("eval_num_episodes", 100))
++    if test_num < 1:
++        raise ValueError(f"eval_num_episodes must be positive, got {test_num}")

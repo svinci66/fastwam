@@ -165,6 +165,7 @@ class WorldActionRobotWinPolicy:
         action_mode: str,
         action_noise_std: float,
         action_noise_seed: int,
+        trial_offset: int,
         fixed_instruction: Optional[str],
         save_imagination_transitions: bool,
         imagination_transition_dir: Optional[Path],
@@ -206,6 +207,9 @@ class WorldActionRobotWinPolicy:
         if self.action_mode == "policy" and self.action_noise_std != 0.0:
             raise ValueError("action_mode='policy' requires action_noise_std=0")
         self.action_noise_seed = int(action_noise_seed)
+        self.trial_offset = int(trial_offset)
+        if self.trial_offset < 0:
+            raise ValueError(f"trial_offset must be non-negative, got {self.trial_offset}")
         self.fixed_instruction = (
             None if _is_none_like(fixed_instruction) else str(fixed_instruction)
         )
@@ -227,7 +231,7 @@ class WorldActionRobotWinPolicy:
                 )
 
         self.pending_actions: deque[np.ndarray] = deque()
-        self.episode_count = -1
+        self.episode_count = self.trial_offset - 1
         self.step_count = 0
         self.replan_count = 0
         self._pending_transition: Optional[dict[str, Any]] = None
@@ -637,6 +641,7 @@ def get_model(usr_args: Dict[str, Any]):
     action_noise_seed = int(
         usr_args.get("action_noise_seed", cfg.EVALUATION.get("action_noise_seed", 0))
     )
+    trial_offset = int(usr_args.get("trial_offset", cfg.EVALUATION.get("trial_offset", 0)))
     fixed_instruction_value = usr_args.get(
         "fixed_instruction", cfg.EVALUATION.get("fixed_instruction")
     )
@@ -679,6 +684,7 @@ def get_model(usr_args: Dict[str, Any]):
         action_mode=action_mode,
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
+        trial_offset=trial_offset,
         fixed_instruction=fixed_instruction,
         save_imagination_transitions=save_imagination_transitions,
         imagination_transition_dir=imagination_transition_dir,

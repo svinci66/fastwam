@@ -1,0 +1,6 @@
+diff --git a/src/curobo/geom/sdf/world_mesh.py b/src/curobo/geom/sdf/world_mesh.py
+--- a/src/curobo/geom/sdf/world_mesh.py
++++ b/src/curobo/geom/sdf/world_mesh.py
+@@ -67 +67 @@ class WorldMeshCollision(WorldPrimitiveCollision):
+-        self._wp_device = wp.torch.device_from_torch(self.tensor_args.device)
++        self._wp_device = wp.device_from_torch(self.tensor_args.device)
