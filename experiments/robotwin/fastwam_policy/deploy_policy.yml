@@ -24,3 +24,11 @@ rand_device: cpu
 tiled: false
 timing_enabled: false
 skip_get_obs_within_replan: false
+action_mode: policy
+action_noise_std: 0.0
+action_noise_seed: 20260728
+fixed_instruction: null
+save_imagination_transitions: false
+imagination_transition_dir: null
+deterministic_algorithms: true
+deterministic_warn_only: false

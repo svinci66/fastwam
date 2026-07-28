@@ -34,6 +34,16 @@ EVALUATION:
   timing_enabled: false
   skip_get_obs_within_replan: true
 
+  # Temporally aligned imagination-reward collection.  Noise is applied in
+  # normalized action space and never changes dual-arm gripper dimensions 6/13.
+  action_mode: policy
+  action_noise_std: 0.0
+  action_noise_seed: 20260728
+  fixed_instruction: null
+  save_imagination_transitions: false
+  deterministic_algorithms: true
+  deterministic_warn_only: false
+
   # Runtime inputs
   dataset_stats_path: null
   device: cuda

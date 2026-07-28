@@ -226,6 +226,26 @@ def main(cfg: DictConfig):
         "skip_get_obs_within_replan",
         cfg.EVALUATION.skip_get_obs_within_replan,
     )
+    _append_override(overrides, "action_mode", cfg.EVALUATION.action_mode)
+    _append_override(overrides, "action_noise_std", cfg.EVALUATION.action_noise_std)
+    _append_override(overrides, "action_noise_seed", cfg.EVALUATION.action_noise_seed)
+    _append_override(overrides, "fixed_instruction", cfg.EVALUATION.fixed_instruction)
+    _append_override(
+        overrides,
+        "save_imagination_transitions",
+        cfg.EVALUATION.save_imagination_transitions,
+    )
+    _append_override(
+        overrides,
+        "imagination_transition_dir",
+        str(robotwin_eval_base / "imagination_transitions"),
+    )
+    _append_override(
+        overrides, "deterministic_algorithms", cfg.EVALUATION.deterministic_algorithms
+    )
+    _append_override(
+        overrides, "deterministic_warn_only", cfg.EVALUATION.deterministic_warn_only
+    )
 
     cmd = [
         sys.executable,

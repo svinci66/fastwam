@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CHECKPOINT="${CHECKPOINT:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/robotwin_uncond_3cam_384.pt}"
+DATASET_STATS="${DATASET_STATS:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/robotwin_uncond_3cam_384_dataset_stats.json}"
+ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/home/ubuntu/sj/fastwam/RoboTwin-upstream}"
+SIGLIP_PATH="${SIGLIP_PATH:-/home/ubuntu/sj/fastwam/checkpoints/siglip-so400m-patch14-384-modelscope}"
+CONDA_ENV="${CONDA_ENV:-robotwin_fastwam}"
+OUTPUT_NAME="${OUTPUT_NAME:-robotwin_reward_validation_$(date +%Y%m%d_%H%M%S)}"
+TASKS_CSV="${TASKS:-click_alarmclock,blocks_ranking_size,hanging_mug}"
+EPISODES="${EPISODES:-5}"
+INFERENCE_STEPS="${INFERENCE_STEPS:-4}"
+GPU_ID="${GPU_ID:-0}"
+ACTION_NOISE_SEED="${ACTION_NOISE_SEED:-20260728}"
+
+[[ -f "${CHECKPOINT}" ]] || { printf 'Missing checkpoint: %s\n' "${CHECKPOINT}" >&2; exit 1; }
+[[ -f "${DATASET_STATS}" ]] || { printf 'Missing dataset stats: %s\n' "${DATASET_STATS}" >&2; exit 1; }
+[[ -d "${ROBOTWIN_ROOT}" ]] || { printf 'Missing RoboTwin root: %s\n' "${ROBOTWIN_ROOT}" >&2; exit 1; }
+[[ -d "${SIGLIP_PATH}" ]] || { printf 'Missing SigLIP path: %s\n' "${SIGLIP_PATH}" >&2; exit 1; }
+
+instruction_for_task() {
+  case "$1" in
+    click_alarmclock) printf '%s' 'Press the top center button of the alarm clock.' ;;
+    blocks_ranking_size) printf '%s' 'Rank the blocks by size.' ;;
+    hanging_mug) printf '%s' 'Hang the mug on the mug rack.' ;;
+    *) printf '%s' "Complete the task: ${1//_/ }." ;;
+  esac
+}
+
+IFS=',' read -r -a task_names <<< "${TASKS_CSV}"
+modes=(policy noise noise)
+noise_stds=(0.0 0.1 0.3)
+output_dir="${PROJECT_ROOT}/evaluate_results/robotwin/${OUTPUT_NAME}"
+raw_output_dir="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384/${OUTPUT_NAME}"
+
+for task_name in "${task_names[@]}"; do
+  instruction="$(instruction_for_task "${task_name}")"
+  for index in "${!modes[@]}"; do
+    mode="${modes[$index]}"
+    noise_std="${noise_stds[$index]}"
+    printf '[robotwin-reward] task=%s mode=%s noise=%s episodes=%s\n' \
+      "${task_name}" "${mode}" "${noise_std}" "${EPISODES}"
+    env CUBLAS_WORKSPACE_CONFIG=:4096:8 MPLCONFIGDIR=/tmp/matplotlib_robotwin \
+      conda run -n "${CONDA_ENV}" python -u \
+      "${PROJECT_ROOT}/experiments/robotwin/eval_robotwin_single.py" \
+      "ckpt=${CHECKPOINT}" \
+      seed=42 \
+      "gpu_id=${GPU_ID}" \
+      "EVALUATION.robotwin_root=${ROBOTWIN_ROOT}" \
+      "EVALUATION.dataset_stats_path=${DATASET_STATS}" \
+      "EVALUATION.task_name=${task_name}" \
+      EVALUATION.task_config=demo_clean \
+      "EVALUATION.eval_num_episodes=${EPISODES}" \
+      "EVALUATION.num_inference_steps=${INFERENCE_STEPS}" \
+      EVALUATION.replan_steps=24 \
+      "EVALUATION.action_mode=${mode}" \
+      "EVALUATION.action_noise_std=${noise_std}" \
+      "EVALUATION.action_noise_seed=${ACTION_NOISE_SEED}" \
+      "EVALUATION.fixed_instruction=${instruction}" \
+      EVALUATION.save_imagination_transitions=true \
+      "EVALUATION.output_dir=${output_dir}"
+  done
+done
+
+printf 'Raw collection complete: %s\n' "${raw_output_dir}"
+minimum_paired_trials="$(( ${#task_names[@]} * EPISODES ))"
+env CUBLAS_WORKSPACE_CONFIG=:4096:8 MPLCONFIGDIR=/tmp/matplotlib_robotwin \
+  conda run -n "${CONDA_ENV}" python \
+  "${PROJECT_ROOT}/experiments/robotwin/analyze_imagination_rewards.py" \
+  --input-dir "${raw_output_dir}" \
+  --encoder-path "${SIGLIP_PATH}" \
+  --output-dir "${raw_output_dir}/reward_audit" \
+  --device cuda \
+  --batch-size 12 \
+  --minimum-paired-trials "${minimum_paired_trials}"
+printf 'Reward audit complete: %s\n' "${raw_output_dir}/reward_audit/reward_audit_summary.json"
