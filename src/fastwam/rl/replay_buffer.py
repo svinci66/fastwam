@@ -1,4 +1,4 @@
-"""Versioned, compact replay storage for action-chunk LIBERO transitions."""
+"""Versioned, compact replay storage for FastWAM action-chunk transitions."""
 
 from __future__ import annotations
 
@@ -105,7 +105,15 @@ class ReplayTransition:
             raise ValueError(
                 f"unsupported imagination_reward_type: {self.imagination_reward_type!r}"
             )
-        if self.behavior_mode not in {"policy", "noise", "zero", "residual"}:
+        if self.behavior_mode not in {
+            "policy",
+            "noise",
+            "zero",
+            "residual",
+            "hold",
+            "gripper_delay",
+            "expert",
+        }:
             raise ValueError(f"unsupported behavior_mode: {self.behavior_mode!r}")
         if not np.isfinite(self.action_noise_std) or self.action_noise_std < 0.0:
             raise ValueError("action_noise_std must be finite and non-negative")
@@ -124,7 +132,7 @@ class ReplayTransition:
         if self.terminated and self.truncated:
             raise ValueError("terminated and truncated must not both be true")
         if self.success and not self.terminated:
-            raise ValueError("a successful LIBERO transition must be marked terminated")
+            raise ValueError("a successful transition must be marked terminated")
         if self.alignment_valid and self.effective_k != self.target_k:
             raise ValueError(
                 "alignment_valid requires effective_k == target_k; partial chunks need a matched goal"

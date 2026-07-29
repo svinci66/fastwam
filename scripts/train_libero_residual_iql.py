@@ -188,6 +188,7 @@ def main() -> None:
         "language_conditioning": actor_config.language_feature_dim > 0,
         "baseline_action_conditioning": actor_config.baseline_action_embedding_dim > 0,
         "task_balancing": iql_config.balance_tasks,
+        "behavior_balancing": iql_config.balance_behaviors,
         "num_tasks": len(task_keys),
         "context_dim": context_dim,
         "reward_mean": float(np.mean(transition_rewards)),

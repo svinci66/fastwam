@@ -172,7 +172,13 @@ class ResidualActor(nn.Module):
             baseline_actions=baseline_actions,
             language_feature=language_feature,
         )
-        return torch.maximum(torch.minimum(corrected, self.action_high), self.action_low)
+        bounded = torch.maximum(torch.minimum(corrected, self.action_high), self.action_low)
+        # A zero residual scale is an explicit ownership boundary (for example,
+        # FastWAM retains full control of grippers).  Preserve those baseline
+        # dimensions exactly even when a slightly out-of-range denormalized
+        # command would otherwise be clipped.
+        frozen_dimensions = self.residual_scale == 0
+        return torch.where(frozen_dimensions, baseline_actions, bounded)
 
     def export_config(self) -> dict:
         return asdict(self.config)

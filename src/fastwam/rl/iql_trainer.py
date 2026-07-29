@@ -43,6 +43,7 @@ class IQLConfig:
     max_grad_norm: float = 1.0
     use_goal_conditioning: bool = False
     balance_tasks: bool = True
+    balance_behaviors: bool = False
     bootstrap_timeouts: bool = False
     seed: int = 42
 
@@ -172,6 +173,17 @@ class IQLReplayTensorDataset(Dataset):
         unique_tasks = {key: index for index, key in enumerate(sorted(set(task_keys)))}
         self.task_group_ids = torch.tensor(
             [unique_tasks[key] for key in task_keys], dtype=torch.int64
+        )
+        task_behavior_keys = [
+            (item.task_suite, item.task_id, item.behavior_mode)
+            for item in replay.transitions
+        ]
+        unique_task_behaviors = {
+            key: index for index, key in enumerate(sorted(set(task_behavior_keys)))
+        }
+        self.task_behavior_group_ids = torch.tensor(
+            [unique_task_behaviors[key] for key in task_behavior_keys],
+            dtype=torch.int64,
         )
 
     def __len__(self) -> int:
@@ -312,8 +324,14 @@ def train_residual_iql(
 
     dataset = IQLReplayTensorDataset(replay, rewards, config)
     generator = torch.Generator().manual_seed(config.seed)
-    sampler_type = TaskBalancedBatchSampler if config.balance_tasks else BalancedBatchSampler
-    sampler_input = dataset.task_group_ids if config.balance_tasks else len(dataset)
+    balance_groups = config.balance_behaviors or config.balance_tasks
+    sampler_type = TaskBalancedBatchSampler if balance_groups else BalancedBatchSampler
+    if config.balance_behaviors:
+        sampler_input = dataset.task_behavior_group_ids
+    elif config.balance_tasks:
+        sampler_input = dataset.task_group_ids
+    else:
+        sampler_input = len(dataset)
     loader = DataLoader(
         dataset,
         batch_sampler=sampler_type(

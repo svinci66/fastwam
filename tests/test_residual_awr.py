@@ -28,6 +28,23 @@ def test_residual_actor_bounds_corrections_and_leaves_gripper_to_fastwam():
     residual = corrected - baseline
     assert torch.all(torch.abs(residual[..., :3]) <= 0.05 + 1e-6)
     assert torch.all(torch.abs(residual[..., 3:6]) <= 0.1 + 1e-6)
+
+
+def test_zero_scale_dimension_preserves_out_of_bounds_baseline_exactly():
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=2,
+            action_horizon=1,
+            action_dim=2,
+            hidden_dims=(4,),
+            residual_scale=(0.05, 0.0),
+            action_low=(-1.0, 0.0),
+            action_high=(1.0, 1.0),
+        )
+    )
+    baseline = torch.tensor([[[0.0, -0.02]]])
+    corrected = actor(torch.zeros(1, 2), baseline)
+    torch.testing.assert_close(corrected[..., 1], baseline[..., 1])
     assert torch.equal(corrected[..., -1], baseline[..., -1])
 
 
