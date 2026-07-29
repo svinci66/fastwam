@@ -229,6 +229,21 @@ def main(cfg: DictConfig):
     _append_override(overrides, "action_mode", cfg.EVALUATION.action_mode)
     _append_override(overrides, "action_noise_std", cfg.EVALUATION.action_noise_std)
     _append_override(overrides, "action_noise_seed", cfg.EVALUATION.action_noise_seed)
+    _append_override(
+        overrides,
+        "action_hold_probability",
+        cfg.EVALUATION.action_hold_probability,
+    )
+    _append_override(
+        overrides,
+        "gripper_close_delay_steps",
+        cfg.EVALUATION.gripper_close_delay_steps,
+    )
+    _append_override(
+        overrides,
+        "action_corruption_seed",
+        cfg.EVALUATION.action_corruption_seed,
+    )
     _append_override(overrides, "trial_offset", cfg.EVALUATION.trial_offset)
     _append_override(
         overrides, "environment_start_seed", cfg.EVALUATION.environment_start_seed

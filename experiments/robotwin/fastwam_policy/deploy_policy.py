@@ -27,6 +27,8 @@ from fastwam.datasets.lerobot.processors.fastwam_processor import FastWAMProcess
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
 from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
 from experiments.robotwin.imagination_reward_utils import (
+    apply_action_chunk_hold,
+    apply_first_gripper_close_delay,
     apply_normalized_action_noise,
     array_sha256,
     save_aligned_transition,
@@ -165,6 +167,9 @@ class WorldActionRobotWinPolicy:
         action_mode: str,
         action_noise_std: float,
         action_noise_seed: int,
+        action_hold_probability: float,
+        gripper_close_delay_steps: int,
+        action_corruption_seed: int,
         trial_offset: int,
         fixed_instruction: Optional[str],
         save_imagination_transitions: bool,
@@ -195,9 +200,10 @@ class WorldActionRobotWinPolicy:
         self._num_video_frames = int(num_video_frames)
         self.action_video_freq_ratio = int(action_video_freq_ratio)
         self.action_mode = str(action_mode).strip().lower()
-        if self.action_mode not in {"policy", "noise"}:
+        if self.action_mode not in {"policy", "noise", "hold", "gripper_delay"}:
             raise ValueError(
-                f"Unsupported action_mode={self.action_mode!r}; expected 'policy' or 'noise'."
+                f"Unsupported action_mode={self.action_mode!r}; expected one of "
+                "['policy', 'noise', 'hold', 'gripper_delay']."
             )
         self.action_noise_std = float(action_noise_std)
         if not np.isfinite(self.action_noise_std) or self.action_noise_std < 0.0:
@@ -207,6 +213,25 @@ class WorldActionRobotWinPolicy:
         if self.action_mode == "policy" and self.action_noise_std != 0.0:
             raise ValueError("action_mode='policy' requires action_noise_std=0")
         self.action_noise_seed = int(action_noise_seed)
+        self.action_hold_probability = float(action_hold_probability)
+        if not 0.0 <= self.action_hold_probability <= 1.0:
+            raise ValueError(
+                "action_hold_probability must be in [0,1], got "
+                f"{self.action_hold_probability}"
+            )
+        self.gripper_close_delay_steps = int(gripper_close_delay_steps)
+        if self.gripper_close_delay_steps < 0:
+            raise ValueError(
+                "gripper_close_delay_steps must be non-negative, got "
+                f"{self.gripper_close_delay_steps}"
+            )
+        self.action_corruption_seed = int(action_corruption_seed)
+        if self.action_mode == "hold" and self.action_hold_probability <= 0.0:
+            raise ValueError("action_mode='hold' requires action_hold_probability > 0")
+        if self.action_mode == "gripper_delay" and self.gripper_close_delay_steps <= 0:
+            raise ValueError(
+                "action_mode='gripper_delay' requires gripper_close_delay_steps > 0"
+            )
         self.trial_offset = int(trial_offset)
         if self.trial_offset < 0:
             raise ValueError(f"trial_offset must be non-negative, got {self.trial_offset}")
@@ -238,20 +263,34 @@ class WorldActionRobotWinPolicy:
         self._episode_metadata_paths: list[Path] = []
         self._episode_success = False
         self._episode_initial_hash: Optional[str] = None
+        self._gripper_delay_triggered = np.zeros(2, dtype=bool)
+        self._gripper_delay_remaining = np.zeros(2, dtype=np.int64)
         self._language_feature_cache: dict[str, np.ndarray] = {}
         self._timing_rollout = {"infer_s": 0.0, "sim_s": 0.0}
 
         logger.info(
             "Initialized WorldActionRobotWinPolicy | ckpt=%s | stats=%s | horizon=%d | "
-            "replan=%d | mode=%s | noise_std=%.3f | capture=%s",
+            "replan=%d | mode=%s | noise_std=%.3f | hold_prob=%.3f | "
+            "gripper_delay=%d | capture=%s",
             checkpoint_path,
             dataset_stats_path,
             self.action_horizon,
             self.replan_steps,
             self.action_mode,
             self.action_noise_std,
+            self.action_hold_probability,
+            self.gripper_close_delay_steps,
             self.save_imagination_transitions,
         )
+
+    def _behavior_tag(self) -> str:
+        if self.action_mode == "policy":
+            return "policy"
+        if self.action_mode == "noise":
+            return f"noise_{self.action_noise_std:.3f}"
+        if self.action_mode == "hold":
+            return f"hold_{self.action_hold_probability:.3f}"
+        return f"gripper_delay_{self.gripper_close_delay_steps:03d}"
 
     def _normalize_state(self, state: np.ndarray) -> torch.Tensor:
         state_meta = self.processor.shape_meta["state"]
@@ -298,7 +337,14 @@ class WorldActionRobotWinPolicy:
 
     def _infer_action_chunk(
         self, observation: Dict[str, Any], instruction: str
-    ) -> tuple[np.ndarray, np.ndarray, Optional[list[Image.Image]], np.ndarray, np.ndarray]:
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        Optional[list[Image.Image]],
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+    ]:
         image_tensor = self._build_robotwin_image_tensor(observation)
         current_image = self._build_robotwin_image(observation)
         state_vector = np.asarray(observation["joint_action"]["vector"], dtype=np.float32)
@@ -373,12 +419,42 @@ class WorldActionRobotWinPolicy:
         executed_actions = self._denormalize_action(
             torch.from_numpy(normalized_executed)
         )[0]
+        corruption_mask = np.zeros_like(executed_actions, dtype=np.float32)
+        if self.action_mode == "hold":
+            corruption_seed = (
+                self.action_corruption_seed
+                + self.episode_count * 100_003
+                + self.replan_count * 1_009
+            )
+            hold_chunk = bool(
+                np.random.default_rng(corruption_seed).random()
+                < self.action_hold_probability
+            )
+            executed_actions, corruption_mask = apply_action_chunk_hold(
+                executed_actions,
+                current_action=state_vector,
+                hold_chunk=hold_chunk,
+            )
+        elif self.action_mode == "gripper_delay":
+            (
+                executed_actions,
+                corruption_mask,
+                self._gripper_delay_triggered,
+                self._gripper_delay_remaining,
+            ) = apply_first_gripper_close_delay(
+                executed_actions,
+                current_action=state_vector,
+                delay_steps=self.gripper_close_delay_steps,
+                already_triggered=self._gripper_delay_triggered,
+                remaining_steps=self._gripper_delay_remaining,
+            )
         return (
             baseline_actions,
             executed_actions,
             predicted_frames,
             current_image,
             epsilon,
+            corruption_mask,
         )
 
     def _fill_action_queue(self, observation: Dict[str, Any], instruction: str) -> None:
@@ -388,6 +464,7 @@ class WorldActionRobotWinPolicy:
             predicted_frames,
             current_image,
             epsilon,
+            corruption_mask,
         ) = self._infer_action_chunk(observation=observation, instruction=instruction)
         n_exec = min(self.replan_steps, executed_actions.shape[0])
         for i in range(n_exec):
@@ -420,6 +497,7 @@ class WorldActionRobotWinPolicy:
                 "baseline_actions": baseline_actions[:n_exec].copy(),
                 "planned_actions": executed_actions[:n_exec].copy(),
                 "normalized_noise_direction": epsilon[:n_exec].copy(),
+                "action_corruption_mask": corruption_mask[:n_exec].copy(),
                 "executed_actions": [],
                 "initial_observation_sha256": self._episode_initial_hash,
             }
@@ -434,11 +512,7 @@ class WorldActionRobotWinPolicy:
         target_k = int(self.replan_steps)
         success = bool(task_env.eval_success)
         truncated = bool(task_env.take_action_cnt >= task_env.step_lim and not success)
-        mode_tag = (
-            "policy"
-            if self.action_mode == "policy"
-            else f"noise_{self.action_noise_std:.3f}"
-        )
+        mode_tag = self._behavior_tag()
         record_dir = (
             self.imagination_transition_dir
             / self.task_name
@@ -454,10 +528,20 @@ class WorldActionRobotWinPolicy:
             "trial_idx": self.episode_count,
             "replan_idx": int(transition["replan_idx"]),
             "action_mode": self.action_mode,
+            "behavior_tag": mode_tag,
             "action_noise_std": (
                 self.action_noise_std if self.action_mode == "noise" else 0.0
             ),
             "action_noise_seed": self.action_noise_seed,
+            "action_hold_probability": (
+                self.action_hold_probability if self.action_mode == "hold" else 0.0
+            ),
+            "gripper_close_delay_steps": (
+                self.gripper_close_delay_steps
+                if self.action_mode == "gripper_delay"
+                else 0
+            ),
+            "action_corruption_seed": self.action_corruption_seed,
             "initial_observation_sha256": transition["initial_observation_sha256"],
             "target_step": target_k,
             "effective_k": effective_k,
@@ -489,6 +573,7 @@ class WorldActionRobotWinPolicy:
                 "planned_actions": transition["planned_actions"][:effective_k],
                 "executed_actions": executed_actions,
                 "normalized_noise_direction": transition["normalized_noise_direction"][:effective_k],
+                "action_corruption_mask": transition["action_corruption_mask"][:effective_k],
                 "environment_rewards": np.zeros(effective_k, dtype=np.float32),
                 "language_feature": self._language_feature_cache[transition["instruction"]],
             },
@@ -553,6 +638,8 @@ class WorldActionRobotWinPolicy:
         self._episode_metadata_paths = []
         self._episode_success = False
         self._episode_initial_hash = None
+        self._gripper_delay_triggered[:] = False
+        self._gripper_delay_remaining[:] = 0
         self.reset_timing_rollout()
 
 
@@ -641,6 +728,24 @@ def get_model(usr_args: Dict[str, Any]):
     action_noise_seed = int(
         usr_args.get("action_noise_seed", cfg.EVALUATION.get("action_noise_seed", 0))
     )
+    action_hold_probability = float(
+        usr_args.get(
+            "action_hold_probability",
+            cfg.EVALUATION.get("action_hold_probability", 0.0),
+        )
+    )
+    gripper_close_delay_steps = int(
+        usr_args.get(
+            "gripper_close_delay_steps",
+            cfg.EVALUATION.get("gripper_close_delay_steps", 0),
+        )
+    )
+    action_corruption_seed = int(
+        usr_args.get(
+            "action_corruption_seed",
+            cfg.EVALUATION.get("action_corruption_seed", 0),
+        )
+    )
     trial_offset = int(usr_args.get("trial_offset", cfg.EVALUATION.get("trial_offset", 0)))
     fixed_instruction_value = usr_args.get(
         "fixed_instruction", cfg.EVALUATION.get("fixed_instruction")
@@ -684,6 +789,9 @@ def get_model(usr_args: Dict[str, Any]):
         action_mode=action_mode,
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
+        action_hold_probability=action_hold_probability,
+        gripper_close_delay_steps=gripper_close_delay_steps,
+        action_corruption_seed=action_corruption_seed,
         trial_offset=trial_offset,
         fixed_instruction=fixed_instruction,
         save_imagination_transitions=save_imagination_transitions,

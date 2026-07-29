@@ -4,6 +4,8 @@ import numpy as np
 from PIL import Image
 
 from experiments.robotwin.imagination_reward_utils import (
+    apply_action_chunk_hold,
+    apply_first_gripper_close_delay,
     apply_normalized_action_noise,
     save_aligned_transition,
     split_robotwin_camera_views,
@@ -34,6 +36,53 @@ def test_shared_noise_seed_scales_same_direction_and_excludes_grippers():
     np.testing.assert_array_equal(mild_epsilon, strong_epsilon)
     np.testing.assert_allclose(strong, 3.0 * mild, atol=1e-6)
     np.testing.assert_array_equal(mild[:, [6, 13]], 0.0)
+
+
+def test_action_chunk_hold_freezes_only_arm_targets():
+    current = np.arange(14, dtype=np.float32)
+    baseline = np.stack([current + 1.0, current + 2.0])
+    held, mask = apply_action_chunk_hold(
+        baseline, current_action=current, hold_chunk=True
+    )
+    arm_indices = [index for index in range(14) if index not in (6, 13)]
+    np.testing.assert_array_equal(
+        held[:, arm_indices], np.tile(current[arm_indices], (2, 1))
+    )
+    np.testing.assert_array_equal(held[:, [6, 13]], baseline[:, [6, 13]])
+    np.testing.assert_array_equal(mask[:, arm_indices], 1.0)
+    np.testing.assert_array_equal(mask[:, [6, 13]], 0.0)
+
+
+def test_gripper_close_delay_crosses_chunk_boundary_once():
+    current = np.zeros(14, dtype=np.float32)
+    current[[6, 13]] = 1.0
+    first = np.tile(current, (3, 1))
+    first[:, 6] = [0.8, 0.4, 0.0]
+    delayed, mask, triggered, remaining = apply_first_gripper_close_delay(
+        first,
+        current_action=current,
+        delay_steps=3,
+        already_triggered=np.zeros(2, dtype=bool),
+        remaining_steps=np.zeros(2, dtype=np.int64),
+    )
+    np.testing.assert_allclose(delayed[:, 6], [0.8, 0.8, 0.8])
+    np.testing.assert_array_equal(mask[:, 6], [0.0, 1.0, 1.0])
+    np.testing.assert_array_equal(triggered, [True, False])
+    np.testing.assert_array_equal(remaining, [1, 0])
+
+    second = np.tile(current, (2, 1))
+    second[:, 6] = 0.0
+    delayed, mask, triggered, remaining = apply_first_gripper_close_delay(
+        second,
+        current_action=delayed[-1],
+        delay_steps=3,
+        already_triggered=triggered,
+        remaining_steps=remaining,
+    )
+    np.testing.assert_allclose(delayed[:, 6], [0.8, 0.0])
+    np.testing.assert_array_equal(mask[:, 6], [1.0, 0.0])
+    np.testing.assert_array_equal(triggered, [True, False])
+    np.testing.assert_array_equal(remaining, [0, 0])
 
 
 def test_saved_transition_can_backfill_episode_success(tmp_path: Path):

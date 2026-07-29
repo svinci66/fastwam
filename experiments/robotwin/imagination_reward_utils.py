@@ -79,6 +79,107 @@ def apply_normalized_action_noise(
     return perturbed.astype(np.float32, copy=False), epsilon
 
 
+def apply_action_chunk_hold(
+    action: np.ndarray,
+    *,
+    current_action: np.ndarray,
+    hold_chunk: bool,
+    gripper_indices: tuple[int, ...] = ROBOTWIN_GRIPPER_INDICES,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Hold arm targets for a complete action chunk without changing grippers.
+
+    FastWAM emits an action chunk at each replan.  Dropping a whole decision is
+    easier to audit than adding independent noise to every target: a held chunk
+    produces no intended arm progress, while the original gripper trajectory is
+    preserved so that motion corruption is not confounded with gripper failure.
+    """
+
+    baseline = np.asarray(action, dtype=np.float32)
+    current = np.asarray(current_action, dtype=np.float32)
+    if baseline.ndim != 2:
+        raise ValueError(f"Expected actions [T,D], got {baseline.shape}")
+    if current.shape != (baseline.shape[1],):
+        raise ValueError(
+            f"Expected current_action [{baseline.shape[1]}], got {current.shape}"
+        )
+    if any(index < 0 or index >= baseline.shape[1] for index in gripper_indices):
+        raise ValueError(
+            f"gripper indices {gripper_indices} are invalid for action dim {baseline.shape[1]}"
+        )
+
+    mask = np.zeros_like(baseline, dtype=np.float32)
+    if not hold_chunk:
+        return baseline.copy(), mask
+    arm_indices = [
+        index for index in range(baseline.shape[1]) if index not in gripper_indices
+    ]
+    held = baseline.copy()
+    held[:, arm_indices] = current[arm_indices]
+    mask[:, arm_indices] = 1.0
+    return held, mask
+
+
+def apply_first_gripper_close_delay(
+    action: np.ndarray,
+    *,
+    current_action: np.ndarray,
+    delay_steps: int,
+    already_triggered: np.ndarray,
+    remaining_steps: np.ndarray,
+    close_threshold: float = 0.5,
+    gripper_indices: tuple[int, ...] = ROBOTWIN_GRIPPER_INDICES,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Delay each gripper's first close command while preserving arm motion.
+
+    State is returned explicitly so a delay can cross action-chunk boundaries.
+    Each gripper is sabotaged at most once per episode; after the delay expires,
+    the policy may recover naturally on a later replan.
+    """
+
+    baseline = np.asarray(action, dtype=np.float32)
+    current = np.asarray(current_action, dtype=np.float32)
+    triggered = np.asarray(already_triggered, dtype=bool).copy()
+    remaining = np.asarray(remaining_steps, dtype=np.int64).copy()
+    if baseline.ndim != 2:
+        raise ValueError(f"Expected actions [T,D], got {baseline.shape}")
+    if current.shape != (baseline.shape[1],):
+        raise ValueError(
+            f"Expected current_action [{baseline.shape[1]}], got {current.shape}"
+        )
+    if delay_steps < 0:
+        raise ValueError(f"delay_steps must be non-negative, got {delay_steps}")
+    if triggered.shape != (len(gripper_indices),):
+        raise ValueError(
+            f"already_triggered must have shape {(len(gripper_indices),)}, got {triggered.shape}"
+        )
+    if remaining.shape != (len(gripper_indices),):
+        raise ValueError(
+            f"remaining_steps must have shape {(len(gripper_indices),)}, got {remaining.shape}"
+        )
+
+    delayed = baseline.copy()
+    mask = np.zeros_like(baseline, dtype=np.float32)
+    previous = current.copy()
+    for step in range(baseline.shape[0]):
+        for state_index, action_index in enumerate(gripper_indices):
+            if remaining[state_index] > 0:
+                delayed[step, action_index] = previous[action_index]
+                mask[step, action_index] = 1.0
+                remaining[state_index] -= 1
+            elif (
+                delay_steps > 0
+                and not triggered[state_index]
+                and previous[action_index] > close_threshold
+                and baseline[step, action_index] <= close_threshold
+            ):
+                triggered[state_index] = True
+                delayed[step, action_index] = previous[action_index]
+                mask[step, action_index] = 1.0
+                remaining[state_index] = delay_steps - 1
+        previous = delayed[step].copy()
+    return delayed, mask, triggered, remaining
+
+
 def save_aligned_transition(
     output_dir: Path,
     *,

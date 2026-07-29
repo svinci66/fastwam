@@ -41,6 +41,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def behavior_label(record: dict[str, Any]) -> str:
+    explicit = str(record.get("behavior_tag", "")).strip()
+    if explicit:
+        return explicit
     if str(record.get("action_mode", "policy")) == "policy":
         return "policy"
     return f"noise_{float(record.get('action_noise_std', 0.0)):.3f}"
@@ -260,8 +263,28 @@ def analyze(
     noise_levels = sorted(
         {episode["behavior"] for episode in episodes if episode["behavior"].startswith("noise_")}
     )
-    mild = noise_levels[0] if len(noise_levels) >= 1 else None
-    strong = noise_levels[-1] if len(noise_levels) >= 2 else None
+    hold_levels = sorted(
+        {episode["behavior"] for episode in episodes if episode["behavior"].startswith("hold_")},
+        key=lambda value: float(value.removeprefix("hold_")),
+    )
+    gripper_delay_levels = sorted(
+        {
+            episode["behavior"]
+            for episode in episodes
+            if episode["behavior"].startswith("gripper_delay_")
+        }
+    )
+    if len(noise_levels) >= 2:
+        comparison_family = "noise"
+        comparison_levels = noise_levels
+    elif len(hold_levels) >= 2:
+        comparison_family = "hold"
+        comparison_levels = hold_levels
+    else:
+        comparison_family = None
+        comparison_levels = []
+    mild = comparison_levels[0] if comparison_levels else None
+    strong = comparison_levels[-1] if len(comparison_levels) >= 2 else None
     paired: dict[tuple[str, int], dict[str, dict[str, Any]]] = defaultdict(dict)
     for episode in episodes:
         paired[(episode["task_name"], episode["trial_idx"])][episode["behavior"]] = episode
@@ -285,6 +308,21 @@ def analyze(
         )
         == 1
         for item in complete
+    ]
+    policy_gripper_pairs = [
+        item
+        for item in paired.values()
+        if "policy" in item
+        and any(level in item for level in gripper_delay_levels)
+    ]
+    policy_gt_gripper_delay = [
+        item["policy"]["mean_imagination_reward"]
+        > max(
+            item[level]["mean_imagination_reward"]
+            for level in gripper_delay_levels
+            if level in item
+        )
+        for item in policy_gripper_pairs
     ]
     correct_shuffled = [
         bool(row["correct_beats_shuffled"])
@@ -324,6 +362,20 @@ def analyze(
         success_rewards and failure_rewards and np.mean(success_rewards) > np.mean(failure_rewards)
     )
     sample_ready = len(complete) >= minimum_paired_trials
+    behavior_summary: dict[str, dict[str, Any]] = {}
+    for behavior in sorted({episode["behavior"] for episode in episodes}):
+        values = [episode for episode in episodes if episode["behavior"] == behavior]
+        behavior_summary[behavior] = {
+            "num_episodes": len(values),
+            "num_successes": int(sum(bool(value["success"]) for value in values)),
+            "success_rate": float(np.mean([bool(value["success"]) for value in values])),
+            "mean_imagination_reward": float(
+                np.mean([value["mean_imagination_reward"] for value in values])
+            ),
+            "mean_imagination_return": float(
+                np.mean([value["imagination_return"] for value in values])
+            ),
+        }
     gates = {
         "minimum_sample_ready": sample_ready,
         "paired_initial_state_match_eq_1": initial_state_match_fraction == 1.0,
@@ -343,9 +395,16 @@ def analyze(
         "num_episodes": len(episodes),
         "num_complete_paired_trials": len(complete),
         "behavior_noise_levels": noise_levels,
+        "behavior_hold_levels": hold_levels,
+        "behavior_gripper_delay_levels": gripper_delay_levels,
+        "behavior_comparison_family": comparison_family,
+        "behavior_summary": behavior_summary,
         "temporal_record_integrity_fraction": record_integrity_fraction,
         "clip_saturation_fraction": saturation_fraction,
         "paired_policy_gt_mild_gt_strong_fraction": ordering_fraction,
+        "paired_policy_gt_gripper_delay_fraction": _mean(
+            [float(value) for value in policy_gt_gripper_delay]
+        ),
         "paired_initial_state_match_fraction": initial_state_match_fraction,
         "correct_goal_beats_shuffled_fraction": shuffled_fraction,
         "mean_reward_success": _mean(success_rewards),
