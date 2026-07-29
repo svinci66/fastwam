@@ -10,7 +10,12 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .models import ResidualActor, ResidualActorConfig
+from .models import (
+    ActionValueCritic,
+    ActionValueCriticConfig,
+    ResidualActor,
+    ResidualActorConfig,
+)
 
 
 LIBERO_RESIDUAL_CAMERA_NAMES = ("agent", "wrist")
@@ -33,6 +38,43 @@ def _tuple_actor_config(payload: Mapping[str, Any]) -> ResidualActorConfig:
         if key in config:
             config[key] = tuple(config[key])
     return ResidualActorConfig(**config)
+
+
+def _tuple_q_critic_config(payload: Mapping[str, Any]) -> ActionValueCriticConfig:
+    config = dict(payload)
+    if "hidden_dims" in config:
+        config["hidden_dims"] = tuple(config["hidden_dims"])
+    return ActionValueCriticConfig(**config)
+
+
+def load_iql_q_critics(
+    payload: Mapping[str, Any],
+    *,
+    device: torch.device | str,
+    source: str = "target",
+) -> tuple[ActionValueCritic, ActionValueCritic]:
+    """Load the two action critics saved with an IQL residual checkpoint."""
+
+    if payload.get("format") != "fastwam_residual_iql_v1":
+        raise ValueError("Q gating requires a fastwam_residual_iql_v1 checkpoint")
+    if source not in {"online", "target"}:
+        raise ValueError(f"Q critic source must be 'online' or 'target', got {source!r}")
+    config_payload = payload.get("q_critic_config")
+    if not isinstance(config_payload, Mapping):
+        raise ValueError("IQL checkpoint lacks q_critic_config")
+    state_key = "target_q_critics" if source == "target" else "q_critics"
+    states = payload.get(state_key)
+    if not isinstance(states, (list, tuple)) or len(states) != 2:
+        raise ValueError(f"IQL checkpoint must contain exactly two {state_key}")
+    config = _tuple_q_critic_config(config_payload)
+    critics = (ActionValueCritic(config), ActionValueCritic(config))
+    for critic, state in zip(critics, states):
+        if not isinstance(state, Mapping):
+            raise ValueError(f"Invalid state mapping in {state_key}")
+        critic.load_state_dict(state, strict=True)
+        critic.to(device=device, dtype=torch.float32).eval()
+        critic.requires_grad_(False)
+    return critics
 
 
 def load_residual_actor_checkpoint(
@@ -123,6 +165,9 @@ class ResidualPolicyOutput:
     corrected_actions: np.ndarray
     residual_actions: np.ndarray
     observation_feature: np.ndarray
+    candidate_residual_actions: np.ndarray | None = None
+    gate_applied: bool = True
+    q_advantages: tuple[float, float] | None = None
 
     @property
     def residual_rms(self) -> float:
@@ -131,6 +176,16 @@ class ResidualPolicyOutput:
     @property
     def residual_max_abs(self) -> float:
         return float(np.max(np.abs(self.residual_actions)))
+
+    @property
+    def q_advantage_min(self) -> float | None:
+        return None if self.q_advantages is None else float(min(self.q_advantages))
+
+    @property
+    def q_advantage_disagreement(self) -> float | None:
+        if self.q_advantages is None:
+            return None
+        return float(abs(self.q_advantages[0] - self.q_advantages[1]))
 
 
 class OnlineResidualPolicy:
@@ -150,6 +205,9 @@ class OnlineResidualPolicy:
         language_encoder_version: str | None = None,
         camera_image_size: int = 224,
         camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
+        q_critics: tuple[torch.nn.Module, torch.nn.Module] | None = None,
+        q_gate_margin: float = 0.0,
+        q_gate_max_disagreement: float = float("inf"),
     ):
         if camera_image_size <= 0:
             raise ValueError("camera_image_size must be positive")
@@ -172,6 +230,13 @@ class OnlineResidualPolicy:
                 f"camera_names must be non-empty and unique, got {camera_names}"
             )
         self.camera_names = tuple(camera_names)
+        if not np.isfinite(q_gate_margin):
+            raise ValueError("q_gate_margin must be finite")
+        if q_gate_max_disagreement < 0.0 or np.isnan(q_gate_max_disagreement):
+            raise ValueError("q_gate_max_disagreement must be non-negative")
+        self.q_critics = q_critics
+        self.q_gate_margin = float(q_gate_margin)
+        self.q_gate_max_disagreement = float(q_gate_max_disagreement)
 
     @classmethod
     def from_checkpoint(
@@ -187,6 +252,10 @@ class OnlineResidualPolicy:
         camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
         feature_fusion: str = RESIDUAL_FEATURE_FUSION,
         allow_legacy_provenance: bool = False,
+        q_gate_enabled: bool = False,
+        q_gate_margin: float = 0.0,
+        q_gate_max_disagreement: float = float("inf"),
+        q_gate_critic_source: str = "target",
     ) -> "OnlineResidualPolicy":
         from transformers import SiglipImageProcessor, SiglipVisionModel
 
@@ -274,6 +343,15 @@ class OnlineResidualPolicy:
                     f"checkpoint={checkpoint_language_version!r} "
                     f"requested={requested_language_version!r}."
                 )
+        q_critics = (
+            load_iql_q_critics(
+                payload,
+                device=device,
+                source=q_gate_critic_source,
+            )
+            if q_gate_enabled
+            else None
+        )
         return cls(
             actor=actor,
             image_processor=image_processor,
@@ -286,6 +364,9 @@ class OnlineResidualPolicy:
             language_encoder_version=language_encoder_version,
             camera_image_size=camera_image_size,
             camera_names=camera_names,
+            q_critics=q_critics,
+            q_gate_margin=q_gate_margin,
+            q_gate_max_disagreement=q_gate_max_disagreement,
         )
 
     @property
@@ -378,20 +459,54 @@ class OnlineResidualPolicy:
                 )
             actor_language = torch.from_numpy(language).unsqueeze(0).to(self.device)
         with torch.inference_mode():
-            corrected_prefix = self.actor(
+            candidate_prefix_tensor = self.actor(
                 actor_context,
                 actor_baseline,
                 language_feature=actor_language,
-            )[0].cpu().numpy()
+            )
+            q_advantages = None
+            gate_applied = True
+            if self.q_critics is not None:
+                advantages = []
+                for critic in self.q_critics:
+                    baseline_q = critic(
+                        actor_context,
+                        actor_baseline,
+                        actor_baseline,
+                        actor_language,
+                    )
+                    candidate_q = critic(
+                        actor_context,
+                        actor_baseline,
+                        candidate_prefix_tensor,
+                        actor_language,
+                    )
+                    advantages.append(float((candidate_q - baseline_q).item()))
+                q_advantages = (advantages[0], advantages[1])
+                gate_applied = (
+                    min(q_advantages) >= self.q_gate_margin
+                    and abs(q_advantages[0] - q_advantages[1])
+                    <= self.q_gate_max_disagreement
+                )
+            candidate_prefix = candidate_prefix_tensor[0].cpu().numpy()
+            corrected_prefix = (
+                candidate_prefix
+                if gate_applied
+                else actor_baseline[0].cpu().numpy()
+            )
         corrected = baseline.copy()
         corrected[: self.action_horizon] = corrected_prefix
         residual = corrected_prefix - baseline[: self.action_horizon]
+        candidate_residual = candidate_prefix - baseline[: self.action_horizon]
         if not np.all(np.isfinite(corrected)):
             raise ValueError("Residual actor produced non-finite actions.")
         return ResidualPolicyOutput(
             corrected_actions=corrected,
             residual_actions=residual,
             observation_feature=feature,
+            candidate_residual_actions=candidate_residual,
+            gate_applied=gate_applied,
+            q_advantages=q_advantages,
         )
 
     def correct_action_chunk(

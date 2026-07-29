@@ -12,12 +12,17 @@ NO_IMAGINATION_CHECKPOINT="${NO_IMAGINATION_CHECKPOINT:-${RESIDUAL_ROOT}/iql_bal
 IMAGINATION_CHECKPOINT="${IMAGINATION_CHECKPOINT:-${RESIDUAL_ROOT}/iql_balanced_imagination/checkpoint.pt}"
 RESIDUAL_ENCODER_VERSION="${RESIDUAL_ENCODER_VERSION:-siglip-so400m-patch14-384-local-20260729}"
 RUN_NAME="${RUN_NAME:-robotwin_residual_iql_online_pair_3task5ep_20260729}"
+VARIANTS_CSV="${VARIANTS:-baseline,no_imagination,imagination}"
 TASKS_CSV="${TASKS:-adjust_bottle,open_laptop,stack_blocks_two}"
 EPISODES="${EPISODES:-5}"
 BASE_SEED="${BASE_SEED:-42}"
 TRIAL_OFFSET="${TRIAL_OFFSET:-0}"
 INFERENCE_STEPS="${INFERENCE_STEPS:-4}"
 GPU_ID="${GPU_ID:-0}"
+RESIDUAL_Q_GATE_ENABLED="${RESIDUAL_Q_GATE_ENABLED:-false}"
+RESIDUAL_Q_GATE_MARGIN="${RESIDUAL_Q_GATE_MARGIN:-0.0}"
+RESIDUAL_Q_GATE_MAX_DISAGREEMENT="${RESIDUAL_Q_GATE_MAX_DISAGREEMENT:-0.05}"
+RESIDUAL_Q_GATE_CRITIC_SOURCE="${RESIDUAL_Q_GATE_CRITIC_SOURCE:-target}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 SUMMARY_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}"
 
@@ -49,8 +54,7 @@ instruction_for_task() {
   esac
 }
 
-variants=(baseline no_imagination imagination)
-checkpoints=(none "${NO_IMAGINATION_CHECKPOINT}" "${IMAGINATION_CHECKPOINT}")
+IFS=',' read -r -a variants <<< "${VARIANTS_CSV}"
 IFS=',' read -r -a task_names <<< "${TASKS_CSV}"
 environment_start_seed="$(( 100000 * (1 + BASE_SEED) + TRIAL_OFFSET ))"
 mkdir -p "${SUMMARY_DIR}"
@@ -66,9 +70,13 @@ completed_log_for_task() {
   printf '%s' "${latest_log}"
 }
 
-for variant_index in "${!variants[@]}"; do
-  variant="${variants[$variant_index]}"
-  residual_checkpoint="${checkpoints[$variant_index]}"
+for variant in "${variants[@]}"; do
+  case "${variant}" in
+    baseline) residual_checkpoint=none ;;
+    no_imagination) residual_checkpoint="${NO_IMAGINATION_CHECKPOINT}" ;;
+    imagination) residual_checkpoint="${IMAGINATION_CHECKPOINT}" ;;
+    *) printf 'Unsupported variant: %s\n' "${variant}" >&2; exit 1 ;;
+  esac
   run_dir="${RESULT_BASE}/${RUN_NAME}_${variant}"
   mkdir -p "${run_dir}"
   for task_name in "${task_names[@]}"; do
@@ -88,6 +96,10 @@ for variant_index in "${!variants[@]}"; do
         "EVALUATION.residual_encoder_path=${SIGLIP_PATH}"
         "EVALUATION.residual_encoder_version=${RESIDUAL_ENCODER_VERSION}"
         "EVALUATION.residual_encoder_dtype=bf16"
+        "EVALUATION.residual_q_gate_enabled=${RESIDUAL_Q_GATE_ENABLED}"
+        "EVALUATION.residual_q_gate_margin=${RESIDUAL_Q_GATE_MARGIN}"
+        "EVALUATION.residual_q_gate_max_disagreement=${RESIDUAL_Q_GATE_MAX_DISAGREEMENT}"
+        "EVALUATION.residual_q_gate_critic_source=${RESIDUAL_Q_GATE_CRITIC_SOURCE}"
       )
     fi
     printf '[robotwin-online-pair] variant=%s task=%s episodes=%s env_seed=%s\n' \
@@ -128,6 +140,7 @@ conda run --no-capture-output -n "${CONDA_ENV}" python \
   "${PROJECT_ROOT}/experiments/robotwin/summarize_residual_iql_online_pair.py" \
   --result-base "${RESULT_BASE}" \
   --run-name "${RUN_NAME}" \
+  --variants "${VARIANTS_CSV}" \
   --tasks "${TASKS_CSV}" \
   --output-json "${SUMMARY_DIR}/summary.json"
 

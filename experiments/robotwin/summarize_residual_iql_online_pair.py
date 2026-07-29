@@ -16,6 +16,8 @@ SUCCESS_PATTERN = re.compile(
 RESIDUAL_PATTERN = re.compile(
     r"\[fastwam-residual\]\s+replan=(\d+)\s+rms=([0-9.eE+-]+)\s+"
     r"max_abs=([0-9.eE+-]+)\s+gripper_max_abs=([0-9.eE+-]+)"
+    r"(?:\s+gate_applied=(\d+)\s+q_advantage_min=([0-9.eE+-]+)"
+    r"\s+q_advantage_disagreement=([0-9.eE+-]+))?"
 )
 
 
@@ -41,6 +43,15 @@ def parse_log(path: Path) -> dict[str, Any]:
             "rms": float(match.group(2)),
             "max_abs": float(match.group(3)),
             "gripper_max_abs": float(match.group(4)),
+            "gate_applied": (
+                None if match.group(5) is None else bool(int(match.group(5)))
+            ),
+            "q_advantage_min": (
+                None if match.group(6) is None else float(match.group(6))
+            ),
+            "q_advantage_disagreement": (
+                None if match.group(7) is None else float(match.group(7))
+            ),
         }
         for match in RESIDUAL_PATTERN.finditer(text)
     ]
@@ -62,6 +73,23 @@ def parse_log(path: Path) -> dict[str, Any]:
                 ),
             }
         )
+        gated_rows = [row for row in residual_rows if row["gate_applied"] is not None]
+        if gated_rows:
+            result.update(
+                {
+                    "q_gate_apply_rate": sum(
+                        int(row["gate_applied"]) for row in gated_rows
+                    )
+                    / len(gated_rows),
+                    "q_advantage_min_mean": sum(
+                        row["q_advantage_min"] for row in gated_rows
+                    )
+                    / len(gated_rows),
+                    "q_advantage_disagreement_max": max(
+                        row["q_advantage_disagreement"] for row in gated_rows
+                    ),
+                }
+            )
     return result
 
 

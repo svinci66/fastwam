@@ -175,6 +175,10 @@ class WorldActionRobotWinPolicy:
         residual_encoder_path: Optional[str],
         residual_encoder_version: Optional[str],
         residual_encoder_dtype: torch.dtype,
+        residual_q_gate_enabled: bool,
+        residual_q_gate_margin: float,
+        residual_q_gate_max_disagreement: float,
+        residual_q_gate_critic_source: str,
         action_noise_std: float,
         action_noise_seed: int,
         action_hold_probability: float,
@@ -238,6 +242,10 @@ class WorldActionRobotWinPolicy:
                 language_encoder_version="fastwam_umt5_masked_mean_v1",
                 camera_names=ROBOTWIN_CAMERA_NAMES,
                 feature_fusion=ROBOTWIN_RESIDUAL_FEATURE_FUSION,
+                q_gate_enabled=residual_q_gate_enabled,
+                q_gate_margin=residual_q_gate_margin,
+                q_gate_max_disagreement=residual_q_gate_max_disagreement,
+                q_gate_critic_source=residual_q_gate_critic_source,
             )
             if self.residual_policy.action_dim != 14:
                 raise ValueError(
@@ -314,6 +322,7 @@ class WorldActionRobotWinPolicy:
         self._timing_rollout = {"infer_s": 0.0, "residual_s": 0.0, "sim_s": 0.0}
         self._residual_rollout_rms: list[float] = []
         self._residual_rollout_max_abs: list[float] = []
+        self._residual_gate_decisions: list[bool] = []
 
         logger.info(
             "Initialized WorldActionRobotWinPolicy | ckpt=%s | stats=%s | horizon=%d | "
@@ -495,15 +504,25 @@ class WorldActionRobotWinPolicy:
                 self._timing_rollout["residual_s"] += time.perf_counter() - residual_t0
             self._residual_rollout_rms.append(residual_output.residual_rms)
             self._residual_rollout_max_abs.append(residual_output.residual_max_abs)
+            self._residual_gate_decisions.append(residual_output.gate_applied)
             gripper_residual_max = float(
                 np.max(np.abs(residual_output.residual_actions[..., [6, 13]]))
             )
+            q_gate_fields = ""
+            if residual_output.q_advantages is not None:
+                q_gate_fields = (
+                    f" gate_applied={int(residual_output.gate_applied)}"
+                    f" q_advantage_min={residual_output.q_advantage_min:.6f}"
+                    " q_advantage_disagreement="
+                    f"{residual_output.q_advantage_disagreement:.6f}"
+                )
             print(
                 "[fastwam-residual] "
                 f"replan={self.replan_count} "
                 f"rms={residual_output.residual_rms:.6f} "
                 f"max_abs={residual_output.residual_max_abs:.6f} "
-                f"gripper_max_abs={gripper_residual_max:.6f}",
+                f"gripper_max_abs={gripper_residual_max:.6f}"
+                f"{q_gate_fields}",
                 flush=True,
             )
         corruption_mask = np.zeros_like(executed_actions, dtype=np.float32)
@@ -717,6 +736,11 @@ class WorldActionRobotWinPolicy:
                 if not self._residual_rollout_max_abs
                 else float(np.max(self._residual_rollout_max_abs))
             ),
+            "residual_gate_apply_rate": (
+                0.0
+                if not self._residual_gate_decisions
+                else float(np.mean(self._residual_gate_decisions))
+            ),
         }
 
     def reset(self) -> None:
@@ -734,6 +758,7 @@ class WorldActionRobotWinPolicy:
         self._gripper_delay_remaining[:] = 0
         self._residual_rollout_rms.clear()
         self._residual_rollout_max_abs.clear()
+        self._residual_gate_decisions.clear()
         self.reset_timing_rollout()
 
 
@@ -849,6 +874,30 @@ def get_model(usr_args: Dict[str, Any]):
     residual_encoder_dtype = _mixed_precision_to_model_dtype(
         residual_encoder_precision
     )
+    residual_q_gate_enabled = _parse_bool(
+        usr_args.get(
+            "residual_q_gate_enabled",
+            cfg.EVALUATION.get("residual_q_gate_enabled", False),
+        )
+    )
+    residual_q_gate_margin = float(
+        usr_args.get(
+            "residual_q_gate_margin",
+            cfg.EVALUATION.get("residual_q_gate_margin", 0.0),
+        )
+    )
+    residual_q_gate_max_disagreement = float(
+        usr_args.get(
+            "residual_q_gate_max_disagreement",
+            cfg.EVALUATION.get("residual_q_gate_max_disagreement", 0.05),
+        )
+    )
+    residual_q_gate_critic_source = str(
+        usr_args.get(
+            "residual_q_gate_critic_source",
+            cfg.EVALUATION.get("residual_q_gate_critic_source", "target"),
+        )
+    )
     action_noise_std = float(
         usr_args.get("action_noise_std", cfg.EVALUATION.get("action_noise_std", 0.0))
     )
@@ -918,6 +967,10 @@ def get_model(usr_args: Dict[str, Any]):
         residual_encoder_path=residual_encoder_path,
         residual_encoder_version=residual_encoder_version,
         residual_encoder_dtype=residual_encoder_dtype,
+        residual_q_gate_enabled=residual_q_gate_enabled,
+        residual_q_gate_margin=residual_q_gate_margin,
+        residual_q_gate_max_disagreement=residual_q_gate_max_disagreement,
+        residual_q_gate_critic_source=residual_q_gate_critic_source,
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
         action_hold_probability=action_hold_probability,

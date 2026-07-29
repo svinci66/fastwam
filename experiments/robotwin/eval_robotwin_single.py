@@ -239,6 +239,24 @@ def main(cfg: DictConfig):
     _append_override(
         overrides, "residual_encoder_dtype", cfg.EVALUATION.residual_encoder_dtype
     )
+    _append_override(
+        overrides,
+        "residual_q_gate_enabled",
+        cfg.EVALUATION.residual_q_gate_enabled,
+    )
+    _append_override(
+        overrides, "residual_q_gate_margin", cfg.EVALUATION.residual_q_gate_margin
+    )
+    _append_override(
+        overrides,
+        "residual_q_gate_max_disagreement",
+        cfg.EVALUATION.residual_q_gate_max_disagreement,
+    )
+    _append_override(
+        overrides,
+        "residual_q_gate_critic_source",
+        cfg.EVALUATION.residual_q_gate_critic_source,
+    )
     _append_override(overrides, "action_noise_std", cfg.EVALUATION.action_noise_std)
     _append_override(overrides, "action_noise_seed", cfg.EVALUATION.action_noise_seed)
     _append_override(

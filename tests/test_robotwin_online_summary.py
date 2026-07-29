@@ -6,9 +6,11 @@ def test_parse_online_pair_log_extracts_success_and_residual_metrics(tmp_path):
     log.write_text(
         "\x1b[92mSuccess rate: \x1b[96m4/5\x1b[0m => \x1b[95m80.0%\x1b[0m\n"
         "[fastwam-residual] replan=0 rms=0.010000 max_abs=0.040000 "
-        "gripper_max_abs=0.000000\n"
+        "gripper_max_abs=0.000000 gate_applied=1 q_advantage_min=0.020000 "
+        "q_advantage_disagreement=0.010000\n"
         "[fastwam-residual] replan=1 rms=0.020000 max_abs=0.050000 "
-        "gripper_max_abs=0.000000\n",
+        "gripper_max_abs=0.000000 gate_applied=0 q_advantage_min=-0.010000 "
+        "q_advantage_disagreement=0.030000\n",
         encoding="utf-8",
     )
     result = parse_log(log)
@@ -19,3 +21,6 @@ def test_parse_online_pair_log_extracts_success_and_residual_metrics(tmp_path):
     assert result["residual_rms_mean"] == 0.015
     assert result["residual_max_abs"] == 0.05
     assert result["gripper_residual_max_abs"] == 0.0
+    assert result["q_gate_apply_rate"] == 0.5
+    assert result["q_advantage_min_mean"] == 0.005
+    assert result["q_advantage_disagreement_max"] == 0.03

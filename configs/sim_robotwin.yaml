@@ -41,6 +41,10 @@ EVALUATION:
   residual_encoder_path: null
   residual_encoder_version: null
   residual_encoder_dtype: bf16
+  residual_q_gate_enabled: false
+  residual_q_gate_margin: 0.0
+  residual_q_gate_max_disagreement: 0.05
+  residual_q_gate_critic_source: target
   action_noise_std: 0.0
   action_noise_seed: 20260728
   action_hold_probability: 0.0
