@@ -39,7 +39,7 @@ instruction_for_task() {
       ;;
     stack_blocks_two)
       printf '%s' \
-        'Move the red and green blocks to the center, then stack the green block on the red block.'
+        'Move the red and green blocks to the center and stack the green block on the red block.'
       ;;
     *)
       printf 'No fixed instruction configured for task: %s\n' "$1" >&2
