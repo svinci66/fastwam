@@ -23,6 +23,19 @@ def test_combined_camera_features_match_agent_then_wrist_replay_order():
     np.testing.assert_allclose(feature, expected, atol=1e-7)
 
 
+def test_combined_camera_features_support_robotwin_three_camera_order():
+    feature = combine_normalized_camera_features(
+        {
+            "right_wrist": np.array([0.0, 0.0, 4.0], dtype=np.float32),
+            "head": np.array([2.0, 0.0, 0.0], dtype=np.float32),
+            "left_wrist": np.array([0.0, 3.0, 0.0], dtype=np.float32),
+        },
+        camera_names=("head", "left_wrist", "right_wrist"),
+    )
+    expected = np.eye(3, dtype=np.float32).reshape(-1) / np.sqrt(3.0)
+    np.testing.assert_allclose(feature, expected, atol=1e-7)
+
+
 def test_residual_checkpoint_loader_rejects_goal_conditioning(tmp_path: Path):
     actor = ResidualActor(
         ResidualActorConfig(

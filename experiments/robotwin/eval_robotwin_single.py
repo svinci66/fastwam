@@ -227,6 +227,18 @@ def main(cfg: DictConfig):
         cfg.EVALUATION.skip_get_obs_within_replan,
     )
     _append_override(overrides, "action_mode", cfg.EVALUATION.action_mode)
+    _append_override(
+        overrides, "residual_checkpoint", cfg.EVALUATION.residual_checkpoint
+    )
+    _append_override(
+        overrides, "residual_encoder_path", cfg.EVALUATION.residual_encoder_path
+    )
+    _append_override(
+        overrides, "residual_encoder_version", cfg.EVALUATION.residual_encoder_version
+    )
+    _append_override(
+        overrides, "residual_encoder_dtype", cfg.EVALUATION.residual_encoder_dtype
+    )
     _append_override(overrides, "action_noise_std", cfg.EVALUATION.action_noise_std)
     _append_override(overrides, "action_noise_seed", cfg.EVALUATION.action_noise_seed)
     _append_override(

@@ -27,12 +27,18 @@ from fastwam.datasets.lerobot.processors.fastwam_processor import FastWAMProcess
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
 from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
 from experiments.robotwin.imagination_reward_utils import (
+    ROBOTWIN_CAMERA_NAMES,
     apply_action_chunk_hold,
     apply_first_gripper_close_delay,
     apply_normalized_action_noise,
     array_sha256,
     save_aligned_transition,
+    split_robotwin_camera_views,
     update_episode_success,
+)
+from fastwam.rl.online_policy import (
+    ROBOTWIN_RESIDUAL_FEATURE_FUSION,
+    OnlineResidualPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,6 +171,10 @@ class WorldActionRobotWinPolicy:
         num_video_frames: int,
         action_video_freq_ratio: int,
         action_mode: str,
+        residual_checkpoint: Optional[str],
+        residual_encoder_path: Optional[str],
+        residual_encoder_version: Optional[str],
+        residual_encoder_dtype: torch.dtype,
         action_noise_std: float,
         action_noise_seed: int,
         action_hold_probability: float,
@@ -200,11 +210,46 @@ class WorldActionRobotWinPolicy:
         self._num_video_frames = int(num_video_frames)
         self.action_video_freq_ratio = int(action_video_freq_ratio)
         self.action_mode = str(action_mode).strip().lower()
-        if self.action_mode not in {"policy", "noise", "hold", "gripper_delay"}:
+        if self.action_mode not in {
+            "policy",
+            "noise",
+            "hold",
+            "gripper_delay",
+            "residual",
+        }:
             raise ValueError(
                 f"Unsupported action_mode={self.action_mode!r}; expected one of "
-                "['policy', 'noise', 'hold', 'gripper_delay']."
+                "['policy', 'noise', 'hold', 'gripper_delay', 'residual']."
             )
+        self.residual_policy: Optional[OnlineResidualPolicy] = None
+        if self.action_mode == "residual":
+            if _is_none_like(residual_checkpoint):
+                raise ValueError("action_mode='residual' requires residual_checkpoint")
+            if _is_none_like(residual_encoder_path):
+                raise ValueError("action_mode='residual' requires residual_encoder_path")
+            if _is_none_like(residual_encoder_version):
+                raise ValueError("action_mode='residual' requires residual_encoder_version")
+            self.residual_policy = OnlineResidualPolicy.from_checkpoint(
+                checkpoint_path=str(residual_checkpoint),
+                encoder_path=str(residual_encoder_path),
+                device=device,
+                encoder_dtype=residual_encoder_dtype,
+                encoder_version=str(residual_encoder_version),
+                language_encoder_version="fastwam_umt5_masked_mean_v1",
+                camera_names=ROBOTWIN_CAMERA_NAMES,
+                feature_fusion=ROBOTWIN_RESIDUAL_FEATURE_FUSION,
+            )
+            if self.residual_policy.action_dim != 14:
+                raise ValueError(
+                    "RoboTwin residual checkpoint must use 14 action dimensions, "
+                    f"got {self.residual_policy.action_dim}."
+                )
+            if self.residual_policy.action_horizon > self.action_horizon:
+                raise ValueError(
+                    "FastWAM action_horizon must cover the residual horizon; "
+                    f"got baseline={self.action_horizon}, "
+                    f"residual={self.residual_policy.action_horizon}."
+                )
         self.action_noise_std = float(action_noise_std)
         if not np.isfinite(self.action_noise_std) or self.action_noise_std < 0.0:
             raise ValueError(
@@ -266,7 +311,9 @@ class WorldActionRobotWinPolicy:
         self._gripper_delay_triggered = np.zeros(2, dtype=bool)
         self._gripper_delay_remaining = np.zeros(2, dtype=np.int64)
         self._language_feature_cache: dict[str, np.ndarray] = {}
-        self._timing_rollout = {"infer_s": 0.0, "sim_s": 0.0}
+        self._timing_rollout = {"infer_s": 0.0, "residual_s": 0.0, "sim_s": 0.0}
+        self._residual_rollout_rms: list[float] = []
+        self._residual_rollout_max_abs: list[float] = []
 
         logger.info(
             "Initialized WorldActionRobotWinPolicy | ckpt=%s | stats=%s | horizon=%d | "
@@ -290,7 +337,21 @@ class WorldActionRobotWinPolicy:
             return f"noise_{self.action_noise_std:.3f}"
         if self.action_mode == "hold":
             return f"hold_{self.action_hold_probability:.3f}"
-        return f"gripper_delay_{self.gripper_close_delay_steps:03d}"
+        if self.action_mode == "gripper_delay":
+            return f"gripper_delay_{self.gripper_close_delay_steps:03d}"
+        return "residual"
+
+    def _encode_language_feature(self, instruction: str) -> np.ndarray:
+        cached = self._language_feature_cache.get(instruction)
+        if cached is not None:
+            return cached
+        prompt = DEFAULT_PROMPT.format(task=instruction)
+        pooled = self.model.encode_prompt_pooled([prompt])
+        feature = pooled[0].detach().float().cpu().numpy().astype(
+            np.float32, copy=False
+        )
+        self._language_feature_cache[instruction] = feature
+        return feature
 
     def _normalize_state(self, state: np.ndarray) -> torch.Tensor:
         state_meta = self.processor.shape_meta["state"]
@@ -419,6 +480,32 @@ class WorldActionRobotWinPolicy:
         executed_actions = self._denormalize_action(
             torch.from_numpy(normalized_executed)
         )[0]
+        if self.action_mode == "residual":
+            if self.residual_policy is None:
+                raise RuntimeError("residual action mode was initialized without a policy")
+            residual_t0 = time.perf_counter() if self.timing_enabled else 0.0
+            residual_output = self.residual_policy.correct_action_chunk(
+                camera_images=split_robotwin_camera_views(current_image),
+                proprio=state_vector,
+                baseline_actions=baseline_actions,
+                language_feature=self._encode_language_feature(instruction),
+            )
+            executed_actions = residual_output.corrected_actions
+            if self.timing_enabled:
+                self._timing_rollout["residual_s"] += time.perf_counter() - residual_t0
+            self._residual_rollout_rms.append(residual_output.residual_rms)
+            self._residual_rollout_max_abs.append(residual_output.residual_max_abs)
+            gripper_residual_max = float(
+                np.max(np.abs(residual_output.residual_actions[..., [6, 13]]))
+            )
+            print(
+                "[fastwam-residual] "
+                f"replan={self.replan_count} "
+                f"rms={residual_output.residual_rms:.6f} "
+                f"max_abs={residual_output.residual_max_abs:.6f} "
+                f"gripper_max_abs={gripper_residual_max:.6f}",
+                flush=True,
+            )
         corruption_mask = np.zeros_like(executed_actions, dtype=np.float32)
         if self.action_mode == "hold":
             corruption_seed = (
@@ -480,14 +567,7 @@ class WorldActionRobotWinPolicy:
                 self._episode_initial_hash = array_sha256(
                     np.concatenate([current_image.reshape(-1), state_vector.reshape(-1)])
                 )
-            language_feature = self._language_feature_cache.get(instruction)
-            if language_feature is None:
-                prompt = DEFAULT_PROMPT.format(task=instruction)
-                pooled = self.model.encode_prompt_pooled([prompt])
-                language_feature = (
-                    pooled[0].detach().float().cpu().numpy().astype(np.float32, copy=False)
-                )
-                self._language_feature_cache[instruction] = language_feature
+            language_feature = self._encode_language_feature(instruction)
             self._pending_transition = {
                 "replan_idx": self.replan_count,
                 "instruction": instruction,
@@ -619,12 +699,24 @@ class WorldActionRobotWinPolicy:
 
     def reset_timing_rollout(self) -> None:
         self._timing_rollout["infer_s"] = 0.0
+        self._timing_rollout["residual_s"] = 0.0
         self._timing_rollout["sim_s"] = 0.0
 
     def get_timing_rollout(self) -> Dict[str, float]:
         return {
             "infer_s": float(self._timing_rollout["infer_s"]),
+            "residual_s": float(self._timing_rollout["residual_s"]),
             "sim_s": float(self._timing_rollout["sim_s"]),
+            "residual_rms_mean": (
+                0.0
+                if not self._residual_rollout_rms
+                else float(np.mean(self._residual_rollout_rms))
+            ),
+            "residual_max_abs": (
+                0.0
+                if not self._residual_rollout_max_abs
+                else float(np.max(self._residual_rollout_max_abs))
+            ),
         }
 
     def reset(self) -> None:
@@ -640,6 +732,8 @@ class WorldActionRobotWinPolicy:
         self._episode_initial_hash = None
         self._gripper_delay_triggered[:] = False
         self._gripper_delay_remaining[:] = 0
+        self._residual_rollout_rms.clear()
+        self._residual_rollout_max_abs.clear()
         self.reset_timing_rollout()
 
 
@@ -722,6 +816,39 @@ def get_model(usr_args: Dict[str, Any]):
         usr_args.get("timing_enabled", cfg.EVALUATION.get("timing_enabled", False))
     )
     action_mode = str(usr_args.get("action_mode", cfg.EVALUATION.get("action_mode", "policy")))
+    residual_checkpoint_value = usr_args.get(
+        "residual_checkpoint", cfg.EVALUATION.get("residual_checkpoint")
+    )
+    residual_checkpoint = (
+        None
+        if _is_none_like(residual_checkpoint_value)
+        else str(residual_checkpoint_value)
+    )
+    residual_encoder_path_value = usr_args.get(
+        "residual_encoder_path", cfg.EVALUATION.get("residual_encoder_path")
+    )
+    residual_encoder_path = (
+        None
+        if _is_none_like(residual_encoder_path_value)
+        else str(residual_encoder_path_value)
+    )
+    residual_encoder_version_value = usr_args.get(
+        "residual_encoder_version", cfg.EVALUATION.get("residual_encoder_version")
+    )
+    residual_encoder_version = (
+        None
+        if _is_none_like(residual_encoder_version_value)
+        else str(residual_encoder_version_value)
+    )
+    residual_encoder_precision = str(
+        usr_args.get(
+            "residual_encoder_dtype",
+            cfg.EVALUATION.get("residual_encoder_dtype", "bf16"),
+        )
+    )
+    residual_encoder_dtype = _mixed_precision_to_model_dtype(
+        residual_encoder_precision
+    )
     action_noise_std = float(
         usr_args.get("action_noise_std", cfg.EVALUATION.get("action_noise_std", 0.0))
     )
@@ -787,6 +914,10 @@ def get_model(usr_args: Dict[str, Any]):
         num_video_frames=(int(cfg.data.train.num_frames) - 1) // int(cfg.data.train.action_video_freq_ratio) + 1,
         action_video_freq_ratio=int(cfg.data.train.action_video_freq_ratio),
         action_mode=action_mode,
+        residual_checkpoint=residual_checkpoint,
+        residual_encoder_path=residual_encoder_path,
+        residual_encoder_version=residual_encoder_version,
+        residual_encoder_dtype=residual_encoder_dtype,
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
         action_hold_probability=action_hold_probability,

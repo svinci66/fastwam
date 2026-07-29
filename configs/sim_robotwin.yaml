@@ -37,6 +37,10 @@ EVALUATION:
   # Temporally aligned imagination-reward collection.  Noise is applied in
   # normalized action space and never changes dual-arm gripper dimensions 6/13.
   action_mode: policy
+  residual_checkpoint: null
+  residual_encoder_path: null
+  residual_encoder_version: null
+  residual_encoder_dtype: bf16
   action_noise_std: 0.0
   action_noise_seed: 20260728
   action_hold_probability: 0.0

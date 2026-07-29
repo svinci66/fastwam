@@ -25,6 +25,10 @@ tiled: false
 timing_enabled: false
 skip_get_obs_within_replan: false
 action_mode: policy
+residual_checkpoint: null
+residual_encoder_path: null
+residual_encoder_version: null
+residual_encoder_dtype: bf16
 action_noise_std: 0.0
 action_noise_seed: 20260728
 action_hold_probability: 0.0

@@ -14,6 +14,7 @@ from .models import ResidualActor, ResidualActorConfig
 
 
 LIBERO_RESIDUAL_CAMERA_NAMES = ("agent", "wrist")
+ROBOTWIN_RESIDUAL_CAMERA_NAMES = ("head", "left_wrist", "right_wrist")
 RESIDUAL_CHECKPOINT_FORMAT = "fastwam_residual_awr_v2"
 _SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS = {
     "fastwam_residual_awr_v1",
@@ -21,6 +22,9 @@ _SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS = {
     "fastwam_residual_iql_v1",
 }
 RESIDUAL_FEATURE_FUSION = "per_camera_l2_then_agent_wrist_concat_l2_v1"
+ROBOTWIN_RESIDUAL_FEATURE_FUSION = (
+    "per_camera_l2_then_head_left_right_concat_l2_v1"
+)
 
 
 def _tuple_actor_config(payload: Mapping[str, Any]) -> ResidualActorConfig:
@@ -73,17 +77,21 @@ def load_residual_actor_checkpoint(
 
 def combine_normalized_camera_features(
     camera_features: Mapping[str, np.ndarray],
+    *,
+    camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
 ) -> np.ndarray:
-    """Match replay construction: agent then wrist, followed by L2 normalization."""
+    """Match replay construction camera order and final L2 normalization."""
 
-    if set(camera_features) != set(LIBERO_RESIDUAL_CAMERA_NAMES):
+    if not camera_names or len(set(camera_names)) != len(camera_names):
+        raise ValueError(f"camera_names must be non-empty and unique, got {camera_names}")
+    if set(camera_features) != set(camera_names):
         raise ValueError(
             "Expected residual camera features "
-            f"{LIBERO_RESIDUAL_CAMERA_NAMES}, got {sorted(camera_features)}."
+            f"{camera_names}, got {sorted(camera_features)}."
         )
     features = []
     feature_dims = set()
-    for camera in LIBERO_RESIDUAL_CAMERA_NAMES:
+    for camera in camera_names:
         feature = np.asarray(camera_features[camera], dtype=np.float32).reshape(-1)
         if feature.size == 0 or not np.all(np.isfinite(feature)):
             raise ValueError(f"Camera feature {camera!r} must be finite and non-empty.")
@@ -141,6 +149,7 @@ class OnlineResidualPolicy:
         encoder_version: str,
         language_encoder_version: str | None = None,
         camera_image_size: int = 224,
+        camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
     ):
         if camera_image_size <= 0:
             raise ValueError("camera_image_size must be positive")
@@ -158,6 +167,11 @@ class OnlineResidualPolicy:
             else str(language_encoder_version).strip()
         )
         self.camera_image_size = int(camera_image_size)
+        if not camera_names or len(set(camera_names)) != len(camera_names):
+            raise ValueError(
+                f"camera_names must be non-empty and unique, got {camera_names}"
+            )
+        self.camera_names = tuple(camera_names)
 
     @classmethod
     def from_checkpoint(
@@ -170,6 +184,8 @@ class OnlineResidualPolicy:
         encoder_version: str,
         language_encoder_version: str | None = None,
         camera_image_size: int = 224,
+        camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
+        feature_fusion: str = RESIDUAL_FEATURE_FUSION,
         allow_legacy_provenance: bool = False,
     ) -> "OnlineResidualPolicy":
         from transformers import SiglipImageProcessor, SiglipVisionModel
@@ -199,9 +215,9 @@ class OnlineResidualPolicy:
         else:
             expected = {
                 "reward_encoder_version": encoder_version,
-                "camera_names": list(LIBERO_RESIDUAL_CAMERA_NAMES),
+                "camera_names": list(camera_names),
                 "camera_image_size": int(camera_image_size),
-                "feature_fusion": RESIDUAL_FEATURE_FUSION,
+                "feature_fusion": str(feature_fusion),
             }
             mismatches = {
                 key: {"checkpoint": provenance.get(key), "requested": value}
@@ -221,7 +237,7 @@ class OnlineResidualPolicy:
             torch_dtype=encoder_dtype,
         ).to(device).eval()
         hidden_size = int(vision_encoder.config.hidden_size)
-        expected_feature_dim = len(LIBERO_RESIDUAL_CAMERA_NAMES) * hidden_size
+        expected_feature_dim = len(camera_names) * hidden_size
         if int(summary.get("feature_dim", -1)) != expected_feature_dim:
             raise ValueError(
                 "Residual checkpoint feature_dim does not match the SigLIP encoder: "
@@ -269,6 +285,7 @@ class OnlineResidualPolicy:
             encoder_version=encoder_version,
             language_encoder_version=language_encoder_version,
             camera_image_size=camera_image_size,
+            camera_names=camera_names,
         )
 
     @property
@@ -284,9 +301,9 @@ class OnlineResidualPolicy:
         return self.actor.config.language_feature_dim > 0
 
     def encode_observation(self, camera_images: Mapping[str, Any]) -> np.ndarray:
-        if set(camera_images) != set(LIBERO_RESIDUAL_CAMERA_NAMES):
+        if set(camera_images) != set(self.camera_names):
             raise ValueError(
-                f"Expected camera images {LIBERO_RESIDUAL_CAMERA_NAMES}, "
+                f"Expected camera images {self.camera_names}, "
                 f"got {sorted(camera_images)}."
             )
         images = [
@@ -295,7 +312,7 @@ class OnlineResidualPolicy:
                 camera=camera,
                 image_size=self.camera_image_size,
             )
-            for camera in LIBERO_RESIDUAL_CAMERA_NAMES
+            for camera in self.camera_names
         ]
         inputs = self.image_processor(images=images, return_tensors="pt")
         pixel_values = inputs["pixel_values"].to(
@@ -307,8 +324,9 @@ class OnlineResidualPolicy:
         return combine_normalized_camera_features(
             {
                 camera: feature
-                for camera, feature in zip(LIBERO_RESIDUAL_CAMERA_NAMES, pooled)
-            }
+                for camera, feature in zip(self.camera_names, pooled)
+            },
+            camera_names=self.camera_names,
         )
 
     def correct_from_feature(
