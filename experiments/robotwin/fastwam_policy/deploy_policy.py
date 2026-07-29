@@ -179,6 +179,11 @@ class WorldActionRobotWinPolicy:
         residual_q_gate_margin: float,
         residual_q_gate_max_disagreement: float,
         residual_q_gate_critic_source: str,
+        residual_support_index_path: Optional[str],
+        residual_support_circuit_breaker_enabled: bool,
+        residual_shadow_mode: bool,
+        residual_intervention_replans: Optional[set[int]],
+        residual_max_interventions_per_episode: Optional[int],
         action_noise_std: float,
         action_noise_seed: int,
         action_hold_probability: float,
@@ -226,6 +231,7 @@ class WorldActionRobotWinPolicy:
                 "['policy', 'noise', 'hold', 'gripper_delay', 'residual']."
             )
         self.residual_policy: Optional[OnlineResidualPolicy] = None
+        self.residual_intervention_replans = residual_intervention_replans
         if self.action_mode == "residual":
             if _is_none_like(residual_checkpoint):
                 raise ValueError("action_mode='residual' requires residual_checkpoint")
@@ -246,6 +252,14 @@ class WorldActionRobotWinPolicy:
                 q_gate_margin=residual_q_gate_margin,
                 q_gate_max_disagreement=residual_q_gate_max_disagreement,
                 q_gate_critic_source=residual_q_gate_critic_source,
+                support_index_path=residual_support_index_path,
+                support_circuit_breaker_enabled=(
+                    residual_support_circuit_breaker_enabled
+                ),
+                shadow_mode=residual_shadow_mode,
+                max_interventions_per_episode=(
+                    residual_max_interventions_per_episode
+                ),
             )
             if self.residual_policy.action_dim != 14:
                 raise ValueError(
@@ -323,6 +337,7 @@ class WorldActionRobotWinPolicy:
         self._residual_rollout_rms: list[float] = []
         self._residual_rollout_max_abs: list[float] = []
         self._residual_gate_decisions: list[bool] = []
+        self._residual_gate_approvals: list[bool] = []
 
         logger.info(
             "Initialized WorldActionRobotWinPolicy | ckpt=%s | stats=%s | horizon=%d | "
@@ -498,6 +513,10 @@ class WorldActionRobotWinPolicy:
                 proprio=state_vector,
                 baseline_actions=baseline_actions,
                 language_feature=self._encode_language_feature(instruction),
+                intervention_allowed=(
+                    self.residual_intervention_replans is None
+                    or self.replan_count in self.residual_intervention_replans
+                ),
             )
             executed_actions = residual_output.corrected_actions
             if self.timing_enabled:
@@ -505,6 +524,7 @@ class WorldActionRobotWinPolicy:
             self._residual_rollout_rms.append(residual_output.residual_rms)
             self._residual_rollout_max_abs.append(residual_output.residual_max_abs)
             self._residual_gate_decisions.append(residual_output.gate_applied)
+            self._residual_gate_approvals.append(residual_output.gate_approved)
             gripper_residual_max = float(
                 np.max(np.abs(residual_output.residual_actions[..., [6, 13]]))
             )
@@ -516,13 +536,41 @@ class WorldActionRobotWinPolicy:
                     " q_advantage_disagreement="
                     f"{residual_output.q_advantage_disagreement:.6f}"
                 )
+            support_fields = (
+                f" gate_approved={int(residual_output.gate_approved)}"
+                f" shadow_mode={int(residual_output.shadow_mode)}"
+                f" circuit_breaker_active={int(residual_output.circuit_breaker_active)}"
+                " circuit_breaker_triggered="
+                f"{int(residual_output.circuit_breaker_triggered)}"
+            )
+            if residual_output.support_decision is not None:
+                decision = residual_output.support_decision
+                support_fields += (
+                    f" support_state_score={decision.state_score:.6f}"
+                    f" support_state_threshold={decision.state_threshold:.6f}"
+                    f" support_action_score={decision.action_score:.6f}"
+                    f" support_action_threshold={decision.action_threshold:.6f}"
+                    f" support_in_distribution={int(decision.in_support)}"
+                    f" support_language_similarity={decision.language_similarity:.6f}"
+                )
+            support_fields += (
+                " intervention_allowed="
+                f"{int(residual_output.intervention_allowed)}"
+                " intervention_count="
+                f"{residual_output.intervention_count}"
+                " intervention_budget_remaining="
+                f"{residual_output.intervention_budget_remaining}"
+                " intervention_budget_exhausted="
+                f"{int(residual_output.intervention_budget_exhausted)}"
+            )
             print(
                 "[fastwam-residual] "
                 f"replan={self.replan_count} "
                 f"rms={residual_output.residual_rms:.6f} "
                 f"max_abs={residual_output.residual_max_abs:.6f} "
                 f"gripper_max_abs={gripper_residual_max:.6f}"
-                f"{q_gate_fields}",
+                f"{q_gate_fields}"
+                f"{support_fields}",
                 flush=True,
             )
         corruption_mask = np.zeros_like(executed_actions, dtype=np.float32)
@@ -741,6 +789,11 @@ class WorldActionRobotWinPolicy:
                 if not self._residual_gate_decisions
                 else float(np.mean(self._residual_gate_decisions))
             ),
+            "residual_gate_approval_rate": (
+                0.0
+                if not self._residual_gate_approvals
+                else float(np.mean(self._residual_gate_approvals))
+            ),
         }
 
     def reset(self) -> None:
@@ -759,6 +812,9 @@ class WorldActionRobotWinPolicy:
         self._residual_rollout_rms.clear()
         self._residual_rollout_max_abs.clear()
         self._residual_gate_decisions.clear()
+        self._residual_gate_approvals.clear()
+        if self.residual_policy is not None:
+            self.residual_policy.reset()
         self.reset_timing_rollout()
 
 
@@ -898,6 +954,65 @@ def get_model(usr_args: Dict[str, Any]):
             cfg.EVALUATION.get("residual_q_gate_critic_source", "target"),
         )
     )
+    residual_support_index_value = usr_args.get(
+        "residual_support_index_path",
+        cfg.EVALUATION.get("residual_support_index_path"),
+    )
+    residual_support_index_path = (
+        None
+        if _is_none_like(residual_support_index_value)
+        else str(residual_support_index_value)
+    )
+    residual_support_circuit_breaker_enabled = _parse_bool(
+        usr_args.get(
+            "residual_support_circuit_breaker_enabled",
+            cfg.EVALUATION.get(
+                "residual_support_circuit_breaker_enabled", True
+            ),
+        )
+    )
+    residual_shadow_mode = _parse_bool(
+        usr_args.get(
+            "residual_shadow_mode",
+            cfg.EVALUATION.get("residual_shadow_mode", False),
+        )
+    )
+    residual_intervention_value = usr_args.get(
+        "residual_intervention_replans",
+        cfg.EVALUATION.get("residual_intervention_replans", "all"),
+    )
+    if _is_none_like(residual_intervention_value) or str(
+        residual_intervention_value
+    ).strip().lower() == "all":
+        residual_intervention_replans = None
+    else:
+        residual_intervention_replans = {
+            int(item.strip())
+            for item in str(residual_intervention_value).split(",")
+            if item.strip()
+        }
+        if not residual_intervention_replans or min(
+            residual_intervention_replans
+        ) < 0:
+            raise ValueError(
+                "residual_intervention_replans must be 'all' or non-negative CSV indices"
+            )
+    residual_max_interventions_value = usr_args.get(
+        "residual_max_interventions_per_episode",
+        cfg.EVALUATION.get("residual_max_interventions_per_episode"),
+    )
+    residual_max_interventions_per_episode = (
+        None
+        if _is_none_like(residual_max_interventions_value)
+        else int(residual_max_interventions_value)
+    )
+    if (
+        residual_max_interventions_per_episode is not None
+        and residual_max_interventions_per_episode <= 0
+    ):
+        raise ValueError(
+            "residual_max_interventions_per_episode must be positive or null"
+        )
     action_noise_std = float(
         usr_args.get("action_noise_std", cfg.EVALUATION.get("action_noise_std", 0.0))
     )
@@ -971,6 +1086,15 @@ def get_model(usr_args: Dict[str, Any]):
         residual_q_gate_margin=residual_q_gate_margin,
         residual_q_gate_max_disagreement=residual_q_gate_max_disagreement,
         residual_q_gate_critic_source=residual_q_gate_critic_source,
+        residual_support_index_path=residual_support_index_path,
+        residual_support_circuit_breaker_enabled=(
+            residual_support_circuit_breaker_enabled
+        ),
+        residual_shadow_mode=residual_shadow_mode,
+        residual_intervention_replans=residual_intervention_replans,
+        residual_max_interventions_per_episode=(
+            residual_max_interventions_per_episode
+        ),
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
         action_hold_probability=action_hold_probability,

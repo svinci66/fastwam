@@ -257,6 +257,32 @@ def main(cfg: DictConfig):
         "residual_q_gate_critic_source",
         cfg.EVALUATION.residual_q_gate_critic_source,
     )
+    _append_override(
+        overrides,
+        "residual_support_index_path",
+        cfg.EVALUATION.residual_support_index_path,
+    )
+    _append_override(
+        overrides,
+        "residual_support_circuit_breaker_enabled",
+        cfg.EVALUATION.residual_support_circuit_breaker_enabled,
+    )
+    _append_override(
+        overrides,
+        "residual_shadow_mode",
+        cfg.EVALUATION.residual_shadow_mode,
+    )
+    _append_override(
+        overrides,
+        "residual_intervention_replans",
+        cfg.EVALUATION.residual_intervention_replans,
+    )
+    _append_override(
+        overrides,
+        "residual_max_interventions_per_episode",
+        cfg.EVALUATION.residual_max_interventions_per_episode,
+        skip_none=False,
+    )
     _append_override(overrides, "action_noise_std", cfg.EVALUATION.action_noise_std)
     _append_override(overrides, "action_noise_seed", cfg.EVALUATION.action_noise_seed)
     _append_override(

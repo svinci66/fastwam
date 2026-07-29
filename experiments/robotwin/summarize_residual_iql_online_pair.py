@@ -18,6 +18,18 @@ RESIDUAL_PATTERN = re.compile(
     r"max_abs=([0-9.eE+-]+)\s+gripper_max_abs=([0-9.eE+-]+)"
     r"(?:\s+gate_applied=(\d+)\s+q_advantage_min=([0-9.eE+-]+)"
     r"\s+q_advantage_disagreement=([0-9.eE+-]+))?"
+    r"(?:\s+gate_approved=(\d+)\s+shadow_mode=(\d+)"
+    r"\s+circuit_breaker_active=(\d+)\s+circuit_breaker_triggered=(\d+)"
+    r"(?:\s+support_state_score=([0-9.eE+-]+)"
+    r"\s+support_state_threshold=([0-9.eE+-]+)"
+    r"\s+support_action_score=([0-9.eE+-]+)"
+    r"\s+support_action_threshold=([0-9.eE+-]+)"
+    r"\s+support_in_distribution=(\d+)"
+    r"\s+support_language_similarity=([0-9.eE+-]+))?)?"
+    r"(?:\s+intervention_allowed=(\d+))?"
+    r"(?:\s+intervention_count=(\d+)"
+    r"\s+intervention_budget_remaining=(None|\d+)"
+    r"\s+intervention_budget_exhausted=(\d+))?"
 )
 
 
@@ -51,6 +63,50 @@ def parse_log(path: Path) -> dict[str, Any]:
             ),
             "q_advantage_disagreement": (
                 None if match.group(7) is None else float(match.group(7))
+            ),
+            "gate_approved": (
+                None if match.group(8) is None else bool(int(match.group(8)))
+            ),
+            "shadow_mode": (
+                None if match.group(9) is None else bool(int(match.group(9)))
+            ),
+            "circuit_breaker_active": (
+                None if match.group(10) is None else bool(int(match.group(10)))
+            ),
+            "circuit_breaker_triggered": (
+                None if match.group(11) is None else bool(int(match.group(11)))
+            ),
+            "support_state_score": (
+                None if match.group(12) is None else float(match.group(12))
+            ),
+            "support_state_threshold": (
+                None if match.group(13) is None else float(match.group(13))
+            ),
+            "support_action_score": (
+                None if match.group(14) is None else float(match.group(14))
+            ),
+            "support_action_threshold": (
+                None if match.group(15) is None else float(match.group(15))
+            ),
+            "support_in_distribution": (
+                None if match.group(16) is None else bool(int(match.group(16)))
+            ),
+            "support_language_similarity": (
+                None if match.group(17) is None else float(match.group(17))
+            ),
+            "intervention_allowed": (
+                None if match.group(18) is None else bool(int(match.group(18)))
+            ),
+            "intervention_count": (
+                None if match.group(19) is None else int(match.group(19))
+            ),
+            "intervention_budget_remaining": (
+                None
+                if match.group(20) in {None, "None"}
+                else int(match.group(20))
+            ),
+            "intervention_budget_exhausted": (
+                None if match.group(21) is None else bool(int(match.group(21)))
             ),
         }
         for match in RESIDUAL_PATTERN.finditer(text)
@@ -87,6 +143,70 @@ def parse_log(path: Path) -> dict[str, Any]:
                     / len(gated_rows),
                     "q_advantage_disagreement_max": max(
                         row["q_advantage_disagreement"] for row in gated_rows
+                    ),
+                }
+            )
+        approval_rows = [
+            row for row in residual_rows if row["gate_approved"] is not None
+        ]
+        if approval_rows:
+            result.update(
+                {
+                    "gate_approval_rate": sum(
+                        int(row["gate_approved"]) for row in approval_rows
+                    )
+                    / len(approval_rows),
+                    "shadow_mode": all(row["shadow_mode"] for row in approval_rows),
+                    "circuit_breaker_trigger_count": sum(
+                        int(row["circuit_breaker_triggered"])
+                        for row in approval_rows
+                    ),
+                }
+            )
+        support_rows = [
+            row
+            for row in residual_rows
+            if row["support_in_distribution"] is not None
+        ]
+        if support_rows:
+            result.update(
+                {
+                    "support_in_distribution_rate": sum(
+                        int(row["support_in_distribution"])
+                        for row in support_rows
+                    )
+                    / len(support_rows),
+                    "support_state_score_max": max(
+                        row["support_state_score"] for row in support_rows
+                    ),
+                    "support_action_score_max": max(
+                        row["support_action_score"] for row in support_rows
+                    ),
+                }
+            )
+        intervention_rows = [
+            row
+            for row in residual_rows
+            if row["intervention_allowed"] is not None
+        ]
+        if intervention_rows:
+            result["intervention_allowed_rate"] = sum(
+                int(row["intervention_allowed"]) for row in intervention_rows
+            ) / len(intervention_rows)
+        budget_rows = [
+            row
+            for row in residual_rows
+            if row["intervention_count"] is not None
+        ]
+        if budget_rows:
+            result.update(
+                {
+                    "intervention_count_max": max(
+                        row["intervention_count"] for row in budget_rows
+                    ),
+                    "budget_exhausted_replans": sum(
+                        int(row["intervention_budget_exhausted"])
+                        for row in budget_rows
                     ),
                 }
             )

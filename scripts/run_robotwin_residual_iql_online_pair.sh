@@ -23,6 +23,11 @@ RESIDUAL_Q_GATE_ENABLED="${RESIDUAL_Q_GATE_ENABLED:-false}"
 RESIDUAL_Q_GATE_MARGIN="${RESIDUAL_Q_GATE_MARGIN:-0.0}"
 RESIDUAL_Q_GATE_MAX_DISAGREEMENT="${RESIDUAL_Q_GATE_MAX_DISAGREEMENT:-0.05}"
 RESIDUAL_Q_GATE_CRITIC_SOURCE="${RESIDUAL_Q_GATE_CRITIC_SOURCE:-target}"
+RESIDUAL_SUPPORT_INDEX_PATH="${RESIDUAL_SUPPORT_INDEX_PATH:-none}"
+RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED="${RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED:-true}"
+RESIDUAL_SHADOW_MODE="${RESIDUAL_SHADOW_MODE:-false}"
+RESIDUAL_INTERVENTION_REPLANS="${RESIDUAL_INTERVENTION_REPLANS:-all}"
+RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE="${RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE:-none}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 SUMMARY_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}"
 
@@ -100,6 +105,11 @@ for variant in "${variants[@]}"; do
         "EVALUATION.residual_q_gate_margin=${RESIDUAL_Q_GATE_MARGIN}"
         "EVALUATION.residual_q_gate_max_disagreement=${RESIDUAL_Q_GATE_MAX_DISAGREEMENT}"
         "EVALUATION.residual_q_gate_critic_source=${RESIDUAL_Q_GATE_CRITIC_SOURCE}"
+        "EVALUATION.residual_support_index_path=${RESIDUAL_SUPPORT_INDEX_PATH}"
+        "EVALUATION.residual_support_circuit_breaker_enabled=${RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED}"
+        "EVALUATION.residual_shadow_mode=${RESIDUAL_SHADOW_MODE}"
+        "EVALUATION.residual_intervention_replans='${RESIDUAL_INTERVENTION_REPLANS}'"
+        "EVALUATION.residual_max_interventions_per_episode=${RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE}"
       )
     fi
     printf '[robotwin-online-pair] variant=%s task=%s episodes=%s env_seed=%s\n' \

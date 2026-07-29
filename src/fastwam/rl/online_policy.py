@@ -16,6 +16,7 @@ from .models import (
     ResidualActor,
     ResidualActorConfig,
 )
+from .support_gate import ResidualSupportIndex, SupportGateDecision
 
 
 LIBERO_RESIDUAL_CAMERA_NAMES = ("agent", "wrist")
@@ -167,7 +168,16 @@ class ResidualPolicyOutput:
     observation_feature: np.ndarray
     candidate_residual_actions: np.ndarray | None = None
     gate_applied: bool = True
+    gate_approved: bool = True
     q_advantages: tuple[float, float] | None = None
+    support_decision: SupportGateDecision | None = None
+    circuit_breaker_active: bool = False
+    circuit_breaker_triggered: bool = False
+    shadow_mode: bool = False
+    intervention_allowed: bool = True
+    intervention_count: int = 0
+    intervention_budget_remaining: int | None = None
+    intervention_budget_exhausted: bool = False
 
     @property
     def residual_rms(self) -> float:
@@ -208,6 +218,10 @@ class OnlineResidualPolicy:
         q_critics: tuple[torch.nn.Module, torch.nn.Module] | None = None,
         q_gate_margin: float = 0.0,
         q_gate_max_disagreement: float = float("inf"),
+        support_index: ResidualSupportIndex | None = None,
+        support_circuit_breaker_enabled: bool = True,
+        shadow_mode: bool = False,
+        max_interventions_per_episode: int | None = None,
     ):
         if camera_image_size <= 0:
             raise ValueError("camera_image_size must be positive")
@@ -237,6 +251,26 @@ class OnlineResidualPolicy:
         self.q_critics = q_critics
         self.q_gate_margin = float(q_gate_margin)
         self.q_gate_max_disagreement = float(q_gate_max_disagreement)
+        self.support_index = support_index
+        self.support_circuit_breaker_enabled = bool(
+            support_circuit_breaker_enabled
+        )
+        self.shadow_mode = bool(shadow_mode)
+        if max_interventions_per_episode is not None and int(
+            max_interventions_per_episode
+        ) <= 0:
+            raise ValueError("max_interventions_per_episode must be positive or None")
+        self.max_interventions_per_episode = (
+            None
+            if max_interventions_per_episode is None
+            else int(max_interventions_per_episode)
+        )
+        if support_index is not None:
+            if support_index.action_horizon != self.action_horizon:
+                raise ValueError("support index action horizon does not match actor")
+            if support_index.action_dim != self.action_dim:
+                raise ValueError("support index action dimension does not match actor")
+        self.reset()
 
     @classmethod
     def from_checkpoint(
@@ -256,6 +290,10 @@ class OnlineResidualPolicy:
         q_gate_margin: float = 0.0,
         q_gate_max_disagreement: float = float("inf"),
         q_gate_critic_source: str = "target",
+        support_index_path: str | Path | None = None,
+        support_circuit_breaker_enabled: bool = True,
+        shadow_mode: bool = False,
+        max_interventions_per_episode: int | None = None,
     ) -> "OnlineResidualPolicy":
         from transformers import SiglipImageProcessor, SiglipVisionModel
 
@@ -352,6 +390,11 @@ class OnlineResidualPolicy:
             if q_gate_enabled
             else None
         )
+        support_index = (
+            None
+            if support_index_path is None
+            else ResidualSupportIndex.load(support_index_path)
+        )
         return cls(
             actor=actor,
             image_processor=image_processor,
@@ -367,6 +410,10 @@ class OnlineResidualPolicy:
             q_critics=q_critics,
             q_gate_margin=q_gate_margin,
             q_gate_max_disagreement=q_gate_max_disagreement,
+            support_index=support_index,
+            support_circuit_breaker_enabled=support_circuit_breaker_enabled,
+            shadow_mode=shadow_mode,
+            max_interventions_per_episode=max_interventions_per_episode,
         )
 
     @property
@@ -417,6 +464,7 @@ class OnlineResidualPolicy:
         proprio: np.ndarray,
         baseline_actions: np.ndarray,
         language_feature: np.ndarray | None = None,
+        intervention_allowed: bool = True,
     ) -> ResidualPolicyOutput:
         feature = np.asarray(observation_feature, dtype=np.float32).reshape(-1)
         state = np.asarray(proprio, dtype=np.float32).reshape(-1)
@@ -465,7 +513,7 @@ class OnlineResidualPolicy:
                 language_feature=actor_language,
             )
             q_advantages = None
-            gate_applied = True
+            q_gate_approved = True
             if self.q_critics is not None:
                 advantages = []
                 for critic in self.q_critics:
@@ -483,21 +531,80 @@ class OnlineResidualPolicy:
                     )
                     advantages.append(float((candidate_q - baseline_q).item()))
                 q_advantages = (advantages[0], advantages[1])
-                gate_applied = (
+                q_gate_approved = (
                     min(q_advantages) >= self.q_gate_margin
                     and abs(q_advantages[0] - q_advantages[1])
                     <= self.q_gate_max_disagreement
                 )
             candidate_prefix = candidate_prefix_tensor[0].cpu().numpy()
-            corrected_prefix = (
-                candidate_prefix
-                if gate_applied
-                else actor_baseline[0].cpu().numpy()
+        candidate_residual = candidate_prefix - baseline[: self.action_horizon]
+        support_decision = None
+        circuit_breaker_triggered = False
+        if self.support_index is not None:
+            if language_feature is None:
+                raise ValueError("support gating requires language_feature")
+            support_decision = self.support_index.evaluate(
+                observation_feature=feature,
+                proprio=state,
+                baseline_actions=baseline[: self.action_horizon],
+                candidate_residual_actions=candidate_residual,
+                language_feature=language_feature,
             )
+            if self.support_circuit_breaker_enabled:
+                state_increase = (
+                    None
+                    if self._last_support_state_score is None
+                    else support_decision.state_score
+                    - self._last_support_state_score
+                )
+                if not support_decision.state_in_support:
+                    circuit_breaker_triggered = not self._support_circuit_breaker_latched
+                    self._support_circuit_breaker_latched = True
+                elif (
+                    self._last_gate_applied
+                    and state_increase is not None
+                    and state_increase
+                    > self.support_index.state_increase_threshold
+                ):
+                    circuit_breaker_triggered = not self._support_circuit_breaker_latched
+                    self._support_circuit_breaker_latched = True
+        support_approved = (
+            support_decision is None
+            or (
+                support_decision.in_support
+                and not self._support_circuit_breaker_latched
+            )
+        )
+        gate_approved = q_gate_approved and support_approved
+        budget_allowed = (
+            self.max_interventions_per_episode is None
+            or self._intervention_count < self.max_interventions_per_episode
+        )
+        final_intervention_allowed = bool(intervention_allowed) and budget_allowed
+        gate_applied = (
+            gate_approved and not self.shadow_mode and final_intervention_allowed
+        )
+        if gate_applied:
+            self._intervention_count += 1
+        budget_remaining = (
+            None
+            if self.max_interventions_per_episode is None
+            else max(
+                0,
+                self.max_interventions_per_episode - self._intervention_count,
+            )
+        )
+        corrected_prefix = (
+            candidate_prefix
+            if gate_applied
+            else actor_baseline[0].cpu().numpy()
+        )
+        if support_decision is not None:
+            self._last_support_state_score = support_decision.state_score
+        self._last_gate_applied = gate_applied
         corrected = baseline.copy()
         corrected[: self.action_horizon] = corrected_prefix
         residual = corrected_prefix - baseline[: self.action_horizon]
-        candidate_residual = candidate_prefix - baseline[: self.action_horizon]
         if not np.all(np.isfinite(corrected)):
             raise ValueError("Residual actor produced non-finite actions.")
         return ResidualPolicyOutput(
@@ -506,8 +613,28 @@ class OnlineResidualPolicy:
             observation_feature=feature,
             candidate_residual_actions=candidate_residual,
             gate_applied=gate_applied,
+            gate_approved=gate_approved,
             q_advantages=q_advantages,
+            support_decision=support_decision,
+            circuit_breaker_active=self._support_circuit_breaker_latched,
+            circuit_breaker_triggered=circuit_breaker_triggered,
+            shadow_mode=self.shadow_mode,
+            intervention_allowed=final_intervention_allowed,
+            intervention_count=self._intervention_count,
+            intervention_budget_remaining=budget_remaining,
+            intervention_budget_exhausted=(
+                self.max_interventions_per_episode is not None
+                and budget_remaining == 0
+            ),
         )
+
+    def reset(self) -> None:
+        """Reset episode-local support-gate circuit-breaker state."""
+
+        self._support_circuit_breaker_latched = False
+        self._last_support_state_score: float | None = None
+        self._last_gate_applied = False
+        self._intervention_count = 0
 
     def correct_action_chunk(
         self,
@@ -516,10 +643,12 @@ class OnlineResidualPolicy:
         proprio: np.ndarray,
         baseline_actions: np.ndarray,
         language_feature: np.ndarray | None = None,
+        intervention_allowed: bool = True,
     ) -> ResidualPolicyOutput:
         return self.correct_from_feature(
             observation_feature=self.encode_observation(camera_images),
             proprio=proprio,
             baseline_actions=baseline_actions,
             language_feature=language_feature,
+            intervention_allowed=intervention_allowed,
         )
