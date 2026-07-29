@@ -2,11 +2,17 @@ import cv2
 import numpy as np
 
 from experiments.robotwin.export_expert_imagination_transitions import (
+    DEFAULT_INSTRUCTIONS,
     completed_episode_transition_count,
     decode_jpeg,
     expert_action_chunk,
     resolve_task_data_dir,
 )
+
+
+def test_low_success_tasks_have_fixed_language_instructions() -> None:
+    assert DEFAULT_INSTRUCTIONS["blocks_ranking_size"] == "Rank the blocks by size."
+    assert DEFAULT_INSTRUCTIONS["hanging_mug"] == "Hang the mug on the mug rack."
 
 
 def test_decode_jpeg_returns_rgb() -> None:

@@ -45,6 +45,12 @@ instruction_for_task() {
     adjust_bottle)
       printf '%s' 'Pick up the bottle from the table and keep it upright.'
       ;;
+    blocks_ranking_size)
+      printf '%s' 'Rank the blocks by size.'
+      ;;
+    hanging_mug)
+      printf '%s' 'Hang the mug on the mug rack.'
+      ;;
     open_laptop)
       printf '%s' 'Open the laptop completely.'
       ;;

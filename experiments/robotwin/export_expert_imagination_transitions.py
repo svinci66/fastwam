@@ -37,6 +37,8 @@ from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
 
 DEFAULT_INSTRUCTIONS = {
     "adjust_bottle": "Pick up the bottle from the table and keep it upright.",
+    "blocks_ranking_size": "Rank the blocks by size.",
+    "hanging_mug": "Hang the mug on the mug rack.",
     "open_laptop": "Open the laptop completely.",
     "stack_blocks_two": (
         "Move the red and green blocks to the center and stack the green block "
