@@ -176,6 +176,7 @@ class WorldActionRobotWinPolicy:
         residual_encoder_path: Optional[str],
         residual_encoder_version: Optional[str],
         residual_encoder_dtype: torch.dtype,
+        residual_device: str,
         residual_q_gate_enabled: bool,
         residual_q_gate_margin: float,
         residual_q_gate_max_disagreement: float,
@@ -244,7 +245,7 @@ class WorldActionRobotWinPolicy:
             self.residual_policy = OnlineResidualPolicy.from_checkpoint(
                 checkpoint_path=str(residual_checkpoint),
                 encoder_path=str(residual_encoder_path),
-                device=device,
+                device=residual_device,
                 encoder_dtype=residual_encoder_dtype,
                 encoder_version=str(residual_encoder_version),
                 language_encoder_version="fastwam_umt5_masked_mean_v1",
@@ -943,6 +944,14 @@ def get_model(usr_args: Dict[str, Any]):
     residual_encoder_dtype = _mixed_precision_to_model_dtype(
         residual_encoder_precision
     )
+    residual_device = str(
+        usr_args.get(
+            "residual_device",
+            cfg.EVALUATION.get("residual_device", "same"),
+        )
+    ).strip()
+    if not residual_device or residual_device.lower() == "same":
+        residual_device = device
     residual_q_gate_enabled = _parse_bool(
         usr_args.get(
             "residual_q_gate_enabled",
@@ -1096,6 +1105,7 @@ def get_model(usr_args: Dict[str, Any]):
         residual_encoder_path=residual_encoder_path,
         residual_encoder_version=residual_encoder_version,
         residual_encoder_dtype=residual_encoder_dtype,
+        residual_device=residual_device,
         residual_q_gate_enabled=residual_q_gate_enabled,
         residual_q_gate_margin=residual_q_gate_margin,
         residual_q_gate_max_disagreement=residual_q_gate_max_disagreement,

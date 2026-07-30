@@ -244,6 +244,7 @@ def main(cfg: DictConfig):
     _append_override(
         overrides, "residual_encoder_dtype", cfg.EVALUATION.residual_encoder_dtype
     )
+    _append_override(overrides, "residual_device", cfg.EVALUATION.residual_device)
     _append_override(
         overrides,
         "residual_q_gate_enabled",
