@@ -49,7 +49,46 @@ def parse_args() -> argparse.Namespace:
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
     )
     parser.add_argument("--batch-size", type=int, default=24)
+    parser.add_argument(
+        "--camera-normalization-manifest",
+        type=Path,
+        help=(
+            "Reuse camera normalization from an existing replay manifest instead "
+            "of fitting it on the new shard. Required for merge-compatible "
+            "incremental replay construction."
+        ),
+    )
     return parser.parse_args()
+
+
+def discover_sourced_records(input_dirs: list[Path]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for source_index, input_dir in enumerate(input_dirs):
+        source_id = f"source{source_index:03d}-{input_dir.resolve().name}"
+        for record in discover_records([input_dir]):
+            record = dict(record)
+            record["source_id"] = source_id
+            records.append(record)
+    return records
+
+
+def load_camera_normalization_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
+    normalization = payload.get("provenance", {}).get("camera_normalization")
+    if not isinstance(normalization, dict):
+        raise ValueError(f"Replay manifest has no camera normalization: {path}")
+    cameras = normalization.get("cameras")
+    if not isinstance(cameras, dict) or set(cameras) != set(ROBOTWIN_CAMERA_NAMES):
+        raise ValueError(
+            "Camera normalization manifest must contain exactly "
+            f"{ROBOTWIN_CAMERA_NAMES}, got {None if not isinstance(cameras, dict) else sorted(cameras)}"
+        )
+    for camera, settings in cameras.items():
+        center = float(settings.get("center", np.nan))
+        scale = float(settings.get("scale", np.nan))
+        if not np.isfinite(center) or not np.isfinite(scale) or scale <= 0.0:
+            raise ValueError(f"Invalid camera normalization for {camera}: {settings}")
+    return normalization
 
 
 def combine_camera_features(camera_features: dict[str, np.ndarray]) -> np.ndarray:
@@ -95,6 +134,7 @@ def validate_episode_records(records: list[dict[str, Any]]) -> None:
             (
                 str(record["task_name"]),
                 str(record["behavior"]),
+                str(record.get("source_id", "default")),
                 int(record["trial_idx"]),
             )
         ].append(record)
@@ -149,7 +189,8 @@ def build_replay(
         task_name = str(record["task_name"])
         behavior = str(record["behavior"])
         episode_id = (
-            f"robotwin2.0-{task_name}-{behavior}-"
+            f"robotwin2.0-{str(record.get('source_id', 'default'))}-"
+            f"{task_name}-{behavior}-"
             f"trial{int(record['trial_idx']):06d}"
         )
         target_k = int(record["target_step"])
@@ -254,7 +295,7 @@ def main() -> None:
         if imitation_scales is None
         else np.asarray(imitation_scales, dtype=np.float32)
     )
-    records = discover_records(args.input_dir)
+    records = discover_sourced_records(args.input_dir)
     validate_episode_records(records)
     behavior_counts = Counter(str(record["behavior"]) for record in records)
     task_behavior_counts = Counter(
@@ -266,7 +307,13 @@ def main() -> None:
         device=args.device,
         batch_size=args.batch_size,
     )
-    normalization = fit_task_balanced_camera_normalization(records, encoded)
+    normalization = (
+        fit_task_balanced_camera_normalization(records, encoded)
+        if args.camera_normalization_manifest is None
+        else load_camera_normalization_manifest(
+            args.camera_normalization_manifest
+        )
+    )
     replay = build_replay(
         records,
         encoded,
@@ -299,6 +346,14 @@ def main() -> None:
             "source_schema": "robotwin_imagination_transition_v1",
             "seed_fields": "trial_index_and_action_corruption_seed_v1",
             "input_dirs": [str(path.resolve()) for path in args.input_dir],
+            "input_sources": sorted(
+                {str(record["source_id"]) for record in records}
+            ),
+            "camera_normalization_source_manifest": (
+                None
+                if args.camera_normalization_manifest is None
+                else str(args.camera_normalization_manifest.resolve())
+            ),
             "behavior_transition_counts": dict(sorted(behavior_counts.items())),
             "task_behavior_transition_counts": {
                 f"{task}/{behavior}": count

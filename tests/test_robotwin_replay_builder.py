@@ -1,8 +1,12 @@
+import json
+
 import numpy as np
 import pytest
 
 from experiments.robotwin.build_residual_rl_replay import (
     combine_camera_features,
+    discover_sourced_records,
+    load_camera_normalization_manifest,
     pad_action_chunk,
     pad_environment_rewards,
     validate_episode_records,
@@ -53,3 +57,31 @@ def test_validate_robotwin_episode_requires_contiguous_final_boundary() -> None:
     records[-1]["replan_idx"] = 2
     with pytest.raises(ValueError, match="non-contiguous"):
         validate_episode_records(records)
+
+
+def test_camera_normalization_can_be_reused_from_manifest(tmp_path) -> None:
+    manifest = tmp_path / "manifest.json"
+    cameras = {
+        camera: {"center": float(index), "scale": float(index + 1)}
+        for index, camera in enumerate(ROBOTWIN_CAMERA_NAMES)
+    }
+    manifest.write_text(json.dumps({"provenance": {"camera_normalization": {"cameras": cameras}}}))
+    loaded = load_camera_normalization_manifest(manifest)
+    assert loaded["cameras"] == cameras
+
+
+def test_discover_sourced_records_keeps_input_episodes_separate(monkeypatch, tmp_path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+
+    def fake_discover(paths):
+        return [{"record_dir": str(paths[0])}]
+
+    monkeypatch.setattr(
+        "experiments.robotwin.build_residual_rl_replay.discover_records",
+        fake_discover,
+    )
+    records = discover_sourced_records([first, second])
+    assert len({record["source_id"] for record in records}) == 2
