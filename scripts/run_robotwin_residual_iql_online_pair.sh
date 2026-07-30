@@ -32,6 +32,7 @@ RESIDUAL_SHADOW_MODE="${RESIDUAL_SHADOW_MODE:-false}"
 RESIDUAL_INTERVENTION_REPLANS="${RESIDUAL_INTERVENTION_REPLANS:-all}"
 RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE="${RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE:-none}"
 SAVE_RESIDUAL_TRANSITIONS="${SAVE_RESIDUAL_TRANSITIONS:-false}"
+SAVE_BASELINE_TRANSITIONS="${SAVE_BASELINE_TRANSITIONS:-false}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 SUMMARY_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}"
 
@@ -103,7 +104,7 @@ for variant in "${variants[@]}"; do
     fi
     instruction="$(instruction_for_task "${task_name}")"
     action_mode=policy
-    save_transitions=false
+    save_transitions="${SAVE_BASELINE_TRANSITIONS}"
     residual_args=()
     if [[ "${variant}" != "baseline" ]]; then
       action_mode=residual

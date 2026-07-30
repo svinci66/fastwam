@@ -213,6 +213,29 @@ def parse_log(path: Path) -> dict[str, Any]:
     return result
 
 
+def load_episode_initial_hashes(run_dir: Path, task: str) -> dict[str, str]:
+    """Load one audited initial-observation hash per captured episode."""
+
+    root = run_dir / task / "imagination_transitions" / task
+    grouped: dict[int, set[str]] = {}
+    for path in root.rglob("metadata.json") if root.is_dir() else ():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        trial = int(payload["trial_idx"])
+        grouped.setdefault(trial, set()).add(
+            str(payload["initial_observation_sha256"])
+        )
+    inconsistent = {
+        trial: sorted(hashes) for trial, hashes in grouped.items() if len(hashes) != 1
+    }
+    if inconsistent:
+        raise ValueError(
+            f"Captured episodes contain inconsistent initial hashes: {inconsistent}"
+        )
+    return {
+        str(trial): next(iter(hashes)) for trial, hashes in sorted(grouped.items())
+    }
+
+
 def main() -> None:
     args = parse_args()
     variants = [value.strip() for value in args.variants.split(",") if value.strip()]
@@ -250,6 +273,9 @@ def main() -> None:
                     "task": task,
                     "status": "complete",
                     **metrics,
+                    "episode_initial_hashes": load_episode_initial_hashes(
+                        run_dir, task
+                    ),
                 }
             )
 
@@ -269,6 +295,29 @@ def main() -> None:
             "success_rate": None if episodes == 0 else successes / episodes,
         }
 
+    initial_state_audit: dict[str, Any] = {}
+    for task in tasks:
+        task_rows = {
+            str(row["variant"]): row
+            for row in rows
+            if row["task"] == task and row["status"] == "complete"
+        }
+        captured = {
+            variant: row["episode_initial_hashes"]
+            for variant, row in task_rows.items()
+            if row["episode_initial_hashes"]
+        }
+        signatures = {
+            json.dumps(hashes, sort_keys=True) for hashes in captured.values()
+        }
+        initial_state_audit[task] = {
+            "captured_variants": sorted(captured),
+            "episodes_per_variant": {
+                variant: len(hashes) for variant, hashes in sorted(captured.items())
+            },
+            "exact_match": len(captured) == len(variants) and len(signatures) == 1,
+        }
+
     payload = {
         "run_name": args.run_name,
         "result_base": str(args.result_base.resolve()),
@@ -276,6 +325,7 @@ def main() -> None:
         "variants": variants,
         "rows": rows,
         "overall": overall,
+        "initial_state_audit": initial_state_audit,
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(

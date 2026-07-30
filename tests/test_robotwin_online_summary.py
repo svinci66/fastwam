@@ -1,4 +1,11 @@
-from experiments.robotwin.summarize_residual_iql_online_pair import parse_log
+import json
+
+import pytest
+
+from experiments.robotwin.summarize_residual_iql_online_pair import (
+    load_episode_initial_hashes,
+    parse_log,
+)
 
 
 def test_parse_online_pair_log_extracts_success_and_residual_metrics(tmp_path):
@@ -45,3 +52,34 @@ def test_parse_online_pair_log_extracts_success_and_residual_metrics(tmp_path):
     assert result["intervention_allowed_rate"] == 0.5
     assert result["intervention_count_max"] == 2
     assert result["budget_exhausted_replans"] == 1
+
+
+def test_load_episode_initial_hashes_groups_replans(tmp_path):
+    root = tmp_path / "task" / "imagination_transitions" / "task" / "policy"
+    for trial, digest in ((0, "aaa"), (1, "bbb")):
+        for replan in range(2):
+            path = root / f"episode_{trial:04d}" / f"replan_{replan:04d}" / "metadata.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "trial_idx": trial,
+                        "initial_observation_sha256": digest,
+                    }
+                )
+            )
+    assert load_episode_initial_hashes(tmp_path, "task") == {"0": "aaa", "1": "bbb"}
+
+
+def test_load_episode_initial_hashes_rejects_inconsistent_episode(tmp_path):
+    root = tmp_path / "task" / "imagination_transitions" / "task" / "residual"
+    for replan, digest in enumerate(("aaa", "bbb")):
+        path = root / "episode_0000" / f"replan_{replan:04d}" / "metadata.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {"trial_idx": 0, "initial_observation_sha256": digest}
+            )
+        )
+    with pytest.raises(ValueError, match="inconsistent initial hashes"):
+        load_episode_initial_hashes(tmp_path, "task")
