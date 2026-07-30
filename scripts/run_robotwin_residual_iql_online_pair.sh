@@ -28,6 +28,7 @@ RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED="${RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENA
 RESIDUAL_SHADOW_MODE="${RESIDUAL_SHADOW_MODE:-false}"
 RESIDUAL_INTERVENTION_REPLANS="${RESIDUAL_INTERVENTION_REPLANS:-all}"
 RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE="${RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE:-none}"
+SAVE_RESIDUAL_TRANSITIONS="${SAVE_RESIDUAL_TRANSITIONS:-false}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 SUMMARY_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}"
 
@@ -99,9 +100,11 @@ for variant in "${variants[@]}"; do
     fi
     instruction="$(instruction_for_task "${task_name}")"
     action_mode=policy
+    save_transitions=false
     residual_args=()
     if [[ "${variant}" != "baseline" ]]; then
       action_mode=residual
+      save_transitions="${SAVE_RESIDUAL_TRANSITIONS}"
       residual_args=(
         "EVALUATION.residual_checkpoint=${residual_checkpoint}"
         "EVALUATION.residual_encoder_path=${SIGLIP_PATH}"
@@ -141,7 +144,7 @@ for variant in "${variants[@]}"; do
       "${residual_args[@]}" \
       "EVALUATION.fixed_instruction=${instruction}" \
       EVALUATION.timing_enabled=true \
-      EVALUATION.save_imagination_transitions=false \
+      "EVALUATION.save_imagination_transitions=${save_transitions}" \
       "EVALUATION.output_dir=${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}_${variant}"
     completed_log_for_task "${run_dir}" "${task_name}" >/dev/null || {
       printf 'RoboTwin returned without a valid success-rate log: variant=%s task=%s\n' \
