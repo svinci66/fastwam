@@ -57,6 +57,34 @@ def merge_replays(input_replays: list[Path]) -> tuple[ReplayBuffer, dict]:
     }
     if len(camera_normalizations) != 1:
         raise ValueError("Replay shards use different camera normalizations")
+    encoder_provenance_fields = (
+        "reward_encoder_version",
+        "camera_names",
+        "camera_weights",
+        "camera_image_size",
+        "feature_fusion",
+        "language_encoder_version",
+        "language_pooling",
+        "imagination_reward_type",
+        "source_schema",
+        "seed_fields",
+    )
+    shared_encoder_provenance: dict[str, object] = {}
+    for field in encoder_provenance_fields:
+        values = {
+            json.dumps(
+                manifest.get("provenance", {}).get(field), sort_keys=True
+            )
+            for manifest in manifests
+        }
+        if len(values) != 1:
+            raise ValueError(
+                f"Replay provenance disagrees on {field}: {sorted(values)}"
+            )
+        value = manifests[0].get("provenance", {}).get(field)
+        if value is None:
+            raise ValueError(f"Replay provenance is missing required field {field}")
+        shared_encoder_provenance[field] = value
 
     shards = [ReplayBuffer.load(root) for root in roots]
     task_keys = sorted(
@@ -86,6 +114,7 @@ def merge_replays(input_replays: list[Path]) -> tuple[ReplayBuffer, dict]:
     provenance = {
         "merge_format": "robotwin_residual_replay_merge_v1",
         "camera_normalization": manifests[0]["provenance"]["camera_normalization"],
+        **shared_encoder_provenance,
         "input_replays": [
             {
                 "path": str(root),
