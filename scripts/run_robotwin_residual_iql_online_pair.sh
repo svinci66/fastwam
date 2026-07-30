@@ -19,6 +19,8 @@ BASE_SEED="${BASE_SEED:-42}"
 TRIAL_OFFSET="${TRIAL_OFFSET:-0}"
 INFERENCE_STEPS="${INFERENCE_STEPS:-4}"
 GPU_ID="${GPU_ID:-0}"
+TILED="${TILED:-false}"
+CAPTURE_DECODE_TILED="${CAPTURE_DECODE_TILED:-false}"
 RESIDUAL_Q_GATE_ENABLED="${RESIDUAL_Q_GATE_ENABLED:-false}"
 RESIDUAL_Q_GATE_MARGIN="${RESIDUAL_Q_GATE_MARGIN:-0.0}"
 RESIDUAL_Q_GATE_MAX_DISAGREEMENT="${RESIDUAL_Q_GATE_MAX_DISAGREEMENT:-0.05}"
@@ -125,6 +127,7 @@ for variant in "${variants[@]}"; do
       "${variant}" "${task_name}" "${EPISODES}" "${environment_start_seed}"
     conda run --no-capture-output -n "${CONDA_ENV}" \
       env CUBLAS_WORKSPACE_CONFIG=:4096:8 \
+      PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" \
       MPLCONFIGDIR=/tmp/matplotlib_robotwin PYTHONUNBUFFERED=1 \
       python -u "${PROJECT_ROOT}/experiments/robotwin/eval_robotwin_single.py" \
       "ckpt=${CHECKPOINT}" \
@@ -139,6 +142,8 @@ for variant in "${variants[@]}"; do
       "EVALUATION.environment_start_seed=${environment_start_seed}" \
       "EVALUATION.environment_episode_offset=${TRIAL_OFFSET}" \
       "EVALUATION.num_inference_steps=${INFERENCE_STEPS}" \
+      "EVALUATION.tiled=${TILED}" \
+      "EVALUATION.capture_decode_tiled=${CAPTURE_DECODE_TILED}" \
       EVALUATION.replan_steps=24 \
       "EVALUATION.action_mode=${action_mode}" \
       "${residual_args[@]}" \

@@ -167,6 +167,7 @@ class WorldActionRobotWinPolicy:
         negative_prompt: str,
         rand_device: str,
         tiled: bool,
+        capture_decode_tiled: bool,
         timing_enabled: bool,
         num_video_frames: int,
         action_video_freq_ratio: int,
@@ -215,6 +216,7 @@ class WorldActionRobotWinPolicy:
         self.negative_prompt = str(negative_prompt)
         self.rand_device = str(rand_device)
         self.tiled = bool(tiled)
+        self.capture_decode_tiled = bool(capture_decode_tiled)
         self.timing_enabled = bool(timing_enabled)
         self._num_video_frames = int(num_video_frames)
         self.action_video_freq_ratio = int(action_video_freq_ratio)
@@ -458,6 +460,11 @@ class WorldActionRobotWinPolicy:
             if self.save_imagination_transitions:
                 joint_kwargs = dict(infer_kwargs)
                 joint_kwargs["num_video_frames"] = int(self._num_video_frames)
+                if "decode_tiled" in inspect.signature(
+                    self.model.infer_joint
+                ).parameters:
+                    joint_kwargs["tiled"] = False
+                    joint_kwargs["decode_tiled"] = self.capture_decode_tiled
                 if "test_action_with_infer_action" in inspect.signature(
                     self.model.infer_joint
                 ).parameters:
@@ -893,6 +900,12 @@ def get_model(usr_args: Dict[str, Any]):
     negative_prompt = str(usr_args.get("negative_prompt", cfg.EVALUATION.get("negative_prompt", "")))
     rand_device = str(usr_args.get("rand_device", cfg.EVALUATION.get("rand_device", "cpu")))
     tiled = _parse_bool(usr_args.get("tiled", cfg.EVALUATION.get("tiled", False)))
+    capture_decode_tiled = _parse_bool(
+        usr_args.get(
+            "capture_decode_tiled",
+            cfg.EVALUATION.get("capture_decode_tiled", False),
+        )
+    )
     timing_enabled = _parse_bool(
         usr_args.get("timing_enabled", cfg.EVALUATION.get("timing_enabled", False))
     )
@@ -1074,6 +1087,7 @@ def get_model(usr_args: Dict[str, Any]):
         negative_prompt=negative_prompt,
         rand_device=rand_device,
         tiled=tiled,
+        capture_decode_tiled=capture_decode_tiled,
         timing_enabled=timing_enabled,
         num_video_frames=(int(cfg.data.train.num_frames) - 1) // int(cfg.data.train.action_video_freq_ratio) + 1,
         action_video_freq_ratio=int(cfg.data.train.action_video_freq_ratio),
