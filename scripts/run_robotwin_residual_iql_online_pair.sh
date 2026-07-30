@@ -72,7 +72,7 @@ instruction_for_task() {
 
 IFS=',' read -r -a variants <<< "${VARIANTS_CSV}"
 IFS=',' read -r -a task_names <<< "${TASKS_CSV}"
-environment_start_seed="$(( 100000 * (1 + BASE_SEED) + TRIAL_OFFSET ))"
+environment_start_seed="${ENVIRONMENT_START_SEED:-$(( 100000 * (1 + BASE_SEED) + TRIAL_OFFSET ))}"
 mkdir -p "${SUMMARY_DIR}"
 
 completed_log_for_task() {

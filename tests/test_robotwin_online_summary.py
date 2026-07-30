@@ -6,6 +6,9 @@ from experiments.robotwin.summarize_residual_iql_online_pair import (
     load_episode_initial_hashes,
     parse_log,
 )
+from experiments.robotwin.summarize_residual_iql_seed_matrix import (
+    merge_episode_hashes,
+)
 
 
 def test_parse_online_pair_log_extracts_success_and_residual_metrics(tmp_path):
@@ -83,3 +86,14 @@ def test_load_episode_initial_hashes_rejects_inconsistent_episode(tmp_path):
         )
     with pytest.raises(ValueError, match="inconsistent initial hashes"):
         load_episode_initial_hashes(tmp_path, "task")
+
+
+def test_merge_episode_hashes_requires_complete_disjoint_matrix():
+    assert merge_episode_hashes([{"0": "aaa"}, {"1": "bbb"}], 2) == {
+        "0": "aaa",
+        "1": "bbb",
+    }
+    with pytest.raises(ValueError, match="conflicting initial hashes"):
+        merge_episode_hashes([{"0": "aaa"}, {"0": "bbb"}], 1)
+    with pytest.raises(ValueError, match="episode indices differ"):
+        merge_episode_hashes([{"1": "bbb"}], 2)
