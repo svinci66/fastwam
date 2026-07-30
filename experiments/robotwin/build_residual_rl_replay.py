@@ -50,6 +50,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--batch-size", type=int, default=24)
     parser.add_argument(
+        "--min-trial-index",
+        type=int,
+        help="Keep only records whose trial index is at least this value.",
+    )
+    parser.add_argument(
+        "--max-trial-index",
+        type=int,
+        help="Keep only records whose trial index is at most this value.",
+    )
+    parser.add_argument(
         "--camera-normalization-manifest",
         type=Path,
         help=(
@@ -70,6 +80,32 @@ def discover_sourced_records(input_dirs: list[Path]) -> list[dict[str, Any]]:
             record["source_id"] = source_id
             records.append(record)
     return records
+
+
+def filter_records_by_trial_range(
+    records: list[dict[str, Any]],
+    *,
+    min_trial_index: int | None,
+    max_trial_index: int | None,
+) -> list[dict[str, Any]]:
+    if (
+        min_trial_index is not None
+        and max_trial_index is not None
+        and min_trial_index > max_trial_index
+    ):
+        raise ValueError("min-trial-index must not exceed max-trial-index")
+    filtered = [
+        record
+        for record in records
+        if (min_trial_index is None or int(record["trial_idx"]) >= min_trial_index)
+        and (max_trial_index is None or int(record["trial_idx"]) <= max_trial_index)
+    ]
+    if not filtered:
+        raise ValueError(
+            "trial-index filtering removed every transition: "
+            f"min={min_trial_index}, max={max_trial_index}"
+        )
+    return filtered
 
 
 def load_camera_normalization_manifest(path: Path) -> dict[str, Any]:
@@ -295,7 +331,11 @@ def main() -> None:
         if imitation_scales is None
         else np.asarray(imitation_scales, dtype=np.float32)
     )
-    records = discover_sourced_records(args.input_dir)
+    records = filter_records_by_trial_range(
+        discover_sourced_records(args.input_dir),
+        min_trial_index=args.min_trial_index,
+        max_trial_index=args.max_trial_index,
+    )
     validate_episode_records(records)
     behavior_counts = Counter(str(record["behavior"]) for record in records)
     task_behavior_counts = Counter(
@@ -349,6 +389,10 @@ def main() -> None:
             "input_sources": sorted(
                 {str(record["source_id"]) for record in records}
             ),
+            "trial_index_filter": {
+                "minimum": args.min_trial_index,
+                "maximum": args.max_trial_index,
+            },
             "camera_normalization_source_manifest": (
                 None
                 if args.camera_normalization_manifest is None

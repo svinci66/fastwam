@@ -6,6 +6,7 @@ import pytest
 from experiments.robotwin.build_residual_rl_replay import (
     combine_camera_features,
     discover_sourced_records,
+    filter_records_by_trial_range,
     load_camera_normalization_manifest,
     pad_action_chunk,
     pad_environment_rewards,
@@ -85,3 +86,23 @@ def test_discover_sourced_records_keeps_input_episodes_separate(monkeypatch, tmp
     )
     records = discover_sourced_records([first, second])
     assert len({record["source_id"] for record in records}) == 2
+
+
+def test_filter_records_by_trial_range_is_inclusive() -> None:
+    records = [{"trial_idx": index} for index in range(7)]
+    filtered = filter_records_by_trial_range(
+        records, min_trial_index=2, max_trial_index=5
+    )
+    assert [record["trial_idx"] for record in filtered] == [2, 3, 4, 5]
+
+
+def test_filter_records_by_trial_range_rejects_empty_or_reversed_range() -> None:
+    records = [{"trial_idx": index} for index in range(3)]
+    with pytest.raises(ValueError, match="must not exceed"):
+        filter_records_by_trial_range(
+            records, min_trial_index=3, max_trial_index=2
+        )
+    with pytest.raises(ValueError, match="removed every"):
+        filter_records_by_trial_range(
+            records, min_trial_index=10, max_trial_index=None
+        )
