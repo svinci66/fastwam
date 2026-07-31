@@ -13,6 +13,11 @@ from experiments.robotwin.export_expert_imagination_transitions import (
 def test_low_success_tasks_have_fixed_language_instructions() -> None:
     assert DEFAULT_INSTRUCTIONS["blocks_ranking_size"] == "Rank the blocks by size."
     assert DEFAULT_INSTRUCTIONS["hanging_mug"] == "Hang the mug on the mug rack."
+    assert (
+        DEFAULT_INSTRUCTIONS["open_microwave"]
+        == "Use one arm to open the microwave."
+    )
+    assert DEFAULT_INSTRUCTIONS["place_can_basket"].startswith("Pick up the can")
 
 
 def test_decode_jpeg_returns_rgb() -> None:

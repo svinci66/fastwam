@@ -40,6 +40,10 @@ DEFAULT_INSTRUCTIONS = {
     "blocks_ranking_size": "Rank the blocks by size.",
     "hanging_mug": "Hang the mug on the mug rack.",
     "open_laptop": "Open the laptop completely.",
+    "open_microwave": "Use one arm to open the microwave.",
+    "place_can_basket": (
+        "Pick up the can, put it into the basket, then lift the basket."
+    ),
     "stack_blocks_two": (
         "Move the red and green blocks to the center and stack the green block "
         "on the red block."
