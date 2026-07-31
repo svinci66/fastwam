@@ -15,6 +15,7 @@ BASE_SEED="${BASE_SEED:-42}"
 INFERENCE_STEPS="${INFERENCE_STEPS:-4}"
 GPU_ID="${GPU_ID:-0}"
 ACTION_CORRUPTION_SEED="${ACTION_CORRUPTION_SEED:-20260729}"
+RUN_REWARD_AUDIT="${RUN_REWARD_AUDIT:-true}"
 
 modes=(policy hold hold gripper_delay)
 hold_probabilities=(0.0 0.25 0.75 0.0)
@@ -24,18 +25,29 @@ mode_tags=(policy hold_0.250 hold_0.750 gripper_delay_024)
 [[ -f "${CHECKPOINT}" ]] || { printf 'Missing checkpoint: %s\n' "${CHECKPOINT}" >&2; exit 1; }
 [[ -f "${DATASET_STATS}" ]] || { printf 'Missing dataset stats: %s\n' "${DATASET_STATS}" >&2; exit 1; }
 [[ -d "${ROBOTWIN_ROOT}" ]] || { printf 'Missing RoboTwin root: %s\n' "${ROBOTWIN_ROOT}" >&2; exit 1; }
-[[ -d "${SIGLIP_PATH}" ]] || { printf 'Missing SigLIP path: %s\n' "${SIGLIP_PATH}" >&2; exit 1; }
+if [[ "${RUN_REWARD_AUDIT}" == true ]]; then
+  [[ -d "${SIGLIP_PATH}" ]] || { printf 'Missing SigLIP path: %s\n' "${SIGLIP_PATH}" >&2; exit 1; }
+fi
 
 instruction_for_task() {
   case "$1" in
     adjust_bottle)
       printf '%s' 'Pick up the bottle from the table and keep it upright.'
       ;;
+    hanging_mug)
+      printf '%s' 'Hang the mug on the mug rack.'
+      ;;
     move_can_pot)
       printf '%s' 'Pick up the can and place it beside the pot.'
       ;;
+    open_microwave)
+      printf '%s' 'Use one arm to open the microwave.'
+      ;;
     open_laptop)
       printf '%s' 'Open the laptop completely.'
+      ;;
+    place_can_basket)
+      printf '%s' 'Pick up the can, put it into the basket, then lift the basket.'
       ;;
     stack_blocks_two)
       printf '%s' \
@@ -123,14 +135,18 @@ for task_name in "${task_names[@]}"; do
 done
 
 printf 'Raw collection complete: %s\n' "${raw_output_dir}"
-minimum_paired_trials="$(( ${#task_names[@]} * EPISODES ))"
-env CUBLAS_WORKSPACE_CONFIG=:4096:8 MPLCONFIGDIR=/tmp/matplotlib_robotwin \
-  conda run -n "${CONDA_ENV}" python \
-  "${PROJECT_ROOT}/experiments/robotwin/analyze_imagination_rewards.py" \
-  --input-dir "${raw_output_dir}" \
-  --encoder-path "${SIGLIP_PATH}" \
-  --output-dir "${raw_output_dir}/reward_audit" \
-  --device cuda \
-  --batch-size 12 \
-  --minimum-paired-trials "${minimum_paired_trials}"
-printf 'Reward audit complete: %s\n' "${raw_output_dir}/reward_audit/reward_audit_summary.json"
+if [[ "${RUN_REWARD_AUDIT}" == true ]]; then
+  minimum_paired_trials="$(( ${#task_names[@]} * EPISODES ))"
+  env CUBLAS_WORKSPACE_CONFIG=:4096:8 MPLCONFIGDIR=/tmp/matplotlib_robotwin \
+    conda run -n "${CONDA_ENV}" python \
+    "${PROJECT_ROOT}/experiments/robotwin/analyze_imagination_rewards.py" \
+    --input-dir "${raw_output_dir}" \
+    --encoder-path "${SIGLIP_PATH}" \
+    --output-dir "${raw_output_dir}/reward_audit" \
+    --device cuda \
+    --batch-size 12 \
+    --minimum-paired-trials "${minimum_paired_trials}"
+  printf 'Reward audit complete: %s\n' "${raw_output_dir}/reward_audit/reward_audit_summary.json"
+else
+  printf 'Reward audit skipped (RUN_REWARD_AUDIT=%s).\n' "${RUN_REWARD_AUDIT}"
+fi
