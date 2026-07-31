@@ -11,6 +11,7 @@ captures, so both sources can be combined by ``build_residual_rl_replay.py``.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -321,8 +322,9 @@ def main() -> None:
     unknown = sorted(set(tasks) - set(DEFAULT_INSTRUCTIONS))
     if unknown:
         raise ValueError(f"missing fixed instructions for tasks: {unknown}")
+    if not tasks:
+        raise ValueError("at least one task is required")
     summary: dict[str, Any] = {"tasks": {}, "total_transitions": 0}
-    policy = _make_policy(args, tasks[0])
     for task_name in tasks:
         data_dir = resolve_task_data_dir(args.dataset_root, task_name)
         episodes = sorted(data_dir.glob("episode*.hdf5"), key=episode_index)
@@ -333,41 +335,51 @@ def main() -> None:
                 f"{data_dir}, found {len(selected)}"
             )
         task_transitions = 0
-        for path in selected:
-            index = episode_index(path)
-            count = completed_episode_transition_count(
-                args.output_dir, task_name, index
+        completed_counts = [
+            completed_episode_transition_count(
+                args.output_dir, task_name, episode_index(path)
             )
-            if count is None:
-                count = export_episode(
-                    policy,
-                    task_name=task_name,
-                    instruction=DEFAULT_INSTRUCTIONS[task_name],
-                    episode_path=path,
-                    episode_id=index,
-                    output_dir=args.output_dir,
-                    replan_steps=args.replan_steps,
+            for path in selected
+        ]
+        policy = None
+        try:
+            if any(count is None for count in completed_counts):
+                policy = _make_policy(args, task_name)
+            for path, completed_count in zip(selected, completed_counts):
+                index = episode_index(path)
+                count = completed_count
+                if count is None:
+                    count = export_episode(
+                        policy,
+                        task_name=task_name,
+                        instruction=DEFAULT_INSTRUCTIONS[task_name],
+                        episode_path=path,
+                        episode_id=index,
+                        output_dir=args.output_dir,
+                        replan_steps=args.replan_steps,
+                    )
+                task_transitions += count
+                print(
+                    json.dumps(
+                        {
+                            "task": task_name,
+                            "episode": index,
+                            "transitions": count,
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
                 )
-            task_transitions += count
-            print(
-                json.dumps(
-                    {
-                        "task": task_name,
-                        "episode": index,
-                        "transitions": count,
-                    },
-                    sort_keys=True,
-                ),
-                flush=True,
-            )
+        finally:
+            del policy
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         summary["tasks"][task_name] = {
             "episodes": len(selected),
             "transitions": task_transitions,
         }
         summary["total_transitions"] += task_transitions
-    del policy
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "expert_export_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
