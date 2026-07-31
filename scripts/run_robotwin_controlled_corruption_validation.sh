@@ -16,6 +16,9 @@ INFERENCE_STEPS="${INFERENCE_STEPS:-4}"
 GPU_ID="${GPU_ID:-0}"
 ACTION_CORRUPTION_SEED="${ACTION_CORRUPTION_SEED:-20260729}"
 RUN_REWARD_AUDIT="${RUN_REWARD_AUDIT:-true}"
+EPISODE_TIMEOUT_SECONDS="${EPISODE_TIMEOUT_SECONDS:-480}"
+MAX_BATCH_ATTEMPTS="${MAX_BATCH_ATTEMPTS:-10}"
+RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-5}"
 
 modes=(policy hold hold gripper_delay)
 hold_probabilities=(0.0 0.25 0.75 0.0)
@@ -25,6 +28,7 @@ mode_tags=(policy hold_0.250 hold_0.750 gripper_delay_024)
 [[ -f "${CHECKPOINT}" ]] || { printf 'Missing checkpoint: %s\n' "${CHECKPOINT}" >&2; exit 1; }
 [[ -f "${DATASET_STATS}" ]] || { printf 'Missing dataset stats: %s\n' "${DATASET_STATS}" >&2; exit 1; }
 [[ -d "${ROBOTWIN_ROOT}" ]] || { printf 'Missing RoboTwin root: %s\n' "${ROBOTWIN_ROOT}" >&2; exit 1; }
+command -v timeout >/dev/null || { printf 'Missing required command: timeout\n' >&2; exit 1; }
 if [[ "${RUN_REWARD_AUDIT}" == true ]]; then
   [[ -d "${SIGLIP_PATH}" ]] || { printf 'Missing SigLIP path: %s\n' "${SIGLIP_PATH}" >&2; exit 1; }
 fi
@@ -104,30 +108,67 @@ for task_name in "${task_names[@]}"; do
         printf '[robotwin-controlled] task=%s mode=%s trials=%d..%d env_seed=%d\n' \
           "${task_name}" "${mode_tag}" "${trial_offset}" \
           "$(( trial_offset + batch_episodes - 1 ))" "${environment_start_seed}"
-        env CUBLAS_WORKSPACE_CONFIG=:4096:8 MPLCONFIGDIR=/tmp/matplotlib_robotwin \
-          conda run -n "${CONDA_ENV}" python -u \
-          "${PROJECT_ROOT}/experiments/robotwin/eval_robotwin_single.py" \
-          "ckpt=${CHECKPOINT}" \
-          "seed=${BASE_SEED}" \
-          "gpu_id=${GPU_ID}" \
-          "EVALUATION.robotwin_root=${ROBOTWIN_ROOT}" \
-          "EVALUATION.dataset_stats_path=${DATASET_STATS}" \
-          "EVALUATION.task_name=${task_name}" \
-          EVALUATION.task_config=demo_clean \
-          "EVALUATION.eval_num_episodes=${batch_episodes}" \
-          "EVALUATION.trial_offset=${trial_offset}" \
-          "EVALUATION.environment_start_seed=${environment_start_seed}" \
-          "EVALUATION.environment_episode_offset=${trial_offset}" \
-          "EVALUATION.num_inference_steps=${INFERENCE_STEPS}" \
-          EVALUATION.replan_steps=24 \
-          "EVALUATION.action_mode=${mode}" \
-          EVALUATION.action_noise_std=0.0 \
-          "EVALUATION.action_hold_probability=${hold_probability}" \
-          "EVALUATION.gripper_close_delay_steps=${delay_steps}" \
-          "EVALUATION.action_corruption_seed=${ACTION_CORRUPTION_SEED}" \
-          "EVALUATION.fixed_instruction=${instruction}" \
-          EVALUATION.save_imagination_transitions=true \
-          "EVALUATION.output_dir=${output_dir}"
+        batch_timeout_seconds="$(( EPISODE_TIMEOUT_SECONDS * batch_episodes ))"
+        attempt=1
+        while true; do
+          printf '[robotwin-controlled] attempt=%d/%d timeout=%ds\n' \
+            "${attempt}" "${MAX_BATCH_ATTEMPTS}" "${batch_timeout_seconds}"
+          if timeout --verbose --signal=TERM --kill-after=30s \
+            "${batch_timeout_seconds}s" \
+            env CUBLAS_WORKSPACE_CONFIG=:4096:8 MPLCONFIGDIR=/tmp/matplotlib_robotwin \
+            conda run -n "${CONDA_ENV}" python -u \
+            "${PROJECT_ROOT}/experiments/robotwin/eval_robotwin_single.py" \
+            "ckpt=${CHECKPOINT}" \
+            "seed=${BASE_SEED}" \
+            "gpu_id=${GPU_ID}" \
+            "EVALUATION.robotwin_root=${ROBOTWIN_ROOT}" \
+            "EVALUATION.dataset_stats_path=${DATASET_STATS}" \
+            "EVALUATION.task_name=${task_name}" \
+            EVALUATION.task_config=demo_clean \
+            "EVALUATION.eval_num_episodes=${batch_episodes}" \
+            "EVALUATION.trial_offset=${trial_offset}" \
+            "EVALUATION.environment_start_seed=${environment_start_seed}" \
+            "EVALUATION.environment_episode_offset=${trial_offset}" \
+            "EVALUATION.num_inference_steps=${INFERENCE_STEPS}" \
+            EVALUATION.replan_steps=24 \
+            "EVALUATION.action_mode=${mode}" \
+            EVALUATION.action_noise_std=0.0 \
+            "EVALUATION.action_hold_probability=${hold_probability}" \
+            "EVALUATION.gripper_close_delay_steps=${delay_steps}" \
+            "EVALUATION.action_corruption_seed=${ACTION_CORRUPTION_SEED}" \
+            "EVALUATION.fixed_instruction=${instruction}" \
+            EVALUATION.save_imagination_transitions=true \
+            "EVALUATION.output_dir=${output_dir}"; then
+            break
+          else
+            return_code="$?"
+          fi
+
+          batch_complete=true
+          for (( trial=trial_offset; trial<trial_offset+batch_episodes; trial++ )); do
+            episode_is_complete "${task_name}" "${mode_tag}" "${trial}" \
+              || batch_complete=false
+          done
+          if [[ "${batch_complete}" == true ]]; then
+            printf '[robotwin-controlled] command exited %d after complete output; continuing.\n' \
+              "${return_code}"
+            break
+          fi
+          if (( return_code == 130 || return_code == 143 )); then
+            printf '[robotwin-controlled] interrupted with return code %d.\n' \
+              "${return_code}" >&2
+            exit "${return_code}"
+          fi
+          if (( attempt >= MAX_BATCH_ATTEMPTS )); then
+            printf '[robotwin-controlled] failed after %d attempts; return code=%d.\n' \
+              "${attempt}" "${return_code}" >&2
+            exit "${return_code}"
+          fi
+          printf '[robotwin-controlled] incomplete batch returned %d; retrying in %ds.\n' \
+            "${return_code}" "${RETRY_DELAY_SECONDS}" >&2
+          attempt="$(( attempt + 1 ))"
+          sleep "${RETRY_DELAY_SECONDS}"
+        done
       fi
       trial_offset="$(( trial_offset + batch_episodes ))"
     done
