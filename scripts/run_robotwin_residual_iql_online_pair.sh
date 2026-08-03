@@ -89,7 +89,6 @@ completed_log_for_task() {
     -name "eval_${task_name}_*.log" -print | sort | tail -n 1)"
   [[ -n "${latest_log}" ]] || return 1
   rg -q 'Success rate:' "${latest_log}" || return 1
-  printf '%s' "${latest_log}"
 }
 
 for variant in "${variants[@]}"; do
@@ -103,7 +102,7 @@ for variant in "${variants[@]}"; do
   mkdir -p "${run_dir}"
   for task_name in "${task_names[@]}"; do
     marker="${run_dir}/.${task_name}_${EPISODES}ep_complete"
-    if [[ -f "${marker}" ]] && completed_log_for_task "${run_dir}" "${task_name}" >/dev/null; then
+    if [[ -f "${marker}" ]] && completed_log_for_task "${run_dir}" "${task_name}"; then
       printf '[robotwin-online-pair] skip complete variant=%s task=%s\n' \
         "${variant}" "${task_name}"
       continue
@@ -160,7 +159,7 @@ for variant in "${variants[@]}"; do
       EVALUATION.timing_enabled=true \
       "EVALUATION.save_imagination_transitions=${save_transitions}" \
       "EVALUATION.output_dir=${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}_${variant}"
-    completed_log_for_task "${run_dir}" "${task_name}" >/dev/null || {
+    completed_log_for_task "${run_dir}" "${task_name}" || {
       printf 'RoboTwin returned without a valid success-rate log: variant=%s task=%s\n' \
         "${variant}" "${task_name}" >&2
       exit 1
