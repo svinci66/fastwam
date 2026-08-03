@@ -68,6 +68,7 @@ instruction_for_task() {
 IFS=',' read -r -a task_names <<< "${TASKS_CSV}"
 output_dir="${PROJECT_ROOT}/evaluate_results/robotwin/${OUTPUT_NAME}"
 raw_output_dir="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384/${OUTPUT_NAME}"
+pairing_quarantine_dir="${raw_output_dir}_pairing_quarantine"
 
 episode_is_complete() {
   local task_name="$1"
@@ -81,6 +82,24 @@ episode_is_complete() {
     policy_current="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/policy/episode_$(printf '%04d' "${trial}")/replan_0000/current.png"
     cmp -s "${episode_dir}/replan_0000/current.png" "${policy_current}" || return 1
   fi
+}
+
+quarantine_batch_outputs() {
+  local task_name="$1"
+  local mode_tag="$2"
+  local first_trial="$3"
+  local count="$4"
+  local attempt="$5"
+  local trial episode_dir destination
+  for (( trial=first_trial; trial<first_trial+count; trial++ )); do
+    episode_dir="${raw_output_dir}/${task_name}/imagination_transitions/${task_name}/${mode_tag}/episode_$(printf '%04d' "${trial}")"
+    if [[ -d "${episode_dir}" ]]; then
+      destination="${pairing_quarantine_dir}/${task_name}/${mode_tag}/episode_$(printf '%04d' "${trial}")/attempt_$(printf '%02d' "${attempt}")_$(date +%Y%m%d_%H%M%S_%N)"
+      mkdir -p "$(dirname "${destination}")"
+      mv "${episode_dir}" "${destination}"
+      printf '[robotwin-controlled] quarantined stale output: %s\n' "${destination}"
+    fi
+  done
 }
 
 for task_name in "${task_names[@]}"; do
@@ -114,6 +133,8 @@ for task_name in "${task_names[@]}"; do
         while true; do
           printf '[robotwin-controlled] attempt=%d/%d timeout=%ds\n' \
             "${attempt}" "${MAX_BATCH_ATTEMPTS}" "${batch_timeout_seconds}"
+          quarantine_batch_outputs \
+            "${task_name}" "${mode_tag}" "${trial_offset}" "${batch_episodes}" "${attempt}"
           if timeout --verbose --signal=TERM --kill-after=30s \
             "${batch_timeout_seconds}s" \
             env CUBLAS_WORKSPACE_CONFIG=:4096:8 MPLCONFIGDIR=/tmp/matplotlib_robotwin \

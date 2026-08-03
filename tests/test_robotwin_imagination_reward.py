@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from experiments.robotwin.analyze_imagination_rewards import discover_records
 from experiments.robotwin.imagination_reward_utils import (
     apply_action_chunk_hold,
     apply_first_gripper_close_delay,
@@ -97,3 +98,22 @@ def test_saved_transition_can_backfill_episode_success(tmp_path: Path):
     )
     update_episode_success([metadata_path], True)
     assert '"episode_success": true' in metadata_path.read_text(encoding="utf-8")
+
+
+def test_reward_discovery_ignores_pairing_quarantine(tmp_path: Path):
+    import json
+
+    frame = Image.fromarray(np.zeros((384, 320, 3), dtype=np.uint8))
+    for root in (tmp_path / "task", tmp_path / "pairing_quarantine" / "task"):
+        root.mkdir(parents=True)
+        (root / "metadata.json").write_text(
+            json.dumps({"schema_version": "robotwin_imagination_transition_v1"}),
+            encoding="utf-8",
+        )
+        for phase in ("current", "actual", "predicted_goal"):
+            frame.save(root / f"{phase}.png")
+
+    records = discover_records([tmp_path])
+
+    assert len(records) == 1
+    assert "pairing_quarantine" not in records[0]["record_dir"]

@@ -11,6 +11,9 @@ Collection:
 - Per task: `open_microwave` 15/15, `hanging_mug` 15/15,
   `place_can_basket` 15/15, and `adjust_bottle` 15/15.
 - All 20 policy episodes and all 60 behavior episodes have terminal metadata.
+- A follow-up full-transition audit quarantined 37 stale `replan_*` tail
+  directories left by shorter replacement rollouts; every retained episode now
+  contains exactly one initial-state hash across all of its transitions.
 - No collection process remained after the audit.
 
 The local machine-readable reports are stored under the collection's
@@ -26,9 +29,9 @@ corruption modes.
 
 The FastWAM compatibility entrypoint now makes this expert check configurable.
 Controlled corruption collection disables it, requires a fixed instruction,
-records the accepted environment seed, and validates exact initial-image
-pairing after every successful subprocess. The RoboTwin upstream checkout is
-not modified.
+records the accepted environment seed, quarantines the previous episode
+directory before any retry, and validates exact initial-image pairing after
+every successful subprocess. The RoboTwin upstream checkout is not modified.
 
 The repair reused the formal run settings `BASE_SEED=45` and
 `ACTION_CORRUPTION_SEED=20260731`. The final audit was run with:

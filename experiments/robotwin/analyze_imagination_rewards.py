@@ -53,6 +53,8 @@ def discover_records(input_dirs: list[Path]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for root in input_dirs:
         for metadata_path in sorted(root.resolve().rglob("metadata.json")):
+            if any("pairing_quarantine" in part for part in metadata_path.parts):
+                continue
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             if metadata.get("schema_version") != "robotwin_imagination_transition_v1":
                 continue

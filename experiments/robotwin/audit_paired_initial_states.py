@@ -29,6 +29,16 @@ def _is_terminal(episode_dir: Path) -> bool:
     return False
 
 
+def _metadata_initial_hashes(episode_dir: Path) -> set[str]:
+    hashes: set[str] = set()
+    for path in sorted(episode_dir.rglob("metadata.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        value = payload.get("initial_observation_sha256")
+        if value is not None:
+            hashes.add(str(value))
+    return hashes
+
+
 def audit_collection(root: Path, modes: Iterable[str] = DEFAULT_MODES) -> dict[str, Any]:
     root = root.resolve()
     mode_names = tuple(modes)
@@ -46,6 +56,7 @@ def audit_collection(root: Path, modes: Iterable[str] = DEFAULT_MODES) -> dict[s
             policy_current = policy_episode / "replan_0000" / "current.png"
             policy_terminal = _is_terminal(policy_episode)
             policy_hash = _sha256(policy_current) if policy_current.is_file() else None
+            policy_metadata_hashes = _metadata_initial_hashes(policy_episode)
             for mode in mode_names:
                 task_summary["expected_pairs"] += 1
                 candidate = policy_dir.parent / mode / policy_episode.name
@@ -54,11 +65,16 @@ def audit_collection(root: Path, modes: Iterable[str] = DEFAULT_MODES) -> dict[s
                 candidate_hash = (
                     _sha256(candidate_current) if candidate_current.is_file() else None
                 )
+                candidate_metadata_hashes = (
+                    _metadata_initial_hashes(candidate) if candidate.is_dir() else set()
+                )
                 exact = bool(
                     policy_terminal
                     and candidate_terminal
                     and policy_hash is not None
                     and policy_hash == candidate_hash
+                    and len(policy_metadata_hashes) == 1
+                    and candidate_metadata_hashes == policy_metadata_hashes
                 )
                 if exact:
                     task_summary["exact_pairs"] += 1
@@ -72,6 +88,12 @@ def audit_collection(root: Path, modes: Iterable[str] = DEFAULT_MODES) -> dict[s
                         "candidate_terminal": candidate_terminal,
                         "policy_sha256": policy_hash,
                         "candidate_sha256": candidate_hash,
+                        "policy_metadata_initial_sha256": sorted(
+                            policy_metadata_hashes
+                        ),
+                        "candidate_metadata_initial_sha256": sorted(
+                            candidate_metadata_hashes
+                        ),
                     }
                 )
 
