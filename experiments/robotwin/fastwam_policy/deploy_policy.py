@@ -698,6 +698,11 @@ class WorldActionRobotWinPolicy:
             ),
             "action_corruption_seed": self.action_corruption_seed,
             "initial_observation_sha256": transition["initial_observation_sha256"],
+            "environment_seed": (
+                int(os.environ["FASTWAM_ENVIRONMENT_SEED"])
+                if os.environ.get("FASTWAM_ENVIRONMENT_SEED") is not None
+                else None
+            ),
             "target_step": target_k,
             "effective_k": effective_k,
             "goal_frame_index": target_k // self.action_video_freq_ratio,

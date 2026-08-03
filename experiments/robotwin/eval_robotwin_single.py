@@ -313,6 +313,7 @@ def main(cfg: DictConfig):
     _append_override(
         overrides, "environment_episode_offset", cfg.EVALUATION.environment_episode_offset
     )
+    _append_override(overrides, "expert_check", cfg.EVALUATION.expert_check)
     _append_override(overrides, "fixed_instruction", cfg.EVALUATION.fixed_instruction)
     _append_override(
         overrides,
@@ -334,7 +335,9 @@ def main(cfg: DictConfig):
     cmd = [
         sys.executable,
         "-u",
-        "script/eval_policy.py",
+        str((PROJECT_ROOT / "experiments" / "robotwin" / "eval_policy_compat.py").resolve()),
+        "--upstream-script",
+        str((robotwin_root / "script" / "eval_policy.py").resolve()),
         "--config",
         f"policy/{POLICY_NAME}/deploy_policy.yml",
         "--overrides",

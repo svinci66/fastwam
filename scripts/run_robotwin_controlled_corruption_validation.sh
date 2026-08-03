@@ -19,6 +19,7 @@ RUN_REWARD_AUDIT="${RUN_REWARD_AUDIT:-true}"
 EPISODE_TIMEOUT_SECONDS="${EPISODE_TIMEOUT_SECONDS:-480}"
 MAX_BATCH_ATTEMPTS="${MAX_BATCH_ATTEMPTS:-10}"
 RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-5}"
+PAIRING_EXPERT_CHECK="${PAIRING_EXPERT_CHECK:-false}"
 
 modes=(policy hold hold gripper_delay)
 hold_probabilities=(0.0 0.25 0.75 0.0)
@@ -129,6 +130,7 @@ for task_name in "${task_names[@]}"; do
             "EVALUATION.trial_offset=${trial_offset}" \
             "EVALUATION.environment_start_seed=${environment_start_seed}" \
             "EVALUATION.environment_episode_offset=${trial_offset}" \
+            "EVALUATION.expert_check=${PAIRING_EXPERT_CHECK}" \
             "EVALUATION.num_inference_steps=${INFERENCE_STEPS}" \
             EVALUATION.replan_steps=24 \
             "EVALUATION.action_mode=${mode}" \
@@ -139,7 +141,7 @@ for task_name in "${task_names[@]}"; do
             "EVALUATION.fixed_instruction='${instruction}'" \
             EVALUATION.save_imagination_transitions=true \
             "EVALUATION.output_dir=${output_dir}"; then
-            break
+            return_code=0
           else
             return_code="$?"
           fi
@@ -150,9 +152,13 @@ for task_name in "${task_names[@]}"; do
               || batch_complete=false
           done
           if [[ "${batch_complete}" == true ]]; then
-            printf '[robotwin-controlled] command exited %d after complete output; continuing.\n' \
+            printf '[robotwin-controlled] command exited %d with strictly paired output; continuing.\n' \
               "${return_code}"
             break
+          fi
+          if (( return_code == 0 )); then
+            return_code=65
+            printf '[robotwin-controlled] command succeeded but strict pairing failed.\n' >&2
           fi
           if (( return_code == 130 || return_code == 143 )); then
             printf '[robotwin-controlled] interrupted with return code %d.\n' \

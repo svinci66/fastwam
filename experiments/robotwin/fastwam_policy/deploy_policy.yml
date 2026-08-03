@@ -48,6 +48,7 @@ action_corruption_seed: 20260729
 trial_offset: 0
 environment_start_seed: null
 environment_episode_offset: 0
+expert_check: true
 fixed_instruction: null
 save_imagination_transitions: false
 imagination_transition_dir: null
