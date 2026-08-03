@@ -56,6 +56,12 @@ instruction_for_task() {
     hanging_mug)
       printf '%s' 'Hang the mug on the mug rack.'
       ;;
+    open_microwave)
+      printf '%s' 'Use one arm to open the microwave.'
+      ;;
+    place_can_basket)
+      printf '%s' 'Pick up the can, put it into the basket, then lift the basket.'
+      ;;
     open_laptop)
       printf '%s' 'Open the laptop completely.'
       ;;
