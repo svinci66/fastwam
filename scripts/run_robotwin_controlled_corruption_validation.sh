@@ -136,7 +136,7 @@ for task_name in "${task_names[@]}"; do
             "EVALUATION.action_hold_probability=${hold_probability}" \
             "EVALUATION.gripper_close_delay_steps=${delay_steps}" \
             "EVALUATION.action_corruption_seed=${ACTION_CORRUPTION_SEED}" \
-            "EVALUATION.fixed_instruction=${instruction}" \
+            "EVALUATION.fixed_instruction='${instruction}'" \
             EVALUATION.save_imagination_transitions=true \
             "EVALUATION.output_dir=${output_dir}"; then
             break
