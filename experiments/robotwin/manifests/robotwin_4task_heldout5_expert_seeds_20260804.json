@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "Expert-feasible held-out RoboTwin seeds recovered from the 2026-08-03 baseline audit; used only for the five-episode paper-protocol calibration.",
+    "description": "Expert-feasible held-out RoboTwin seeds recovered from the 2026-08-03 baseline audit; place_can_basket seed 4800003 was replaced after two consecutive strict expert-filter failures on 2026-08-04.",
     "episodes_per_task": 5,
     "environment_seed_range_start": 4800000,
     "task_config": "demo_clean"
@@ -15,6 +15,6 @@
     "seeds": [4800000, 4800001, 4800003, 4800004, 4800005]
   },
   "place_can_basket": {
-    "seeds": [4800000, 4800001, 4800002, 4800003, 4800004]
+    "seeds": [4800005, 4800000, 4800001, 4800002, 4800004]
   }
 }

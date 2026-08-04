@@ -51,4 +51,10 @@ env \
   "RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED=true" \
   bash "${PROJECT_ROOT}/scripts/run_robotwin_residual_iql_online_pair.sh"
 
+printf '[paper-calibration] stage=combined_summary tasks=%s episodes=%s\n' "${TASKS}" "${EPISODES}"
+env \
+  "${COMMON_ENV[@]}" \
+  "VARIANTS=baseline,imagination" \
+  bash "${PROJECT_ROOT}/scripts/run_robotwin_residual_iql_online_pair.sh"
+
 printf '[paper-calibration] complete run_name=%s\n' "${RUN_NAME}"
