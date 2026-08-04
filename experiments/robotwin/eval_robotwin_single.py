@@ -24,11 +24,12 @@ Examples:
      ckpt=/path/to/ckpt.pt \
      EVALUATION.task_name=click_alarmclock \
      EVALUATION.task_config=demo_randomized \
-     EVALUATION.replan_steps=4 \
-     EVALUATION.num_inference_steps=4 \
+     EVALUATION.replan_steps=24 \
+     EVALUATION.num_inference_steps=10 \
      gpu_id=0
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -146,12 +147,81 @@ def _append_override(overrides: list[str], key: str, value: Any, *, skip_none: b
     overrides.extend([f"--{key}", _format_override_value(value)])
 
 
+def _is_none_like(value: Any) -> bool:
+    return value is None or str(value).strip().lower() in {"", "none", "null"}
+
+
+def _validate_protocol(cfg: DictConfig) -> None:
+    """Fail closed when a run is labelled paper-aligned but is not."""
+
+    if not bool(cfg.EVALUATION.paper_aligned):
+        if bool(cfg.EVALUATION.strict_paired):
+            raise ValueError("EVALUATION.strict_paired requires paper_aligned=true")
+        return
+
+    expected = {
+        "num_inference_steps": 10,
+        "replan_steps": 24,
+        "instruction_type": "unseen",
+        "text_cfg_scale": 1.0,
+    }
+    actual = {
+        "num_inference_steps": int(cfg.EVALUATION.num_inference_steps),
+        "replan_steps": int(cfg.EVALUATION.replan_steps),
+        "instruction_type": str(cfg.EVALUATION.instruction_type),
+        "text_cfg_scale": float(cfg.EVALUATION.text_cfg_scale),
+    }
+    mismatches = {
+        key: {"expected": expected[key], "actual": actual[key]}
+        for key in expected
+        if actual[key] != expected[key]
+    }
+    if str(cfg.EVALUATION.task_config) not in {"demo_clean", "demo_randomized"}:
+        mismatches["task_config"] = {
+            "expected": "demo_clean or demo_randomized",
+            "actual": str(cfg.EVALUATION.task_config),
+        }
+    if not _is_none_like(cfg.EVALUATION.fixed_instruction):
+        mismatches["fixed_instruction"] = {
+            "expected": None,
+            "actual": str(cfg.EVALUATION.fixed_instruction),
+        }
+    if not bool(cfg.EVALUATION.expert_check):
+        mismatches["expert_check"] = {"expected": True, "actual": False}
+    for key in ("action_noise_std", "action_hold_probability"):
+        if float(cfg.EVALUATION[key]) != 0.0:
+            mismatches[key] = {"expected": 0.0, "actual": float(cfg.EVALUATION[key])}
+    if int(cfg.EVALUATION.gripper_close_delay_steps) != 0:
+        mismatches["gripper_close_delay_steps"] = {
+            "expected": 0,
+            "actual": int(cfg.EVALUATION.gripper_close_delay_steps),
+        }
+
+    if bool(cfg.EVALUATION.strict_paired):
+        if _is_none_like(cfg.EVALUATION.environment_seed_manifest_path):
+            mismatches["environment_seed_manifest_path"] = {
+                "expected": "a versioned manifest",
+                "actual": None,
+            }
+        if not bool(cfg.EVALUATION.deterministic_instruction_by_seed):
+            mismatches["deterministic_instruction_by_seed"] = {
+                "expected": True,
+                "actual": False,
+            }
+    if mismatches:
+        raise ValueError(
+            "Paper-aligned RoboTwin protocol mismatch: "
+            + json.dumps(mismatches, sort_keys=True)
+        )
+
+
 @hydra.main(version_base="1.3", config_path="../../configs", config_name="sim_robotwin.yaml")
 def main(cfg: DictConfig):
     if cfg.ckpt is None:
         raise ValueError("`ckpt` must not be None.")
     if cfg.EVALUATION.task_name is None:
         raise ValueError("`EVALUATION.task_name` must not be None.")
+    _validate_protocol(cfg)
 
     ckpt_path = _resolve_path(str(cfg.ckpt), base=PROJECT_ROOT)
     if not ckpt_path.exists():
@@ -317,6 +387,16 @@ def main(cfg: DictConfig):
     _append_override(overrides, "fixed_instruction", cfg.EVALUATION.fixed_instruction)
     _append_override(
         overrides,
+        "environment_seed_manifest_path",
+        cfg.EVALUATION.environment_seed_manifest_path,
+    )
+    _append_override(
+        overrides,
+        "deterministic_instruction_by_seed",
+        cfg.EVALUATION.deterministic_instruction_by_seed,
+    )
+    _append_override(
+        overrides,
         "save_imagination_transitions",
         cfg.EVALUATION.save_imagination_transitions,
     )
@@ -348,6 +428,35 @@ def main(cfg: DictConfig):
     env["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu_id)
     env["PYTHONUNBUFFERED"] = "1"
 
+    protocol = {
+        "paper_aligned": bool(cfg.EVALUATION.paper_aligned),
+        "strict_paired": bool(cfg.EVALUATION.strict_paired),
+        "task": str(cfg.EVALUATION.task_name),
+        "task_config": str(cfg.EVALUATION.task_config),
+        "episodes": int(cfg.EVALUATION.eval_num_episodes),
+        "num_inference_steps": int(cfg.EVALUATION.num_inference_steps),
+        "replan_steps": int(cfg.EVALUATION.replan_steps),
+        "text_cfg_scale": float(cfg.EVALUATION.text_cfg_scale),
+        "instruction_type": str(cfg.EVALUATION.instruction_type),
+        "deterministic_instruction_by_seed": bool(
+            cfg.EVALUATION.deterministic_instruction_by_seed
+        ),
+        "environment_seed_manifest_path": (
+            None
+            if _is_none_like(cfg.EVALUATION.environment_seed_manifest_path)
+            else str(cfg.EVALUATION.environment_seed_manifest_path)
+        ),
+        "action_mode": str(cfg.EVALUATION.action_mode),
+    }
+    print("FASTWAM_EVAL_PROTOCOL " + json.dumps(protocol, sort_keys=True), flush=True)
+    OmegaConf.save(
+        config=cfg,
+        f=str(run_output_dir / f"eval_config_{str(cfg.EVALUATION.task_name)}.yaml"),
+    )
+    (run_output_dir / f"eval_protocol_{str(cfg.EVALUATION.task_name)}.json").write_text(
+        json.dumps(protocol, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
     with open(log_file, "w", encoding="utf-8") as log_f:
         process = subprocess.Popen(
             cmd,
@@ -370,10 +479,6 @@ def main(cfg: DictConfig):
         raise RuntimeError(f"RoboTwin evaluation failed with return code {return_code}. Log: {log_file}")
 
     print(f"Evaluation finished successfully. Log saved to: {log_file}")
-    OmegaConf.save(
-        config=cfg,
-        f=str(run_output_dir / f"eval_config_{str(cfg.EVALUATION.task_name)}.yaml"),
-    )
 
 
 if __name__ == "__main__":

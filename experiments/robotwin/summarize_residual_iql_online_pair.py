@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 from pathlib import Path
@@ -12,6 +13,10 @@ from typing import Any
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 SUCCESS_PATTERN = re.compile(
     r"Success rate:\s*(\d+)\s*/\s*(\d+)\s*=>\s*([0-9.]+)%"
+)
+SEED_PATTERN = re.compile(r"FASTWAM_ACCEPTED_ENV_SEED episode_id=(\d+) seed=(\d+)")
+INSTRUCTION_PATTERN = re.compile(
+    r"FASTWAM_EVAL_INSTRUCTION episode_id=(\d+) seed=(\d+) instruction=(.+)$"
 )
 RESIDUAL_PATTERN = re.compile(
     r"\[fastwam-residual\]\s+replan=(\d+)\s+rms=([0-9.eE+-]+)\s+"
@@ -117,6 +122,7 @@ def parse_log(path: Path) -> dict[str, Any]:
         "episodes": int(episodes),
         "success_rate": float(percent) / 100.0,
         "num_residual_replans": len(residual_rows),
+        "episode_records": _episode_records(text, path),
     }
     if residual_rows:
         result.update(
@@ -213,6 +219,58 @@ def parse_log(path: Path) -> dict[str, Any]:
     return result
 
 
+def _episode_records(text: str, path: Path) -> list[dict[str, Any]]:
+    current_seed: tuple[int, int] | None = None
+    current_instruction: tuple[int, int, str] | None = None
+    previous_successes = 0
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        seed_match = SEED_PATTERN.search(line)
+        if seed_match:
+            current_seed = (int(seed_match.group(1)), int(seed_match.group(2)))
+            continue
+        instruction_match = INSTRUCTION_PATTERN.search(line)
+        if instruction_match:
+            try:
+                instruction = ast.literal_eval(instruction_match.group(3))
+            except (SyntaxError, ValueError) as exc:
+                raise ValueError(f"Invalid instruction record in {path}: {line}") from exc
+            current_instruction = (
+                int(instruction_match.group(1)),
+                int(instruction_match.group(2)),
+                str(instruction),
+            )
+            continue
+        success_match = SUCCESS_PATTERN.search(line)
+        if not success_match:
+            continue
+        successes, episodes, _ = success_match.groups()
+        successes = int(successes)
+        episodes = int(episodes)
+        if current_seed is None or current_instruction is None:
+            # Legacy logs predate exact instruction provenance.
+            return []
+        episode_id, seed = current_seed
+        instruction_episode_id, instruction_seed, instruction = current_instruction
+        if (instruction_episode_id, instruction_seed) != (episode_id, seed):
+            raise ValueError(f"Seed/instruction mismatch in {path}")
+        outcome = successes - previous_successes
+        if outcome not in {0, 1} or episodes != len(rows) + 1:
+            raise ValueError(f"Invalid episode success sequence in {path}")
+        rows.append(
+            {
+                "episode_id": episode_id,
+                "seed": seed,
+                "instruction": instruction,
+                "success": bool(outcome),
+            }
+        )
+        previous_successes = successes
+        current_seed = None
+        current_instruction = None
+    return rows
+
+
 def load_episode_initial_hashes(run_dir: Path, task: str) -> dict[str, str]:
     """Load one audited initial-observation hash per captured episode."""
 
@@ -296,6 +354,8 @@ def main() -> None:
         }
 
     initial_state_audit: dict[str, Any] = {}
+    protocol_pairing_audit: dict[str, Any] = {}
+    paired_outcomes: dict[str, Any] = {}
     for task in tasks:
         task_rows = {
             str(row["variant"]): row
@@ -317,6 +377,68 @@ def main() -> None:
             },
             "exact_match": len(captured) == len(variants) and len(signatures) == 1,
         }
+        records = {
+            variant: row.get("episode_records", [])
+            for variant, row in task_rows.items()
+        }
+        protocol_signatures = {
+            variant: [
+                (record["seed"], record["instruction"])
+                for record in variant_records
+            ]
+            for variant, variant_records in records.items()
+        }
+        exact_protocol_pair = (
+            len(protocol_signatures) == len(variants)
+            and bool(protocol_signatures)
+            and len(
+                {
+                    json.dumps(signature, ensure_ascii=False)
+                    for signature in protocol_signatures.values()
+                }
+            )
+            == 1
+        )
+        protocol_pairing_audit[task] = {
+            "exact_seed_and_instruction_match": exact_protocol_pair,
+            "records_per_variant": {
+                variant: len(signature)
+                for variant, signature in sorted(protocol_signatures.items())
+            },
+        }
+        if "baseline" in records:
+            baseline_by_pair = {
+                (record["seed"], record["instruction"]): record["success"]
+                for record in records["baseline"]
+            }
+            paired_outcomes[task] = {}
+            for variant, variant_records in records.items():
+                if variant == "baseline":
+                    continue
+                candidate_by_pair = {
+                    (record["seed"], record["instruction"]): record["success"]
+                    for record in variant_records
+                }
+                common = sorted(set(baseline_by_pair) & set(candidate_by_pair))
+                paired_outcomes[task][variant] = {
+                    "pairs": len(common),
+                    "improved": sum(
+                        not baseline_by_pair[key] and candidate_by_pair[key]
+                        for key in common
+                    ),
+                    "regressed": sum(
+                        baseline_by_pair[key] and not candidate_by_pair[key]
+                        for key in common
+                    ),
+                    "both_success": sum(
+                        baseline_by_pair[key] and candidate_by_pair[key]
+                        for key in common
+                    ),
+                    "both_failure": sum(
+                        not baseline_by_pair[key] and not candidate_by_pair[key]
+                        for key in common
+                    ),
+                }
 
     payload = {
         "run_name": args.run_name,
@@ -326,6 +448,8 @@ def main() -> None:
         "rows": rows,
         "overall": overall,
         "initial_state_audit": initial_state_audit,
+        "protocol_pairing_audit": protocol_pairing_audit,
+        "paired_outcomes": paired_outcomes,
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(

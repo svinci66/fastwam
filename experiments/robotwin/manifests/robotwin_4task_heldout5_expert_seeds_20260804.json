@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "description": "Expert-feasible held-out RoboTwin seeds recovered from the 2026-08-03 baseline audit; used only for the five-episode paper-protocol calibration.",
+    "episodes_per_task": 5,
+    "environment_seed_range_start": 4800000,
+    "task_config": "demo_clean"
+  },
+  "adjust_bottle": {
+    "seeds": [4800000, 4800001, 4800002, 4800003, 4800004]
+  },
+  "hanging_mug": {
+    "seeds": [4800001, 4800002, 4800003, 4800004, 4800005]
+  },
+  "open_microwave": {
+    "seeds": [4800000, 4800001, 4800003, 4800004, 4800005]
+  },
+  "place_can_basket": {
+    "seeds": [4800000, 4800001, 4800002, 4800003, 4800004]
+  }
+}

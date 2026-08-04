@@ -17,7 +17,15 @@ TASKS_CSV="${TASKS:-adjust_bottle,open_laptop,stack_blocks_two}"
 EPISODES="${EPISODES:-5}"
 BASE_SEED="${BASE_SEED:-42}"
 TRIAL_OFFSET="${TRIAL_OFFSET:-0}"
-INFERENCE_STEPS="${INFERENCE_STEPS:-4}"
+INFERENCE_STEPS="${INFERENCE_STEPS:-10}"
+REPLAN_STEPS="${REPLAN_STEPS:-24}"
+TEXT_CFG_SCALE="${TEXT_CFG_SCALE:-1.0}"
+TASK_CONFIG="${TASK_CONFIG:-demo_clean}"
+INSTRUCTION_TYPE="${INSTRUCTION_TYPE:-unseen}"
+INSTRUCTION_MODE="${INSTRUCTION_MODE:-fixed}"
+PAPER_ALIGNED="${PAPER_ALIGNED:-false}"
+STRICT_PAIRED="${STRICT_PAIRED:-false}"
+SEED_MANIFEST_PATH="${SEED_MANIFEST_PATH:-none}"
 GPU_ID="${GPU_ID:-0}"
 TILED="${TILED:-false}"
 CAPTURE_DECODE_TILED="${CAPTURE_DECODE_TILED:-false}"
@@ -44,6 +52,29 @@ for path in "${ROBOTWIN_ROOT}" "${SIGLIP_PATH}"; do
   [[ -d "${path}" ]] || { printf 'Missing directory: %s\n' "${path}" >&2; exit 1; }
 done
 [[ "${EPISODES}" =~ ^[1-9][0-9]*$ ]] || { printf 'EPISODES must be positive\n' >&2; exit 1; }
+[[ "${INFERENCE_STEPS}" =~ ^[1-9][0-9]*$ ]] || { printf 'INFERENCE_STEPS must be positive\n' >&2; exit 1; }
+[[ "${REPLAN_STEPS}" =~ ^[1-9][0-9]*$ ]] || { printf 'REPLAN_STEPS must be positive\n' >&2; exit 1; }
+if [[ "${INSTRUCTION_MODE}" != "fixed" && "${INSTRUCTION_MODE}" != "official" ]]; then
+  printf 'INSTRUCTION_MODE must be fixed or official\n' >&2
+  exit 1
+fi
+if [[ "${STRICT_PAIRED}" == "true" ]]; then
+  [[ "${PAPER_ALIGNED}" == "true" ]] || {
+    printf 'STRICT_PAIRED=true requires PAPER_ALIGNED=true\n' >&2
+    exit 1
+  }
+  [[ -f "${SEED_MANIFEST_PATH}" ]] || {
+    printf 'Strict seed manifest not found: %s\n' "${SEED_MANIFEST_PATH}" >&2
+    exit 1
+  }
+fi
+if [[ "${PAPER_ALIGNED}" == "true" ]]; then
+  [[ "${INFERENCE_STEPS}" == "10" ]] || { printf 'Paper-aligned runs require INFERENCE_STEPS=10\n' >&2; exit 1; }
+  [[ "${REPLAN_STEPS}" == "24" ]] || { printf 'Paper-aligned runs require REPLAN_STEPS=24\n' >&2; exit 1; }
+  [[ "${TEXT_CFG_SCALE}" == "1.0" ]] || { printf 'Paper-aligned runs require TEXT_CFG_SCALE=1.0\n' >&2; exit 1; }
+  [[ "${INSTRUCTION_TYPE}" == "unseen" ]] || { printf 'Paper-aligned runs require INSTRUCTION_TYPE=unseen\n' >&2; exit 1; }
+  [[ "${INSTRUCTION_MODE}" == "official" ]] || { printf 'Paper-aligned runs require INSTRUCTION_MODE=official\n' >&2; exit 1; }
+fi
 
 instruction_for_task() {
   case "$1" in
@@ -107,7 +138,13 @@ for variant in "${variants[@]}"; do
         "${variant}" "${task_name}"
       continue
     fi
-    instruction="$(instruction_for_task "${task_name}")"
+    instruction_args=()
+    if [[ "${INSTRUCTION_MODE}" == "fixed" ]]; then
+      instruction="$(instruction_for_task "${task_name}")"
+      instruction_args=("EVALUATION.fixed_instruction='${instruction}'")
+    else
+      instruction_args=("EVALUATION.fixed_instruction=null")
+    fi
     action_mode=policy
     save_transitions="${SAVE_BASELINE_TRANSITIONS}"
     residual_args=()
@@ -131,8 +168,9 @@ for variant in "${variants[@]}"; do
         "EVALUATION.residual_max_interventions_per_episode=${RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE}"
       )
     fi
-    printf '[robotwin-online-pair] variant=%s task=%s episodes=%s env_seed=%s\n' \
-      "${variant}" "${task_name}" "${EPISODES}" "${environment_start_seed}"
+    printf '[robotwin-online-pair] variant=%s task=%s episodes=%s env_seed=%s inference_steps=%s instruction_mode=%s paper_aligned=%s strict_paired=%s\n' \
+      "${variant}" "${task_name}" "${EPISODES}" "${environment_start_seed}" \
+      "${INFERENCE_STEPS}" "${INSTRUCTION_MODE}" "${PAPER_ALIGNED}" "${STRICT_PAIRED}"
     conda run --no-capture-output -n "${CONDA_ENV}" \
       env CUBLAS_WORKSPACE_CONFIG=:4096:8 \
       PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" \
@@ -144,18 +182,24 @@ for variant in "${variants[@]}"; do
       "EVALUATION.robotwin_root=${ROBOTWIN_ROOT}" \
       "EVALUATION.dataset_stats_path=${DATASET_STATS}" \
       "EVALUATION.task_name=${task_name}" \
-      EVALUATION.task_config=demo_clean \
+      "EVALUATION.task_config=${TASK_CONFIG}" \
+      "EVALUATION.instruction_type=${INSTRUCTION_TYPE}" \
       "EVALUATION.eval_num_episodes=${EPISODES}" \
       "EVALUATION.trial_offset=${TRIAL_OFFSET}" \
       "EVALUATION.environment_start_seed=${environment_start_seed}" \
       "EVALUATION.environment_episode_offset=${TRIAL_OFFSET}" \
       "EVALUATION.num_inference_steps=${INFERENCE_STEPS}" \
+      "EVALUATION.text_cfg_scale=${TEXT_CFG_SCALE}" \
       "EVALUATION.tiled=${TILED}" \
       "EVALUATION.capture_decode_tiled=${CAPTURE_DECODE_TILED}" \
-      EVALUATION.replan_steps=24 \
+      "EVALUATION.replan_steps=${REPLAN_STEPS}" \
       "EVALUATION.action_mode=${action_mode}" \
       "${residual_args[@]}" \
-      "EVALUATION.fixed_instruction='${instruction}'" \
+      "${instruction_args[@]}" \
+      "EVALUATION.environment_seed_manifest_path=${SEED_MANIFEST_PATH}" \
+      "EVALUATION.deterministic_instruction_by_seed=${STRICT_PAIRED}" \
+      "EVALUATION.paper_aligned=${PAPER_ALIGNED}" \
+      "EVALUATION.strict_paired=${STRICT_PAIRED}" \
       EVALUATION.timing_enabled=true \
       "EVALUATION.save_imagination_transitions=${save_transitions}" \
       "EVALUATION.output_dir=${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}_${variant}"

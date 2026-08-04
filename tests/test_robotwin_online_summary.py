@@ -57,6 +57,38 @@ def test_parse_online_pair_log_extracts_success_and_residual_metrics(tmp_path):
     assert result["budget_exhausted_replans"] == 1
 
 
+def test_parse_online_pair_log_extracts_seed_instruction_and_outcome(tmp_path):
+    log = tmp_path / "eval_task.log"
+    log.write_text(
+        "FASTWAM_ACCEPTED_ENV_SEED episode_id=0 seed=4800000\n"
+        "FASTWAM_EVAL_INSTRUCTION episode_id=0 seed=4800000 "
+        "instruction='Open the microwave with the left arm.'\n"
+        "Success rate: 0/1 => 0.0%\n"
+        "FASTWAM_ACCEPTED_ENV_SEED episode_id=1 seed=4800001\n"
+        "FASTWAM_EVAL_INSTRUCTION episode_id=1 seed=4800001 "
+        "instruction='Open the microwave with the right arm.'\n"
+        "Success rate: 1/2 => 50.0%\n",
+        encoding="utf-8",
+    )
+
+    result = parse_log(log)
+
+    assert result["episode_records"] == [
+        {
+            "episode_id": 0,
+            "seed": 4800000,
+            "instruction": "Open the microwave with the left arm.",
+            "success": False,
+        },
+        {
+            "episode_id": 1,
+            "seed": 4800001,
+            "instruction": "Open the microwave with the right arm.",
+            "success": True,
+        },
+    ]
+
+
 def test_load_episode_initial_hashes_groups_replans(tmp_path):
     root = tmp_path / "task" / "imagination_transitions" / "task" / "policy"
     for trial, digest in ((0, "aaa"), (1, "bbb")):

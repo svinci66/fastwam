@@ -62,6 +62,10 @@ EVALUATION:
   environment_episode_offset: 0
   expert_check: true
   fixed_instruction: null
+  environment_seed_manifest_path: null
+  deterministic_instruction_by_seed: false
+  paper_aligned: false
+  strict_paired: false
   save_imagination_transitions: false
   deterministic_algorithms: true
   deterministic_warn_only: false
