@@ -12,7 +12,8 @@ patches narrowly scoped source fragments before executing the evaluator:
 * allow a fixed instruction when expert filtering is disabled;
 * expose the environment seed in logs and process state for provenance.
 * optionally replay a strict, task-specific environment-seed manifest;
-* optionally select an official instruction deterministically from its seed.
+* optionally select an official instruction deterministically from its seed,
+  including RoboTwin's internal Python-random shuffling and object aliases.
 
 The exact-fragment checks intentionally fail when upstream changes, rather than
 silently applying an incompatible patch.
@@ -133,12 +134,27 @@ def patch_eval_policy_source(source: str) -> str:
         "            if not expert_check:\n"
         "                raise ValueError(\"fixed_instruction is required when expert_check is disabled\")\n"
         "            episode_info_list = [episode_info[\"info\"]]\n"
-        "            results = generate_episode_descriptions(args[\"task_name\"], episode_info_list, test_num)\n"
-        "            instruction_candidates = results[0][instruction_type]\n"
         "            if deterministic_instruction_by_seed:\n"
+        "                instruction_random = __import__(\"random\")\n"
+        "                instruction_random_state = instruction_random.getstate()\n"
+        "                instruction_numpy_state = np.random.get_state()\n"
+        "                instruction_random.seed(int(now_seed))\n"
+        "                np.random.seed(int(now_seed) % (2 ** 32))\n"
+        "                try:\n"
+        "                    results = generate_episode_descriptions(\n"
+        "                        args[\"task_name\"], episode_info_list, test_num\n"
+        "                    )\n"
+        "                finally:\n"
+        "                    instruction_random.setstate(instruction_random_state)\n"
+        "                    np.random.set_state(instruction_numpy_state)\n"
+        "                instruction_candidates = sorted(results[0][instruction_type])\n"
         "                instruction_rng = np.random.default_rng(int(now_seed))\n"
         "                instruction = str(instruction_rng.choice(instruction_candidates))\n"
         "            else:\n"
+        "                results = generate_episode_descriptions(\n"
+        "                    args[\"task_name\"], episode_info_list, test_num\n"
+        "                )\n"
+        "                instruction_candidates = results[0][instruction_type]\n"
         "                instruction = np.random.choice(instruction_candidates)\n"
         "        print(\n"
         "            f\"FASTWAM_EVAL_INSTRUCTION episode_id={now_id} seed={now_seed} instruction={instruction!r}\",\n"

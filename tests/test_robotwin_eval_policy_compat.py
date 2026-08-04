@@ -43,6 +43,10 @@ def eval_policy():
     assert "environment_seed_manifest_path" in patched
     assert "strict_environment_seeds[succ_seed]" in patched
     assert "np.random.default_rng(int(now_seed))" in patched
+    assert 'instruction_random.seed(int(now_seed))' in patched
+    assert "instruction_random.setstate(instruction_random_state)" in patched
+    assert "np.random.set_state(instruction_numpy_state)" in patched
+    assert "sorted(results[0][instruction_type])" in patched
     assert "FASTWAM_EVAL_INSTRUCTION" in patched
 
 
