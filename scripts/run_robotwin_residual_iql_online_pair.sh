@@ -155,7 +155,7 @@ for variant in "${variants[@]}"; do
       EVALUATION.replan_steps=24 \
       "EVALUATION.action_mode=${action_mode}" \
       "${residual_args[@]}" \
-      "EVALUATION.fixed_instruction=${instruction}" \
+      "EVALUATION.fixed_instruction='${instruction}'" \
       EVALUATION.timing_enabled=true \
       "EVALUATION.save_imagination_transitions=${save_transitions}" \
       "EVALUATION.output_dir=${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}_${variant}"
