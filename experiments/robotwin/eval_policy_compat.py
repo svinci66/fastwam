@@ -14,6 +14,7 @@ patches narrowly scoped source fragments before executing the evaluator:
 * optionally replay a strict, task-specific environment-seed manifest;
 * optionally select an official instruction deterministically from its seed,
   including RoboTwin's internal Python-random shuffling and object aliases.
+* optionally disable upstream per-step video encoding for metric-only runs.
 
 The exact-fragment checks intentionally fail when upstream changes, rather than
 silently applying an incompatible patch.
@@ -43,6 +44,15 @@ def patch_eval_policy_source(source: str) -> str:
         "    expert_check = True\n",
         "    expert_check = bool(usr_args.get(\"expert_check\", True))\n",
         label="expert-check",
+    )
+    source = _replace_once(
+        source,
+        '    args[\'task_name\'] = task_name\n',
+        '    eval_video_log = usr_args.get("eval_video_log")\n'
+        '    if eval_video_log is not None:\n'
+        '        args["eval_video_log"] = bool(eval_video_log)\n'
+        '    args[\'task_name\'] = task_name\n',
+        label="eval-video-override",
     )
     source = _replace_once(
         source,

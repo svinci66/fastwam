@@ -27,6 +27,7 @@ COMMON_ENV=(
   "IMAGINATION_CHECKPOINT=${RUN_ROOT}/iql_5epoch_imagination/checkpoint.pt"
   "NO_IMAGINATION_CHECKPOINT=${RUN_ROOT}/iql_5epoch_no_imagination/checkpoint.pt"
   "RESIDUAL_ENCODER_VERSION=siglip-so400m-patch14-384-local-20260803"
+  "RESIDUAL_LANGUAGE_MODE=training_canonical"
   "SAVE_RESIDUAL_TRANSITIONS=false"
   "SAVE_BASELINE_TRANSITIONS=false"
 )

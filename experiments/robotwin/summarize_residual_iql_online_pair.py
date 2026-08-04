@@ -18,6 +18,9 @@ SEED_PATTERN = re.compile(r"FASTWAM_ACCEPTED_ENV_SEED episode_id=(\d+) seed=(\d+
 INSTRUCTION_PATTERN = re.compile(
     r"FASTWAM_EVAL_INSTRUCTION episode_id=(\d+) seed=(\d+) instruction=(.+)$"
 )
+INITIAL_HASH_PATTERN = re.compile(
+    r"FASTWAM_INITIAL_OBSERVATION episode_id=(\d+) sha256=([0-9a-f]{64})"
+)
 RESIDUAL_PATTERN = re.compile(
     r"\[fastwam-residual\]\s+replan=(\d+)\s+rms=([0-9.eE+-]+)\s+"
     r"max_abs=([0-9.eE+-]+)\s+gripper_max_abs=([0-9.eE+-]+)"
@@ -31,10 +34,27 @@ RESIDUAL_PATTERN = re.compile(
     r"\s+support_action_threshold=([0-9.eE+-]+)"
     r"\s+support_in_distribution=(\d+)"
     r"\s+support_language_similarity=([0-9.eE+-]+))?)?"
+    r"(?:\s+residual_language_canonicalized=\d+)?"
     r"(?:\s+intervention_allowed=(\d+))?"
     r"(?:\s+intervention_count=(\d+)"
     r"\s+intervention_budget_remaining=(None|\d+)"
     r"\s+intervention_budget_exhausted=(\d+))?"
+    r"(?:\s+q_gate_effective_margin=(None|[0-9.eE+-]+)"
+    r"\s+candidate_residual_rms=([0-9.eE+-]+)"
+    r"\s+residual_risk_before=([0-9.eE+-]+)"
+    r"\s+residual_risk_after=([0-9.eE+-]+))?"
+    r"(?:\s+residual_scale_factor=([0-9.eE+-]+)"
+    r"\s+q_scale_confidence=([0-9.eE+-]+)"
+    r"\s+support_scale_confidence=([0-9.eE+-]+)"
+    r"\s+outcome_confirmation_pending=(\d+)"
+    r"\s+last_outcome_progress=(None|[0-9.eE+-]+)"
+    r"\s+last_outcome_confirmed=(None|True|False)"
+    r"\s+outcome_reanchor_remaining=(\d+)"
+    r"\s+outcome_blocked=(\d+))?"
+)
+OUTCOME_PATTERN = re.compile(
+    r"\[fastwam-residual-outcome\]\s+replan=(\d+)\s+"
+    r"gate_applied=(\d+)\s+imagination_progress=([0-9.eE+-]+)"
 )
 
 
@@ -113,6 +133,48 @@ def parse_log(path: Path) -> dict[str, Any]:
             "intervention_budget_exhausted": (
                 None if match.group(21) is None else bool(int(match.group(21)))
             ),
+            "q_gate_effective_margin": (
+                None
+                if match.group(22) in {None, "None"}
+                else float(match.group(22))
+            ),
+            "candidate_residual_rms": (
+                None if match.group(23) is None else float(match.group(23))
+            ),
+            "residual_risk_before": (
+                None if match.group(24) is None else float(match.group(24))
+            ),
+            "residual_risk_after": (
+                None if match.group(25) is None else float(match.group(25))
+            ),
+            "residual_scale_factor": (
+                None if match.group(26) is None else float(match.group(26))
+            ),
+            "q_scale_confidence": (
+                None if match.group(27) is None else float(match.group(27))
+            ),
+            "support_scale_confidence": (
+                None if match.group(28) is None else float(match.group(28))
+            ),
+            "outcome_confirmation_pending": (
+                None if match.group(29) is None else bool(int(match.group(29)))
+            ),
+            "last_outcome_progress": (
+                None
+                if match.group(30) in {None, "None"}
+                else float(match.group(30))
+            ),
+            "last_outcome_confirmed": (
+                None
+                if match.group(31) in {None, "None"}
+                else match.group(31) == "True"
+            ),
+            "outcome_reanchor_remaining": (
+                None if match.group(32) is None else int(match.group(32))
+            ),
+            "outcome_blocked": (
+                None if match.group(33) is None else bool(int(match.group(33)))
+            ),
         }
         for match in RESIDUAL_PATTERN.finditer(text)
     ]
@@ -123,7 +185,28 @@ def parse_log(path: Path) -> dict[str, Any]:
         "success_rate": float(percent) / 100.0,
         "num_residual_replans": len(residual_rows),
         "episode_records": _episode_records(text, path),
+        "episode_initial_hashes": _initial_hashes(text, path),
     }
+    outcome_rows = [
+        {
+            "replan": int(match.group(1)),
+            "gate_applied": bool(int(match.group(2))),
+            "imagination_progress": float(match.group(3)),
+        }
+        for match in OUTCOME_PATTERN.finditer(text)
+    ]
+    if outcome_rows:
+        applied_outcomes = [row for row in outcome_rows if row["gate_applied"]]
+        result["outcome_feedback_replans"] = len(outcome_rows)
+        result["applied_outcome_feedback_replans"] = len(applied_outcomes)
+        if applied_outcomes:
+            result["applied_outcome_progress_mean"] = sum(
+                row["imagination_progress"] for row in applied_outcomes
+            ) / len(applied_outcomes)
+            result["applied_outcome_positive_rate"] = sum(
+                int(row["imagination_progress"] >= 0.0)
+                for row in applied_outcomes
+            ) / len(applied_outcomes)
     if residual_rows:
         result.update(
             {
@@ -152,6 +235,42 @@ def parse_log(path: Path) -> dict[str, Any]:
                     ),
                 }
             )
+            risk_rows = [
+                row for row in gated_rows if row["residual_risk_after"] is not None
+            ]
+            if risk_rows:
+                result["candidate_residual_rms_max"] = max(
+                    row["candidate_residual_rms"] for row in risk_rows
+                )
+                result["residual_risk_max"] = max(
+                    row["residual_risk_after"] for row in risk_rows
+                )
+                q_margin_rows = [
+                    row
+                    for row in risk_rows
+                    if row["q_gate_effective_margin"] is not None
+                ]
+                if q_margin_rows:
+                    result["q_gate_effective_margin_max"] = max(
+                        row["q_gate_effective_margin"] for row in q_margin_rows
+                    )
+            scale_rows = [
+                row
+                for row in gated_rows
+                if row["residual_scale_factor"] is not None
+            ]
+            if scale_rows:
+                result["residual_scale_factor_mean"] = sum(
+                    row["residual_scale_factor"] for row in scale_rows
+                ) / len(scale_rows)
+                applied_scale_rows = [row for row in scale_rows if row["gate_applied"]]
+                if applied_scale_rows:
+                    result["applied_residual_scale_factor_mean"] = sum(
+                        row["residual_scale_factor"] for row in applied_scale_rows
+                    ) / len(applied_scale_rows)
+                result["outcome_blocked_replans"] = sum(
+                    int(row["outcome_blocked"]) for row in scale_rows
+                )
         approval_rows = [
             row for row in residual_rows if row["gate_approved"] is not None
         ]
@@ -271,8 +390,25 @@ def _episode_records(text: str, path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _initial_hashes(text: str, path: Path) -> dict[str, str]:
+    grouped: dict[int, set[str]] = {}
+    for match in INITIAL_HASH_PATTERN.finditer(text):
+        grouped.setdefault(int(match.group(1)), set()).add(match.group(2))
+    inconsistent = {
+        episode: sorted(hashes)
+        for episode, hashes in grouped.items()
+        if len(hashes) != 1
+    }
+    if inconsistent:
+        raise ValueError(f"Inconsistent initial hashes in {path}: {inconsistent}")
+    return {
+        str(episode): next(iter(hashes))
+        for episode, hashes in sorted(grouped.items())
+    }
+
+
 def load_episode_initial_hashes(run_dir: Path, task: str) -> dict[str, str]:
-    """Load one audited initial-observation hash per captured episode."""
+    """Load one audited initial-observation hash from metadata or logs."""
 
     root = run_dir / task / "imagination_transitions" / task
     grouped: dict[int, set[str]] = {}
@@ -289,9 +425,21 @@ def load_episode_initial_hashes(run_dir: Path, task: str) -> dict[str, str]:
         raise ValueError(
             f"Captured episodes contain inconsistent initial hashes: {inconsistent}"
         )
-    return {
+    captured = {
         str(trial): next(iter(hashes)) for trial, hashes in sorted(grouped.items())
     }
+    if captured:
+        return captured
+    for log_path in reversed(sorted(run_dir.glob(f"eval_{task}_*.log"))):
+        logged = _initial_hashes(
+            ANSI_ESCAPE.sub(
+                "", log_path.read_text(encoding="utf-8", errors="replace")
+            ),
+            log_path,
+        )
+        if logged:
+            return logged
+    return {}
 
 
 def main() -> None:

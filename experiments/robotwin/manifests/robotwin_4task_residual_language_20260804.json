@@ -1,0 +1,10 @@
+{
+  "format": "fastwam_robotwin_residual_language_routing_v1",
+  "language_encoder_version": "fastwam_umt5_masked_mean_v1",
+  "tasks": {
+    "adjust_bottle": "Pick up the bottle from the table and keep it upright.",
+    "hanging_mug": "Hang the mug on the mug rack.",
+    "open_microwave": "Use one arm to open the microwave.",
+    "place_can_basket": "Pick up the can, put it into the basket, then lift the basket."
+  }
+}

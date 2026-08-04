@@ -178,6 +178,19 @@ class ResidualPolicyOutput:
     intervention_count: int = 0
     intervention_budget_remaining: int | None = None
     intervention_budget_exhausted: bool = False
+    q_gate_effective_margin: float | None = None
+    candidate_residual_rms: float = 0.0
+    residual_risk_before: float = 0.0
+    residual_risk_after: float = 0.0
+    residual_scale_factor: float = 1.0
+    q_scale_confidence: float = 1.0
+    support_scale_confidence: float = 1.0
+    outcome_confirmation_enabled: bool = False
+    outcome_confirmation_pending: bool = False
+    last_outcome_progress: float | None = None
+    last_outcome_confirmed: bool | None = None
+    outcome_reanchor_remaining: int = 0
+    outcome_blocked: bool = False
 
     @property
     def residual_rms(self) -> float:
@@ -218,10 +231,18 @@ class OnlineResidualPolicy:
         q_critics: tuple[torch.nn.Module, torch.nn.Module] | None = None,
         q_gate_margin: float = 0.0,
         q_gate_max_disagreement: float = float("inf"),
+        q_gate_risk_scale: float = 0.0,
+        q_gate_risk_decay: float = 1.0,
+        soft_scale_enabled: bool = False,
+        soft_scale_q_full_advantage: float = 0.005,
+        soft_scale_support_full_margin: float = 0.25,
         support_index: ResidualSupportIndex | None = None,
         support_circuit_breaker_enabled: bool = True,
         shadow_mode: bool = False,
         max_interventions_per_episode: int | None = None,
+        outcome_confirmation_enabled: bool = False,
+        outcome_confirmation_min_progress: float = 0.0,
+        outcome_confirmation_reanchor_replans: int = 1,
     ):
         if camera_image_size <= 0:
             raise ValueError("camera_image_size must be positive")
@@ -248,9 +269,37 @@ class OnlineResidualPolicy:
             raise ValueError("q_gate_margin must be finite")
         if q_gate_max_disagreement < 0.0 or np.isnan(q_gate_max_disagreement):
             raise ValueError("q_gate_max_disagreement must be non-negative")
+        if not np.isfinite(q_gate_risk_scale) or q_gate_risk_scale < 0.0:
+            raise ValueError("q_gate_risk_scale must be finite and non-negative")
+        if not np.isfinite(q_gate_risk_decay) or not 0.0 <= q_gate_risk_decay <= 1.0:
+            raise ValueError("q_gate_risk_decay must be finite and in [0,1]")
+        if q_gate_risk_scale > 0.0 and q_critics is None:
+            raise ValueError("q_gate_risk_scale requires Q critics")
+        if not np.isfinite(soft_scale_q_full_advantage) or soft_scale_q_full_advantage <= 0.0:
+            raise ValueError("soft_scale_q_full_advantage must be finite and positive")
+        if (
+            not np.isfinite(soft_scale_support_full_margin)
+            or not 0.0 < soft_scale_support_full_margin <= 1.0
+        ):
+            raise ValueError("soft_scale_support_full_margin must be in (0,1]")
+        if soft_scale_enabled and (q_critics is None or support_index is None):
+            raise ValueError("soft residual scaling requires Q critics and a support index")
+        if not np.isfinite(outcome_confirmation_min_progress):
+            raise ValueError("outcome_confirmation_min_progress must be finite")
+        if int(outcome_confirmation_reanchor_replans) <= 0:
+            raise ValueError("outcome_confirmation_reanchor_replans must be positive")
+        if outcome_confirmation_enabled and q_critics is None:
+            raise ValueError("outcome confirmation requires Q critics")
         self.q_critics = q_critics
         self.q_gate_margin = float(q_gate_margin)
         self.q_gate_max_disagreement = float(q_gate_max_disagreement)
+        self.q_gate_risk_scale = float(q_gate_risk_scale)
+        self.q_gate_risk_decay = float(q_gate_risk_decay)
+        self.soft_scale_enabled = bool(soft_scale_enabled)
+        self.soft_scale_q_full_advantage = float(soft_scale_q_full_advantage)
+        self.soft_scale_support_full_margin = float(
+            soft_scale_support_full_margin
+        )
         self.support_index = support_index
         self.support_circuit_breaker_enabled = bool(
             support_circuit_breaker_enabled
@@ -264,6 +313,13 @@ class OnlineResidualPolicy:
             None
             if max_interventions_per_episode is None
             else int(max_interventions_per_episode)
+        )
+        self.outcome_confirmation_enabled = bool(outcome_confirmation_enabled)
+        self.outcome_confirmation_min_progress = float(
+            outcome_confirmation_min_progress
+        )
+        self.outcome_confirmation_reanchor_replans = int(
+            outcome_confirmation_reanchor_replans
         )
         if support_index is not None:
             if support_index.action_horizon != self.action_horizon:
@@ -289,11 +345,19 @@ class OnlineResidualPolicy:
         q_gate_enabled: bool = False,
         q_gate_margin: float = 0.0,
         q_gate_max_disagreement: float = float("inf"),
+        q_gate_risk_scale: float = 0.0,
+        q_gate_risk_decay: float = 1.0,
+        soft_scale_enabled: bool = False,
+        soft_scale_q_full_advantage: float = 0.005,
+        soft_scale_support_full_margin: float = 0.25,
         q_gate_critic_source: str = "target",
         support_index_path: str | Path | None = None,
         support_circuit_breaker_enabled: bool = True,
         shadow_mode: bool = False,
         max_interventions_per_episode: int | None = None,
+        outcome_confirmation_enabled: bool = False,
+        outcome_confirmation_min_progress: float = 0.0,
+        outcome_confirmation_reanchor_replans: int = 1,
     ) -> "OnlineResidualPolicy":
         from transformers import SiglipImageProcessor, SiglipVisionModel
 
@@ -410,10 +474,20 @@ class OnlineResidualPolicy:
             q_critics=q_critics,
             q_gate_margin=q_gate_margin,
             q_gate_max_disagreement=q_gate_max_disagreement,
+            q_gate_risk_scale=q_gate_risk_scale,
+            q_gate_risk_decay=q_gate_risk_decay,
+            soft_scale_enabled=soft_scale_enabled,
+            soft_scale_q_full_advantage=soft_scale_q_full_advantage,
+            soft_scale_support_full_margin=soft_scale_support_full_margin,
             support_index=support_index,
             support_circuit_breaker_enabled=support_circuit_breaker_enabled,
             shadow_mode=shadow_mode,
             max_interventions_per_episode=max_interventions_per_episode,
+            outcome_confirmation_enabled=outcome_confirmation_enabled,
+            outcome_confirmation_min_progress=outcome_confirmation_min_progress,
+            outcome_confirmation_reanchor_replans=(
+                outcome_confirmation_reanchor_replans
+            ),
         )
 
     @property
@@ -466,6 +540,14 @@ class OnlineResidualPolicy:
         language_feature: np.ndarray | None = None,
         intervention_allowed: bool = True,
     ) -> ResidualPolicyOutput:
+        if (
+            self.outcome_confirmation_enabled
+            and self._awaiting_outcome_confirmation
+        ):
+            raise RuntimeError(
+                "record_intervention_outcome must be called after an applied "
+                "residual chunk and before the next correction"
+            )
         feature = np.asarray(observation_feature, dtype=np.float32).reshape(-1)
         state = np.asarray(proprio, dtype=np.float32).reshape(-1)
         baseline = np.asarray(baseline_actions, dtype=np.float32)
@@ -512,6 +594,19 @@ class OnlineResidualPolicy:
                 actor_baseline,
                 language_feature=actor_language,
             )
+            candidate_residual_rms = float(
+                torch.sqrt(
+                    torch.mean(torch.square(candidate_prefix_tensor - actor_baseline))
+                ).item()
+            )
+            residual_risk_before = (
+                self._residual_risk * self.q_gate_risk_decay
+            )
+            q_gate_effective_margin = (
+                self.q_gate_margin
+                + self.q_gate_risk_scale
+                * (residual_risk_before + candidate_residual_rms)
+            )
             q_advantages = None
             q_gate_approved = True
             if self.q_critics is not None:
@@ -532,7 +627,7 @@ class OnlineResidualPolicy:
                     advantages.append(float((candidate_q - baseline_q).item()))
                 q_advantages = (advantages[0], advantages[1])
                 q_gate_approved = (
-                    min(q_advantages) >= self.q_gate_margin
+                    min(q_advantages) >= q_gate_effective_margin
                     and abs(q_advantages[0] - q_advantages[1])
                     <= self.q_gate_max_disagreement
                 )
@@ -576,16 +671,70 @@ class OnlineResidualPolicy:
             )
         )
         gate_approved = q_gate_approved and support_approved
+        q_scale_confidence = 1.0
+        support_scale_confidence = 1.0
+        residual_scale_factor = 1.0
+        if self.soft_scale_enabled:
+            if q_advantages is None or support_decision is None:
+                raise RuntimeError(
+                    "soft residual scaling requires Q and support decisions"
+                )
+            q_excess = max(0.0, min(q_advantages) - q_gate_effective_margin)
+            q_scale_confidence = float(
+                np.clip(q_excess / self.soft_scale_q_full_advantage, 0.0, 1.0)
+            )
+            state_headroom = max(
+                0.0,
+                1.0
+                - support_decision.state_score
+                / support_decision.state_threshold,
+            )
+            action_headroom = max(
+                0.0,
+                1.0
+                - support_decision.action_score
+                / support_decision.action_threshold,
+            )
+            support_scale_confidence = float(
+                np.clip(
+                    min(state_headroom, action_headroom)
+                    / self.soft_scale_support_full_margin,
+                    0.0,
+                    1.0,
+                )
+            )
+            residual_scale_factor = min(
+                q_scale_confidence, support_scale_confidence
+            )
         budget_allowed = (
             self.max_interventions_per_episode is None
             or self._intervention_count < self.max_interventions_per_episode
         )
-        final_intervention_allowed = bool(intervention_allowed) and budget_allowed
+        outcome_blocked = (
+            self.outcome_confirmation_enabled
+            and self._outcome_reanchor_remaining > 0
+        )
+        final_intervention_allowed = (
+            bool(intervention_allowed) and budget_allowed and not outcome_blocked
+        )
         gate_applied = (
-            gate_approved and not self.shadow_mode and final_intervention_allowed
+            gate_approved
+            and residual_scale_factor > 0.0
+            and not self.shadow_mode
+            and final_intervention_allowed
         )
         if gate_applied:
             self._intervention_count += 1
+            self._residual_risk = (
+                residual_risk_before
+                + residual_scale_factor * candidate_residual_rms
+            )
+            if self.outcome_confirmation_enabled:
+                self._awaiting_outcome_confirmation = True
+        else:
+            self._residual_risk = residual_risk_before
+        if outcome_blocked:
+            self._outcome_reanchor_remaining -= 1
         budget_remaining = (
             None
             if self.max_interventions_per_episode is None
@@ -594,10 +743,11 @@ class OnlineResidualPolicy:
                 self.max_interventions_per_episode - self._intervention_count,
             )
         )
+        baseline_prefix = actor_baseline[0].cpu().numpy()
         corrected_prefix = (
-            candidate_prefix
+            baseline_prefix + residual_scale_factor * candidate_residual
             if gate_applied
-            else actor_baseline[0].cpu().numpy()
+            else baseline_prefix
         )
         if support_decision is not None:
             self._last_support_state_score = support_decision.state_score
@@ -626,7 +776,47 @@ class OnlineResidualPolicy:
                 self.max_interventions_per_episode is not None
                 and budget_remaining == 0
             ),
+            q_gate_effective_margin=(
+                q_gate_effective_margin if self.q_critics is not None else None
+            ),
+            candidate_residual_rms=candidate_residual_rms,
+            residual_risk_before=residual_risk_before,
+            residual_risk_after=self._residual_risk,
+            residual_scale_factor=residual_scale_factor,
+            q_scale_confidence=q_scale_confidence,
+            support_scale_confidence=support_scale_confidence,
+            outcome_confirmation_enabled=self.outcome_confirmation_enabled,
+            outcome_confirmation_pending=self._awaiting_outcome_confirmation,
+            last_outcome_progress=self._last_outcome_progress,
+            last_outcome_confirmed=self._last_outcome_confirmed,
+            outcome_reanchor_remaining=self._outcome_reanchor_remaining,
+            outcome_blocked=outcome_blocked,
         )
+
+    def record_intervention_outcome(self, imagination_progress: float) -> None:
+        """Confirm an applied residual from its realized imagined-goal progress.
+
+        A failed confirmation schedules one or more baseline-only replans.  This
+        re-anchors execution to FastWAM without imposing an episode-wide count
+        limit on later residual interventions.
+        """
+
+        if not self.outcome_confirmation_enabled:
+            return
+        progress = float(imagination_progress)
+        if not np.isfinite(progress):
+            raise ValueError("imagination_progress must be finite")
+        if not self._awaiting_outcome_confirmation:
+            return
+        confirmed = progress >= self.outcome_confirmation_min_progress
+        self._last_outcome_progress = progress
+        self._last_outcome_confirmed = confirmed
+        self._awaiting_outcome_confirmation = False
+        if not confirmed:
+            self._outcome_reanchor_remaining = max(
+                self._outcome_reanchor_remaining,
+                self.outcome_confirmation_reanchor_replans,
+            )
 
     def reset(self) -> None:
         """Reset episode-local support-gate circuit-breaker state."""
@@ -635,6 +825,11 @@ class OnlineResidualPolicy:
         self._last_support_state_score: float | None = None
         self._last_gate_applied = False
         self._intervention_count = 0
+        self._residual_risk = 0.0
+        self._awaiting_outcome_confirmation = False
+        self._last_outcome_progress: float | None = None
+        self._last_outcome_confirmed: bool | None = None
+        self._outcome_reanchor_remaining = 0
 
     def correct_action_chunk(
         self,

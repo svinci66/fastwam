@@ -21,6 +21,7 @@ INFERENCE_STEPS="${INFERENCE_STEPS:-10}"
 REPLAN_STEPS="${REPLAN_STEPS:-24}"
 TEXT_CFG_SCALE="${TEXT_CFG_SCALE:-1.0}"
 TASK_CONFIG="${TASK_CONFIG:-demo_clean}"
+EVAL_VIDEO_LOG="${EVAL_VIDEO_LOG:-true}"
 INSTRUCTION_TYPE="${INSTRUCTION_TYPE:-unseen}"
 INSTRUCTION_MODE="${INSTRUCTION_MODE:-fixed}"
 PAPER_ALIGNED="${PAPER_ALIGNED:-false}"
@@ -33,12 +34,21 @@ RESIDUAL_DEVICE="${RESIDUAL_DEVICE:-same}"
 RESIDUAL_Q_GATE_ENABLED="${RESIDUAL_Q_GATE_ENABLED:-false}"
 RESIDUAL_Q_GATE_MARGIN="${RESIDUAL_Q_GATE_MARGIN:-0.0}"
 RESIDUAL_Q_GATE_MAX_DISAGREEMENT="${RESIDUAL_Q_GATE_MAX_DISAGREEMENT:-0.05}"
+RESIDUAL_Q_GATE_RISK_SCALE="${RESIDUAL_Q_GATE_RISK_SCALE:-0.0}"
+RESIDUAL_Q_GATE_RISK_DECAY="${RESIDUAL_Q_GATE_RISK_DECAY:-1.0}"
+RESIDUAL_SOFT_SCALE_ENABLED="${RESIDUAL_SOFT_SCALE_ENABLED:-false}"
+RESIDUAL_SOFT_SCALE_Q_FULL_ADVANTAGE="${RESIDUAL_SOFT_SCALE_Q_FULL_ADVANTAGE:-0.005}"
+RESIDUAL_SOFT_SCALE_SUPPORT_FULL_MARGIN="${RESIDUAL_SOFT_SCALE_SUPPORT_FULL_MARGIN:-0.25}"
 RESIDUAL_Q_GATE_CRITIC_SOURCE="${RESIDUAL_Q_GATE_CRITIC_SOURCE:-target}"
 RESIDUAL_SUPPORT_INDEX_PATH="${RESIDUAL_SUPPORT_INDEX_PATH:-none}"
 RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED="${RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED:-true}"
 RESIDUAL_SHADOW_MODE="${RESIDUAL_SHADOW_MODE:-false}"
 RESIDUAL_INTERVENTION_REPLANS="${RESIDUAL_INTERVENTION_REPLANS:-all}"
 RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE="${RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE:-none}"
+RESIDUAL_OUTCOME_CONFIRMATION_ENABLED="${RESIDUAL_OUTCOME_CONFIRMATION_ENABLED:-false}"
+RESIDUAL_OUTCOME_CONFIRMATION_MIN_PROGRESS="${RESIDUAL_OUTCOME_CONFIRMATION_MIN_PROGRESS:-0.0}"
+RESIDUAL_OUTCOME_CONFIRMATION_REANCHOR_REPLANS="${RESIDUAL_OUTCOME_CONFIRMATION_REANCHOR_REPLANS:-1}"
+RESIDUAL_LANGUAGE_MODE="${RESIDUAL_LANGUAGE_MODE:-policy_instruction}"
 SAVE_RESIDUAL_TRANSITIONS="${SAVE_RESIDUAL_TRANSITIONS:-false}"
 SAVE_BASELINE_TRANSITIONS="${SAVE_BASELINE_TRANSITIONS:-false}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
@@ -56,6 +66,11 @@ done
 [[ "${REPLAN_STEPS}" =~ ^[1-9][0-9]*$ ]] || { printf 'REPLAN_STEPS must be positive\n' >&2; exit 1; }
 if [[ "${INSTRUCTION_MODE}" != "fixed" && "${INSTRUCTION_MODE}" != "official" ]]; then
   printf 'INSTRUCTION_MODE must be fixed or official\n' >&2
+  exit 1
+fi
+if [[ "${RESIDUAL_LANGUAGE_MODE}" != "policy_instruction" \
+  && "${RESIDUAL_LANGUAGE_MODE}" != "training_canonical" ]]; then
+  printf 'RESIDUAL_LANGUAGE_MODE must be policy_instruction or training_canonical\n' >&2
   exit 1
 fi
 if [[ "${STRICT_PAIRED}" == "true" ]]; then
@@ -151,6 +166,10 @@ for variant in "${variants[@]}"; do
     if [[ "${variant}" != "baseline" ]]; then
       action_mode=residual
       save_transitions="${SAVE_RESIDUAL_TRANSITIONS}"
+      residual_language_instruction=null
+      if [[ "${RESIDUAL_LANGUAGE_MODE}" == "training_canonical" ]]; then
+        residual_language_instruction="$(instruction_for_task "${task_name}")"
+      fi
       residual_args=(
         "EVALUATION.residual_checkpoint=${residual_checkpoint}"
         "EVALUATION.residual_encoder_path=${SIGLIP_PATH}"
@@ -160,17 +179,27 @@ for variant in "${variants[@]}"; do
         "EVALUATION.residual_q_gate_enabled=${RESIDUAL_Q_GATE_ENABLED}"
         "EVALUATION.residual_q_gate_margin=${RESIDUAL_Q_GATE_MARGIN}"
         "EVALUATION.residual_q_gate_max_disagreement=${RESIDUAL_Q_GATE_MAX_DISAGREEMENT}"
+        "EVALUATION.residual_q_gate_risk_scale=${RESIDUAL_Q_GATE_RISK_SCALE}"
+        "EVALUATION.residual_q_gate_risk_decay=${RESIDUAL_Q_GATE_RISK_DECAY}"
+        "EVALUATION.residual_soft_scale_enabled=${RESIDUAL_SOFT_SCALE_ENABLED}"
+        "EVALUATION.residual_soft_scale_q_full_advantage=${RESIDUAL_SOFT_SCALE_Q_FULL_ADVANTAGE}"
+        "EVALUATION.residual_soft_scale_support_full_margin=${RESIDUAL_SOFT_SCALE_SUPPORT_FULL_MARGIN}"
         "EVALUATION.residual_q_gate_critic_source=${RESIDUAL_Q_GATE_CRITIC_SOURCE}"
         "EVALUATION.residual_support_index_path=${RESIDUAL_SUPPORT_INDEX_PATH}"
         "EVALUATION.residual_support_circuit_breaker_enabled=${RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED}"
         "EVALUATION.residual_shadow_mode=${RESIDUAL_SHADOW_MODE}"
         "EVALUATION.residual_intervention_replans='${RESIDUAL_INTERVENTION_REPLANS}'"
         "EVALUATION.residual_max_interventions_per_episode=${RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE}"
+        "EVALUATION.residual_outcome_confirmation_enabled=${RESIDUAL_OUTCOME_CONFIRMATION_ENABLED}"
+        "EVALUATION.residual_outcome_confirmation_min_progress=${RESIDUAL_OUTCOME_CONFIRMATION_MIN_PROGRESS}"
+        "EVALUATION.residual_outcome_confirmation_reanchor_replans=${RESIDUAL_OUTCOME_CONFIRMATION_REANCHOR_REPLANS}"
+        "EVALUATION.residual_language_instruction='${residual_language_instruction}'"
       )
     fi
-    printf '[robotwin-online-pair] variant=%s task=%s episodes=%s env_seed=%s inference_steps=%s instruction_mode=%s paper_aligned=%s strict_paired=%s\n' \
+    printf '[robotwin-online-pair] variant=%s task=%s episodes=%s env_seed=%s inference_steps=%s instruction_mode=%s residual_language_mode=%s paper_aligned=%s strict_paired=%s\n' \
       "${variant}" "${task_name}" "${EPISODES}" "${environment_start_seed}" \
-      "${INFERENCE_STEPS}" "${INSTRUCTION_MODE}" "${PAPER_ALIGNED}" "${STRICT_PAIRED}"
+      "${INFERENCE_STEPS}" "${INSTRUCTION_MODE}" "${RESIDUAL_LANGUAGE_MODE}" \
+      "${PAPER_ALIGNED}" "${STRICT_PAIRED}"
     conda run --no-capture-output -n "${CONDA_ENV}" \
       env CUBLAS_WORKSPACE_CONFIG=:4096:8 \
       PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" \
@@ -185,6 +214,7 @@ for variant in "${variants[@]}"; do
       "EVALUATION.task_config=${TASK_CONFIG}" \
       "EVALUATION.instruction_type=${INSTRUCTION_TYPE}" \
       "EVALUATION.eval_num_episodes=${EPISODES}" \
+      "EVALUATION.eval_video_log=${EVAL_VIDEO_LOG}" \
       "EVALUATION.trial_offset=${TRIAL_OFFSET}" \
       "EVALUATION.environment_start_seed=${environment_start_seed}" \
       "EVALUATION.environment_episode_offset=${TRIAL_OFFSET}" \

@@ -6,6 +6,7 @@ ckpt_setting: null
 seed: 0
 instruction_type: unseen
 eval_num_episodes: 100
+eval_video_log: true
 
 # fastwam policy args
 sim_cfg_path: null
@@ -34,12 +35,21 @@ residual_device: same
 residual_q_gate_enabled: false
 residual_q_gate_margin: 0.0
 residual_q_gate_max_disagreement: 0.05
+residual_q_gate_risk_scale: 0.0
+residual_q_gate_risk_decay: 1.0
+residual_soft_scale_enabled: false
+residual_soft_scale_q_full_advantage: 0.005
+residual_soft_scale_support_full_margin: 0.25
 residual_q_gate_critic_source: target
 residual_support_index_path: null
 residual_support_circuit_breaker_enabled: true
 residual_shadow_mode: false
 residual_intervention_replans: all
 residual_max_interventions_per_episode: null
+residual_outcome_confirmation_enabled: false
+residual_outcome_confirmation_min_progress: 0.0
+residual_outcome_confirmation_reanchor_replans: 1
+residual_language_instruction: null
 action_noise_std: 0.0
 action_noise_seed: 20260728
 action_hold_probability: 0.0

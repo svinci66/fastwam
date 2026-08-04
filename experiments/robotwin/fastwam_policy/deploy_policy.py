@@ -40,6 +40,7 @@ from fastwam.rl.online_policy import (
     ROBOTWIN_RESIDUAL_FEATURE_FUSION,
     OnlineResidualPolicy,
 )
+from fastwam.rl.language_routing import resolve_residual_language_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,28 @@ def _resize_rgb(image: np.ndarray, size_wh: tuple[int, int]) -> np.ndarray:
     return np.asarray(resized, dtype=np.uint8)
 
 
+def _imagined_goal_progress(
+    current_feature: np.ndarray,
+    actual_feature: np.ndarray,
+    goal_feature: np.ndarray,
+) -> float:
+    """Cosine progress toward FastWAM's imagined goal in residual feature space."""
+
+    normalized = []
+    for name, value in (
+        ("current", current_feature),
+        ("actual", actual_feature),
+        ("goal", goal_feature),
+    ):
+        feature = np.asarray(value, dtype=np.float32).reshape(-1)
+        norm = float(np.linalg.norm(feature))
+        if feature.size == 0 or not np.all(np.isfinite(feature)) or norm <= 0.0:
+            raise ValueError(f"{name} outcome feature must be finite and non-zero")
+        normalized.append(feature / norm)
+    current, actual, goal = normalized
+    return float(np.dot(actual, goal) - np.dot(current, goal))
+
+
 class WorldActionRobotWinPolicy:
     def __init__(
         self,
@@ -180,12 +203,21 @@ class WorldActionRobotWinPolicy:
         residual_q_gate_enabled: bool,
         residual_q_gate_margin: float,
         residual_q_gate_max_disagreement: float,
+        residual_q_gate_risk_scale: float,
+        residual_q_gate_risk_decay: float,
+        residual_soft_scale_enabled: bool,
+        residual_soft_scale_q_full_advantage: float,
+        residual_soft_scale_support_full_margin: float,
         residual_q_gate_critic_source: str,
         residual_support_index_path: Optional[str],
         residual_support_circuit_breaker_enabled: bool,
         residual_shadow_mode: bool,
         residual_intervention_replans: Optional[set[int]],
         residual_max_interventions_per_episode: Optional[int],
+        residual_outcome_confirmation_enabled: bool,
+        residual_outcome_confirmation_min_progress: float,
+        residual_outcome_confirmation_reanchor_replans: int,
+        residual_language_instruction: Optional[str],
         action_noise_std: float,
         action_noise_seed: int,
         action_hold_probability: float,
@@ -235,6 +267,11 @@ class WorldActionRobotWinPolicy:
             )
         self.residual_policy: Optional[OnlineResidualPolicy] = None
         self.residual_intervention_replans = residual_intervention_replans
+        self.residual_language_instruction = (
+            None
+            if _is_none_like(residual_language_instruction)
+            else str(residual_language_instruction).strip()
+        )
         if self.action_mode == "residual":
             if _is_none_like(residual_checkpoint):
                 raise ValueError("action_mode='residual' requires residual_checkpoint")
@@ -254,6 +291,15 @@ class WorldActionRobotWinPolicy:
                 q_gate_enabled=residual_q_gate_enabled,
                 q_gate_margin=residual_q_gate_margin,
                 q_gate_max_disagreement=residual_q_gate_max_disagreement,
+                q_gate_risk_scale=residual_q_gate_risk_scale,
+                q_gate_risk_decay=residual_q_gate_risk_decay,
+                soft_scale_enabled=residual_soft_scale_enabled,
+                soft_scale_q_full_advantage=(
+                    residual_soft_scale_q_full_advantage
+                ),
+                soft_scale_support_full_margin=(
+                    residual_soft_scale_support_full_margin
+                ),
                 q_gate_critic_source=residual_q_gate_critic_source,
                 support_index_path=residual_support_index_path,
                 support_circuit_breaker_enabled=(
@@ -262,6 +308,15 @@ class WorldActionRobotWinPolicy:
                 shadow_mode=residual_shadow_mode,
                 max_interventions_per_episode=(
                     residual_max_interventions_per_episode
+                ),
+                outcome_confirmation_enabled=(
+                    residual_outcome_confirmation_enabled
+                ),
+                outcome_confirmation_min_progress=(
+                    residual_outcome_confirmation_min_progress
+                ),
+                outcome_confirmation_reanchor_replans=(
+                    residual_outcome_confirmation_reanchor_replans
                 ),
             )
             if self.residual_policy.action_dim != 14:
@@ -309,18 +364,24 @@ class WorldActionRobotWinPolicy:
             None if _is_none_like(fixed_instruction) else str(fixed_instruction)
         )
         self.save_imagination_transitions = bool(save_imagination_transitions)
+        self.residual_outcome_confirmation_enabled = bool(
+            residual_outcome_confirmation_enabled
+        )
         self.imagination_transition_dir = (
             None if imagination_transition_dir is None else Path(imagination_transition_dir)
         )
         self.task_name = str(task_name)
-        if self.save_imagination_transitions:
-            if self.imagination_transition_dir is None:
-                raise ValueError(
-                    "save_imagination_transitions=true requires imagination_transition_dir"
-                )
+        if self.save_imagination_transitions and self.imagination_transition_dir is None:
+            raise ValueError(
+                "save_imagination_transitions=true requires imagination_transition_dir"
+            )
+        if (
+            self.save_imagination_transitions
+            or self.residual_outcome_confirmation_enabled
+        ):
             if self.replan_steps % self.action_video_freq_ratio != 0:
                 raise ValueError(
-                    "Aligned capture requires replan_steps to be a multiple of "
+                    "Aligned imagination feedback requires replan_steps to be a multiple of "
                     f"action_video_freq_ratio; got {self.replan_steps} and "
                     f"{self.action_video_freq_ratio}."
                 )
@@ -345,7 +406,7 @@ class WorldActionRobotWinPolicy:
         logger.info(
             "Initialized WorldActionRobotWinPolicy | ckpt=%s | stats=%s | horizon=%d | "
             "replan=%d | mode=%s | noise_std=%.3f | hold_prob=%.3f | "
-            "gripper_delay=%d | capture=%s",
+            "gripper_delay=%d | capture=%s | outcome_confirmation=%s",
             checkpoint_path,
             dataset_stats_path,
             self.action_horizon,
@@ -355,6 +416,7 @@ class WorldActionRobotWinPolicy:
             self.action_hold_probability,
             self.gripper_close_delay_steps,
             self.save_imagination_transitions,
+            self.residual_outcome_confirmation_enabled,
         )
 
     def _behavior_tag(self) -> str:
@@ -379,6 +441,12 @@ class WorldActionRobotWinPolicy:
         )
         self._language_feature_cache[instruction] = feature
         return feature
+
+    def _residual_instruction(self, policy_instruction: str) -> str:
+        return resolve_residual_language_instruction(
+            policy_instruction,
+            self.residual_language_instruction,
+        )
 
     def _normalize_state(self, state: np.ndarray) -> torch.Tensor:
         state_meta = self.processor.shape_meta["state"]
@@ -432,6 +500,7 @@ class WorldActionRobotWinPolicy:
         np.ndarray,
         np.ndarray,
         np.ndarray,
+        Any,
     ]:
         image_tensor = self._build_robotwin_image_tensor(observation)
         current_image = self._build_robotwin_image(observation)
@@ -458,32 +527,10 @@ class WorldActionRobotWinPolicy:
         infer_t0 = time.perf_counter() if self.timing_enabled else 0.0
         with torch.no_grad():
             predicted_frames = None
-            if self.save_imagination_transitions:
-                joint_kwargs = dict(infer_kwargs)
-                joint_kwargs["num_video_frames"] = int(self._num_video_frames)
-                if "decode_tiled" in inspect.signature(
-                    self.model.infer_joint
-                ).parameters:
-                    joint_kwargs["tiled"] = False
-                    joint_kwargs["decode_tiled"] = self.capture_decode_tiled
-                if "test_action_with_infer_action" in inspect.signature(
-                    self.model.infer_joint
-                ).parameters:
-                    joint_kwargs["test_action_with_infer_action"] = False
-                joint_pred = self.model.infer_joint(**joint_kwargs)
-                keep_frames = 1 + self.replan_steps // self.action_video_freq_ratio
-                predicted_frames = list(joint_pred["video"][:keep_frames])
-                if len(predicted_frames) != keep_frames:
-                    raise ValueError(
-                        "Predicted video is too short for aligned capture: "
-                        f"expected {keep_frames}, got {len(predicted_frames)}"
-                    )
             action_kwargs = {
                 key: value for key, value in infer_kwargs.items() if key in action_parameters
             }
             pred = self.model.infer_action(**action_kwargs)
-        if self.timing_enabled:
-            self._timing_rollout["infer_s"] += time.perf_counter() - infer_t0
 
         normalized_baseline = pred["action"].detach().float().cpu().numpy()
         if normalized_baseline.ndim == 3:
@@ -493,6 +540,7 @@ class WorldActionRobotWinPolicy:
                 f"Expected normalized action [T,D], got {normalized_baseline.shape}"
             )
         normalized_executed = normalized_baseline.copy()
+        residual_output = None
         epsilon = np.zeros_like(normalized_baseline, dtype=np.float32)
         if self.action_mode == "noise":
             noise_seed = (
@@ -516,11 +564,12 @@ class WorldActionRobotWinPolicy:
             if self.residual_policy is None:
                 raise RuntimeError("residual action mode was initialized without a policy")
             residual_t0 = time.perf_counter() if self.timing_enabled else 0.0
+            residual_instruction = self._residual_instruction(instruction)
             residual_output = self.residual_policy.correct_action_chunk(
                 camera_images=split_robotwin_camera_views(current_image),
                 proprio=state_vector,
                 baseline_actions=baseline_actions,
-                language_feature=self._encode_language_feature(instruction),
+                language_feature=self._encode_language_feature(residual_instruction),
                 intervention_allowed=(
                     self.residual_intervention_replans is None
                     or self.replan_count in self.residual_intervention_replans
@@ -562,6 +611,8 @@ class WorldActionRobotWinPolicy:
                     f" support_language_similarity={decision.language_similarity:.6f}"
                 )
             support_fields += (
+                " residual_language_canonicalized="
+                f"{int(residual_instruction != instruction)}"
                 " intervention_allowed="
                 f"{int(residual_output.intervention_allowed)}"
                 " intervention_count="
@@ -570,6 +621,30 @@ class WorldActionRobotWinPolicy:
                 f"{residual_output.intervention_budget_remaining}"
                 " intervention_budget_exhausted="
                 f"{int(residual_output.intervention_budget_exhausted)}"
+                " q_gate_effective_margin="
+                f"{residual_output.q_gate_effective_margin}"
+                " candidate_residual_rms="
+                f"{residual_output.candidate_residual_rms:.6f}"
+                " residual_risk_before="
+                f"{residual_output.residual_risk_before:.6f}"
+                " residual_risk_after="
+                f"{residual_output.residual_risk_after:.6f}"
+                " residual_scale_factor="
+                f"{residual_output.residual_scale_factor:.6f}"
+                " q_scale_confidence="
+                f"{residual_output.q_scale_confidence:.6f}"
+                " support_scale_confidence="
+                f"{residual_output.support_scale_confidence:.6f}"
+                " outcome_confirmation_pending="
+                f"{int(residual_output.outcome_confirmation_pending)}"
+                " last_outcome_progress="
+                f"{residual_output.last_outcome_progress}"
+                " last_outcome_confirmed="
+                f"{residual_output.last_outcome_confirmed}"
+                " outcome_reanchor_remaining="
+                f"{residual_output.outcome_reanchor_remaining}"
+                " outcome_blocked="
+                f"{int(residual_output.outcome_blocked)}"
             )
             print(
                 "[fastwam-residual] "
@@ -610,6 +685,32 @@ class WorldActionRobotWinPolicy:
                 already_triggered=self._gripper_delay_triggered,
                 remaining_steps=self._gripper_delay_remaining,
             )
+        needs_outcome_goal = bool(
+            self.residual_outcome_confirmation_enabled
+            and residual_output is not None
+            and residual_output.gate_applied
+        )
+        if self.save_imagination_transitions or needs_outcome_goal:
+            joint_kwargs = dict(infer_kwargs)
+            joint_kwargs["num_video_frames"] = int(self._num_video_frames)
+            if "decode_tiled" in inspect.signature(self.model.infer_joint).parameters:
+                joint_kwargs["tiled"] = False
+                joint_kwargs["decode_tiled"] = self.capture_decode_tiled
+            if "test_action_with_infer_action" in inspect.signature(
+                self.model.infer_joint
+            ).parameters:
+                joint_kwargs["test_action_with_infer_action"] = False
+            with torch.no_grad():
+                joint_pred = self.model.infer_joint(**joint_kwargs)
+            keep_frames = 1 + self.replan_steps // self.action_video_freq_ratio
+            predicted_frames = list(joint_pred["video"][:keep_frames])
+            if len(predicted_frames) != keep_frames:
+                raise ValueError(
+                    "Predicted video is too short for aligned feedback: "
+                    f"expected {keep_frames}, got {len(predicted_frames)}"
+                )
+        if self.timing_enabled:
+            self._timing_rollout["infer_s"] += time.perf_counter() - infer_t0
         return (
             baseline_actions,
             executed_actions,
@@ -617,6 +718,7 @@ class WorldActionRobotWinPolicy:
             current_image,
             epsilon,
             corruption_mask,
+            residual_output,
         )
 
     def _fill_action_queue(self, observation: Dict[str, Any], instruction: str) -> None:
@@ -627,25 +729,44 @@ class WorldActionRobotWinPolicy:
             current_image,
             epsilon,
             corruption_mask,
+            residual_output,
         ) = self._infer_action_chunk(observation=observation, instruction=instruction)
         n_exec = min(self.replan_steps, executed_actions.shape[0])
         for i in range(n_exec):
             self.pending_actions.append(np.asarray(executed_actions[i], dtype=np.float32))
 
-        if self.save_imagination_transitions:
-            if predicted_frames is None:
-                raise RuntimeError("capture enabled but infer_joint produced no video")
-            state_vector = np.asarray(
-                observation["joint_action"]["vector"], dtype=np.float32
+        state_vector = np.asarray(
+            observation["joint_action"]["vector"], dtype=np.float32
+        )
+        if self._episode_initial_hash is None:
+            self._episode_initial_hash = array_sha256(
+                np.concatenate([current_image.reshape(-1), state_vector.reshape(-1)])
             )
-            if self._episode_initial_hash is None:
-                self._episode_initial_hash = array_sha256(
-                    np.concatenate([current_image.reshape(-1), state_vector.reshape(-1)])
-                )
-            language_feature = self._encode_language_feature(instruction)
+            print(
+                "FASTWAM_INITIAL_OBSERVATION "
+                f"episode_id={self.episode_count} "
+                f"sha256={self._episode_initial_hash}",
+                flush=True,
+            )
+
+        capture_transition = self.save_imagination_transitions or bool(
+            self.residual_outcome_confirmation_enabled
+            and residual_output is not None
+            and residual_output.gate_applied
+        )
+        if capture_transition:
+            if predicted_frames is None:
+                raise RuntimeError("feedback capture lacks an imagined video")
+            residual_instruction = (
+                self._residual_instruction(instruction)
+                if self.action_mode == "residual"
+                else instruction
+            )
+            language_feature = self._encode_language_feature(residual_instruction)
             self._pending_transition = {
                 "replan_idx": self.replan_count,
                 "instruction": instruction,
+                "residual_language_instruction": residual_instruction,
                 "current_image": current_image,
                 "predicted_goal": predicted_frames[-1],
                 "start_proprio": state_vector.copy(),
@@ -655,7 +776,23 @@ class WorldActionRobotWinPolicy:
                 "action_corruption_mask": corruption_mask[:n_exec].copy(),
                 "executed_actions": [],
                 "initial_observation_sha256": self._episode_initial_hash,
+                "residual_gate_applied": bool(
+                    residual_output is not None and residual_output.gate_applied
+                ),
             }
+            if self.residual_outcome_confirmation_enabled:
+                if self.residual_policy is None or residual_output is None:
+                    raise RuntimeError(
+                        "outcome confirmation requires an initialized residual policy"
+                    )
+                self._pending_transition["current_residual_feature"] = (
+                    residual_output.observation_feature.copy()
+                )
+                self._pending_transition["goal_residual_feature"] = (
+                    self.residual_policy.encode_observation(
+                        split_robotwin_camera_views(predicted_frames[-1])
+                    )
+                )
         self.replan_count += 1
 
     def _save_pending_transition(self, task_env, actual_observation: Dict[str, Any]) -> None:
@@ -667,6 +804,30 @@ class WorldActionRobotWinPolicy:
         target_k = int(self.replan_steps)
         success = bool(task_env.eval_success)
         truncated = bool(task_env.take_action_cnt >= task_env.step_lim and not success)
+        if self.residual_outcome_confirmation_enabled:
+            if self.residual_policy is None:
+                raise RuntimeError("outcome confirmation lacks a residual policy")
+            actual_feature = self.residual_policy.encode_observation(
+                split_robotwin_camera_views(
+                    self._build_robotwin_image(actual_observation)
+                )
+            )
+            outcome_progress = _imagined_goal_progress(
+                transition["current_residual_feature"],
+                actual_feature,
+                transition["goal_residual_feature"],
+            )
+            self.residual_policy.record_intervention_outcome(outcome_progress)
+            print(
+                "[fastwam-residual-outcome] "
+                f"replan={int(transition['replan_idx'])} "
+                f"gate_applied={int(transition['residual_gate_applied'])} "
+                f"imagination_progress={outcome_progress:.6f}",
+                flush=True,
+            )
+        if not self.save_imagination_transitions:
+            self._pending_transition = None
+            return
         mode_tag = self._behavior_tag()
         record_dir = (
             self.imagination_transition_dir
@@ -717,6 +878,9 @@ class WorldActionRobotWinPolicy:
             "predictor_version": "fastwam_infer_joint",
             "language_encoder_version": "fastwam_umt5_masked_mean_v1",
             "language_prompt_template": DEFAULT_PROMPT,
+            "residual_language_instruction": transition[
+                "residual_language_instruction"
+            ],
         }
         metadata_path = save_aligned_transition(
             record_dir,
@@ -735,7 +899,9 @@ class WorldActionRobotWinPolicy:
                 "normalized_noise_direction": transition["normalized_noise_direction"][:effective_k],
                 "action_corruption_mask": transition["action_corruption_mask"][:effective_k],
                 "environment_rewards": np.zeros(effective_k, dtype=np.float32),
-                "language_feature": self._language_feature_cache[transition["instruction"]],
+                "language_feature": self._language_feature_cache[
+                    transition["residual_language_instruction"]
+                ],
             },
         )
         self._episode_metadata_paths.append(metadata_path)
@@ -769,7 +935,7 @@ class WorldActionRobotWinPolicy:
         self.step_count += 1
         if self._pending_transition is not None:
             self._pending_transition["executed_actions"].append(action.copy())
-        if self.save_imagination_transitions and (
+        if self._pending_transition is not None and (
             not self.pending_actions
             or bool(task_env.eval_success)
             or task_env.take_action_cnt >= task_env.step_lim
@@ -975,6 +1141,36 @@ def get_model(usr_args: Dict[str, Any]):
             cfg.EVALUATION.get("residual_q_gate_max_disagreement", 0.05),
         )
     )
+    residual_q_gate_risk_scale = float(
+        usr_args.get(
+            "residual_q_gate_risk_scale",
+            cfg.EVALUATION.get("residual_q_gate_risk_scale", 0.0),
+        )
+    )
+    residual_q_gate_risk_decay = float(
+        usr_args.get(
+            "residual_q_gate_risk_decay",
+            cfg.EVALUATION.get("residual_q_gate_risk_decay", 1.0),
+        )
+    )
+    residual_soft_scale_enabled = _parse_bool(
+        usr_args.get(
+            "residual_soft_scale_enabled",
+            cfg.EVALUATION.get("residual_soft_scale_enabled", False),
+        )
+    )
+    residual_soft_scale_q_full_advantage = float(
+        usr_args.get(
+            "residual_soft_scale_q_full_advantage",
+            cfg.EVALUATION.get("residual_soft_scale_q_full_advantage", 0.005),
+        )
+    )
+    residual_soft_scale_support_full_margin = float(
+        usr_args.get(
+            "residual_soft_scale_support_full_margin",
+            cfg.EVALUATION.get("residual_soft_scale_support_full_margin", 0.25),
+        )
+    )
     residual_q_gate_critic_source = str(
         usr_args.get(
             "residual_q_gate_critic_source",
@@ -1040,6 +1236,37 @@ def get_model(usr_args: Dict[str, Any]):
         raise ValueError(
             "residual_max_interventions_per_episode must be positive or null"
         )
+    residual_outcome_confirmation_enabled = _parse_bool(
+        usr_args.get(
+            "residual_outcome_confirmation_enabled",
+            cfg.EVALUATION.get("residual_outcome_confirmation_enabled", False),
+        )
+    )
+    residual_outcome_confirmation_min_progress = float(
+        usr_args.get(
+            "residual_outcome_confirmation_min_progress",
+            cfg.EVALUATION.get(
+                "residual_outcome_confirmation_min_progress", 0.0
+            ),
+        )
+    )
+    residual_outcome_confirmation_reanchor_replans = int(
+        usr_args.get(
+            "residual_outcome_confirmation_reanchor_replans",
+            cfg.EVALUATION.get(
+                "residual_outcome_confirmation_reanchor_replans", 1
+            ),
+        )
+    )
+    residual_language_instruction_value = usr_args.get(
+        "residual_language_instruction",
+        cfg.EVALUATION.get("residual_language_instruction"),
+    )
+    residual_language_instruction = (
+        None
+        if _is_none_like(residual_language_instruction_value)
+        else str(residual_language_instruction_value)
+    )
     action_noise_std = float(
         usr_args.get("action_noise_std", cfg.EVALUATION.get("action_noise_std", 0.0))
     )
@@ -1114,6 +1341,15 @@ def get_model(usr_args: Dict[str, Any]):
         residual_q_gate_enabled=residual_q_gate_enabled,
         residual_q_gate_margin=residual_q_gate_margin,
         residual_q_gate_max_disagreement=residual_q_gate_max_disagreement,
+        residual_q_gate_risk_scale=residual_q_gate_risk_scale,
+        residual_q_gate_risk_decay=residual_q_gate_risk_decay,
+        residual_soft_scale_enabled=residual_soft_scale_enabled,
+        residual_soft_scale_q_full_advantage=(
+            residual_soft_scale_q_full_advantage
+        ),
+        residual_soft_scale_support_full_margin=(
+            residual_soft_scale_support_full_margin
+        ),
         residual_q_gate_critic_source=residual_q_gate_critic_source,
         residual_support_index_path=residual_support_index_path,
         residual_support_circuit_breaker_enabled=(
@@ -1124,6 +1360,16 @@ def get_model(usr_args: Dict[str, Any]):
         residual_max_interventions_per_episode=(
             residual_max_interventions_per_episode
         ),
+        residual_outcome_confirmation_enabled=(
+            residual_outcome_confirmation_enabled
+        ),
+        residual_outcome_confirmation_min_progress=(
+            residual_outcome_confirmation_min_progress
+        ),
+        residual_outcome_confirmation_reanchor_replans=(
+            residual_outcome_confirmation_reanchor_replans
+        ),
+        residual_language_instruction=residual_language_instruction,
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
         action_hold_probability=action_hold_probability,

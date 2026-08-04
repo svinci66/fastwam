@@ -275,6 +275,7 @@ def main(cfg: DictConfig):
     _append_override(overrides, "policy_name", cfg.EVALUATION.policy_name)
     _append_override(overrides, "instruction_type", cfg.EVALUATION.instruction_type)
     _append_override(overrides, "eval_num_episodes", cfg.EVALUATION.eval_num_episodes)
+    _append_override(overrides, "eval_video_log", cfg.EVALUATION.eval_video_log)
 
     _append_override(overrides, "sim_cfg_path", str(sim_cfg_path))
     _append_override(overrides, "sim_task", sim_task)
@@ -330,6 +331,31 @@ def main(cfg: DictConfig):
     )
     _append_override(
         overrides,
+        "residual_q_gate_risk_scale",
+        cfg.EVALUATION.residual_q_gate_risk_scale,
+    )
+    _append_override(
+        overrides,
+        "residual_q_gate_risk_decay",
+        cfg.EVALUATION.residual_q_gate_risk_decay,
+    )
+    _append_override(
+        overrides,
+        "residual_soft_scale_enabled",
+        cfg.EVALUATION.residual_soft_scale_enabled,
+    )
+    _append_override(
+        overrides,
+        "residual_soft_scale_q_full_advantage",
+        cfg.EVALUATION.residual_soft_scale_q_full_advantage,
+    )
+    _append_override(
+        overrides,
+        "residual_soft_scale_support_full_margin",
+        cfg.EVALUATION.residual_soft_scale_support_full_margin,
+    )
+    _append_override(
+        overrides,
         "residual_q_gate_critic_source",
         cfg.EVALUATION.residual_q_gate_critic_source,
     )
@@ -357,6 +383,27 @@ def main(cfg: DictConfig):
         overrides,
         "residual_max_interventions_per_episode",
         cfg.EVALUATION.residual_max_interventions_per_episode,
+        skip_none=False,
+    )
+    _append_override(
+        overrides,
+        "residual_outcome_confirmation_enabled",
+        cfg.EVALUATION.residual_outcome_confirmation_enabled,
+    )
+    _append_override(
+        overrides,
+        "residual_outcome_confirmation_min_progress",
+        cfg.EVALUATION.residual_outcome_confirmation_min_progress,
+    )
+    _append_override(
+        overrides,
+        "residual_outcome_confirmation_reanchor_replans",
+        cfg.EVALUATION.residual_outcome_confirmation_reanchor_replans,
+    )
+    _append_override(
+        overrides,
+        "residual_language_instruction",
+        cfg.EVALUATION.residual_language_instruction,
         skip_none=False,
     )
     _append_override(overrides, "action_noise_std", cfg.EVALUATION.action_noise_std)
@@ -434,6 +481,7 @@ def main(cfg: DictConfig):
         "task": str(cfg.EVALUATION.task_name),
         "task_config": str(cfg.EVALUATION.task_config),
         "episodes": int(cfg.EVALUATION.eval_num_episodes),
+        "eval_video_log": bool(cfg.EVALUATION.eval_video_log),
         "num_inference_steps": int(cfg.EVALUATION.num_inference_steps),
         "replan_steps": int(cfg.EVALUATION.replan_steps),
         "text_cfg_scale": float(cfg.EVALUATION.text_cfg_scale),
@@ -447,6 +495,24 @@ def main(cfg: DictConfig):
             else str(cfg.EVALUATION.environment_seed_manifest_path)
         ),
         "action_mode": str(cfg.EVALUATION.action_mode),
+        "residual_q_gate_risk_scale": float(
+            cfg.EVALUATION.residual_q_gate_risk_scale
+        ),
+        "residual_soft_scale_enabled": bool(
+            cfg.EVALUATION.residual_soft_scale_enabled
+        ),
+        "residual_outcome_confirmation_enabled": bool(
+            cfg.EVALUATION.residual_outcome_confirmation_enabled
+        ),
+        "residual_outcome_confirmation_min_progress": float(
+            cfg.EVALUATION.residual_outcome_confirmation_min_progress
+        ),
+        "residual_outcome_confirmation_reanchor_replans": int(
+            cfg.EVALUATION.residual_outcome_confirmation_reanchor_replans
+        ),
+        "save_imagination_transitions": bool(
+            cfg.EVALUATION.save_imagination_transitions
+        ),
     }
     print("FASTWAM_EVAL_PROTOCOL " + json.dumps(protocol, sort_keys=True), flush=True)
     OmegaConf.save(

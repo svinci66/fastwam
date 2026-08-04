@@ -11,6 +11,9 @@ from experiments.robotwin.eval_policy_compat import patch_eval_policy_source
 def test_patch_eval_policy_source_adds_pairing_controls():
     source = '''\
 def eval_policy():
+    with open(config_path) as f:
+        args = yaml.load(f)
+    args['task_name'] = task_name
     expert_check = True
     suc_test_seed_list = []
     while active:
@@ -38,6 +41,8 @@ def eval_policy():
     patched = patch_eval_policy_source(source)
 
     assert 'usr_args.get("expert_check", True)' in patched
+    assert 'usr_args.get("eval_video_log")' in patched
+    assert 'args["eval_video_log"] = bool(eval_video_log)' in patched
     assert "FASTWAM_ACCEPTED_ENV_SEED" in patched
     assert "fixed_instruction is required" in patched
     assert "environment_seed_manifest_path" in patched

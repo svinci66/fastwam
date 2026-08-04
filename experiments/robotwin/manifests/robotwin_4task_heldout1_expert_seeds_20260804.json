@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "description": "First expert-feasible seed from the held-out five-episode paper-protocol manifest; used for the canonical-language shadow smoke test.",
+    "episodes_per_task": 1,
+    "environment_seed_range_start": 4800000,
+    "task_config": "demo_clean"
+  },
+  "adjust_bottle": {
+    "seeds": [4800000]
+  },
+  "hanging_mug": {
+    "seeds": [4800001]
+  },
+  "open_microwave": {
+    "seeds": [4800000]
+  },
+  "place_can_basket": {
+    "seeds": [4800005]
+  }
+}

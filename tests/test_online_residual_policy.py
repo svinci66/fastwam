@@ -224,6 +224,202 @@ def test_online_q_gate_applies_only_when_both_critics_prefer_candidate():
     assert np.max(np.abs(rejected.candidate_residual_actions)) > 0.0
 
 
+def test_online_q_gate_uses_decaying_residual_risk_in_effective_margin():
+    config = ResidualActorConfig(
+        context_dim=4,
+        action_horizon=2,
+        action_dim=3,
+        hidden_dims=(4,),
+        residual_scale=(0.05, 0.0, 0.0),
+        action_low=(-1.0, -1.0, -1.0),
+        action_high=(1.0, 1.0, 1.0),
+    )
+    actor = ResidualActor(config)
+    with torch.no_grad():
+        for parameter in actor.parameters():
+            parameter.zero_()
+        actor.network[-1].bias.copy_(
+            torch.tensor([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+        )
+    policy = OnlineResidualPolicy(
+        actor=actor,
+        image_processor=None,
+        vision_encoder=torch.nn.Identity(),
+        device="cpu",
+        encoder_dtype=torch.float32,
+        checkpoint_path="checkpoint.pt",
+        encoder_path="encoder",
+        encoder_version="encoder-v1",
+        q_critics=(_FirstActionCritic(1.0), _FirstActionCritic(0.9)),
+        q_gate_risk_scale=1.0,
+        q_gate_risk_decay=1.0,
+    )
+    inputs = {
+        "observation_feature": np.ones(2, dtype=np.float32),
+        "proprio": np.ones(2, dtype=np.float32),
+        "baseline_actions": np.zeros((2, 3), dtype=np.float32),
+    }
+
+    first = policy.correct_from_feature(**inputs)
+    second = policy.correct_from_feature(**inputs)
+    assert first.gate_applied
+    assert first.residual_risk_before == 0.0
+    assert first.residual_risk_after == pytest.approx(first.candidate_residual_rms)
+    assert not second.gate_applied
+    assert second.gate_approved is False
+    assert second.q_advantage_min < second.q_gate_effective_margin
+    assert second.residual_risk_before == pytest.approx(first.residual_risk_after)
+    assert second.residual_risk_after == pytest.approx(second.residual_risk_before)
+
+    policy.reset()
+    recovered = policy.correct_from_feature(**inputs)
+    assert recovered.gate_applied
+    assert recovered.residual_risk_before == 0.0
+
+
+def test_online_outcome_confirmation_reanchors_after_failed_progress():
+    config = ResidualActorConfig(
+        context_dim=4,
+        action_horizon=2,
+        action_dim=3,
+        hidden_dims=(4,),
+        residual_scale=(0.05, 0.0, 0.0),
+        action_low=(-1.0, -1.0, -1.0),
+        action_high=(1.0, 1.0, 1.0),
+    )
+    actor = ResidualActor(config)
+    with torch.no_grad():
+        for parameter in actor.parameters():
+            parameter.zero_()
+        actor.network[-1].bias.copy_(
+            torch.tensor([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+        )
+    policy = OnlineResidualPolicy(
+        actor=actor,
+        image_processor=None,
+        vision_encoder=torch.nn.Identity(),
+        device="cpu",
+        encoder_dtype=torch.float32,
+        checkpoint_path="checkpoint.pt",
+        encoder_path="encoder",
+        encoder_version="encoder-v1",
+        q_critics=(_FirstActionCritic(1.0), _FirstActionCritic(0.9)),
+        outcome_confirmation_enabled=True,
+        outcome_confirmation_min_progress=0.0,
+        outcome_confirmation_reanchor_replans=1,
+    )
+    inputs = {
+        "observation_feature": np.ones(2, dtype=np.float32),
+        "proprio": np.ones(2, dtype=np.float32),
+        "baseline_actions": np.zeros((2, 3), dtype=np.float32),
+    }
+
+    first = policy.correct_from_feature(**inputs)
+    assert first.gate_applied
+    assert first.outcome_confirmation_pending
+    with pytest.raises(RuntimeError, match="record_intervention_outcome"):
+        policy.correct_from_feature(**inputs)
+
+    policy.record_intervention_outcome(-0.01)
+    reanchored = policy.correct_from_feature(**inputs)
+    assert reanchored.gate_approved
+    assert not reanchored.gate_applied
+    assert reanchored.outcome_blocked
+    assert reanchored.outcome_reanchor_remaining == 0
+    assert reanchored.last_outcome_confirmed is False
+
+    retried = policy.correct_from_feature(**inputs)
+    assert retried.gate_applied
+    policy.record_intervention_outcome(0.01)
+    continued = policy.correct_from_feature(**inputs)
+    assert continued.gate_applied
+    assert not continued.outcome_blocked
+    assert continued.last_outcome_confirmed is True
+
+    policy.reset()
+    reset_output = policy.correct_from_feature(**inputs)
+    assert reset_output.gate_applied
+    assert reset_output.last_outcome_confirmed is None
+
+
+def test_online_soft_scale_blends_residual_from_q_and_support_confidence():
+    config = ResidualActorConfig(
+        context_dim=4,
+        action_horizon=2,
+        action_dim=3,
+        hidden_dims=(4,),
+        residual_scale=(0.05, 0.0, 0.0),
+        action_low=(-1.0, -1.0, -1.0),
+        action_high=(1.0, 1.0, 1.0),
+    )
+    actor = ResidualActor(config)
+    with torch.no_grad():
+        for parameter in actor.parameters():
+            parameter.zero_()
+        actor.network[-1].bias.copy_(
+            torch.tensor([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+        )
+    expected_residual = float(0.05 * np.tanh(1.0))
+    support = ResidualSupportIndex(
+        observation_features=np.asarray([[1.0, 0.0]], dtype=np.float32),
+        proprio=np.zeros((1, 2), dtype=np.float32),
+        baseline_actions=np.zeros((1, 2, 3), dtype=np.float32),
+        residual_actions=np.asarray(
+            [[[expected_residual, 0.0, 0.0], [expected_residual, 0.0, 0.0]]],
+            dtype=np.float32,
+        ),
+        state_local_radius=np.ones(1, dtype=np.float32),
+        action_local_radius=np.ones(1, dtype=np.float32),
+        task_ids=np.asarray([0]),
+        task_names=("task",),
+        language_prototypes=np.asarray([[1.0, 0.0]], dtype=np.float32),
+        proprio_center=np.zeros(2, dtype=np.float32),
+        proprio_scale=np.ones(2, dtype=np.float32),
+        baseline_center=np.zeros((2, 3), dtype=np.float32),
+        baseline_scale=np.ones((2, 3), dtype=np.float32),
+        residual_scale=np.asarray([0.05, 0.0, 0.0], dtype=np.float32),
+        state_threshold=1.0,
+        action_threshold=1.0,
+        state_increase_threshold=1.0,
+        language_similarity_threshold=0.99,
+        neighbors=1,
+        score_neighbors=1,
+    )
+    policy = OnlineResidualPolicy(
+        actor=actor,
+        image_processor=None,
+        vision_encoder=torch.nn.Identity(),
+        device="cpu",
+        encoder_dtype=torch.float32,
+        checkpoint_path="checkpoint.pt",
+        encoder_path="encoder",
+        encoder_version="encoder-v1",
+        q_critics=(_FirstActionCritic(1.0), _FirstActionCritic(0.9)),
+        support_index=support,
+        soft_scale_enabled=True,
+        soft_scale_q_full_advantage=0.1,
+        soft_scale_support_full_margin=0.25,
+    )
+    output = policy.correct_from_feature(
+        observation_feature=np.asarray([1.0, 0.0], dtype=np.float32),
+        proprio=np.zeros(2, dtype=np.float32),
+        baseline_actions=np.zeros((2, 3), dtype=np.float32),
+        language_feature=np.asarray([1.0, 0.0], dtype=np.float32),
+    )
+
+    assert output.gate_applied
+    assert 0.0 < output.residual_scale_factor < 1.0
+    assert output.residual_scale_factor == pytest.approx(
+        output.q_scale_confidence
+    )
+    assert output.support_scale_confidence == pytest.approx(1.0)
+    np.testing.assert_allclose(
+        output.residual_actions,
+        output.candidate_residual_actions * output.residual_scale_factor,
+        atol=1e-7,
+    )
+
+
 def test_online_intervention_budget_counts_only_applied_residuals_and_resets():
     config = ResidualActorConfig(
         context_dim=4,
