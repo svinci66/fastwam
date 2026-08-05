@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "description": "Recovery manifest for episode 4 of the paper-aligned hanging_mug paired evaluation interrupted by a SAPIEN/Vulkan buffer allocation failure.",
+    "episodes_per_task": 1,
+    "task_config": "demo_clean"
+  },
+  "hanging_mug": {
+    "seeds": [4800005],
+    "instructions": [
+      "Pick the matte black mug from the table, rotate it, place it in the middle, and hang it onto the medium-sized rack."
+    ]
+  }
+}

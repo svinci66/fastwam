@@ -5,6 +5,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ROOT="${RUN_ROOT:-${PROJECT_ROOT}/evaluate_results/robotwin_residual_rl/robotwin_4task_paired_v2_iql_20260803}"
 RUN_NAME="${RUN_NAME:-robotwin_hanging_mug_qood_outcome_softscale_paired5_20260804}"
 EPISODES="${EPISODES:-5}"
+TRIAL_OFFSET="${TRIAL_OFFSET:-0}"
+VARIANTS="${VARIANTS:-baseline,imagination}"
 if [[ -z "${SEED_MANIFEST_PATH:-}" ]]; then
   case "${EPISODES}" in
     1)
@@ -29,9 +31,9 @@ env \
   "EPISODES=${EPISODES}" \
   "BASE_SEED=47" \
   "ENVIRONMENT_START_SEED=4800000" \
-  "TRIAL_OFFSET=0" \
+  "TRIAL_OFFSET=${TRIAL_OFFSET}" \
   "RUN_NAME=${RUN_NAME}" \
-  "VARIANTS=baseline,imagination" \
+  "VARIANTS=${VARIANTS}" \
   "INFERENCE_STEPS=10" \
   "REPLAN_STEPS=24" \
   "TEXT_CFG_SCALE=1.0" \

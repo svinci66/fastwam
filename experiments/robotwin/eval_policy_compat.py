@@ -11,7 +11,8 @@ patches narrowly scoped source fragments before executing the evaluator:
 * make expert filtering configurable through ``expert_check``;
 * allow a fixed instruction when expert filtering is disabled;
 * expose the environment seed in logs and process state for provenance.
-* optionally replay a strict, task-specific environment-seed manifest;
+* optionally replay strict task-specific seeds and official instructions from
+  a manifest, so interrupted paired runs can be resumed exactly;
 * optionally select an official instruction deterministically from its seed,
   including RoboTwin's internal Python-random shuffling and object aliases.
 * optionally disable upstream per-step video encoding for metric-only runs.
@@ -59,6 +60,7 @@ def patch_eval_policy_source(source: str) -> str:
         "    suc_test_seed_list = []\n",
         "    suc_test_seed_list = []\n"
         "    strict_environment_seeds = None\n"
+        "    strict_environment_instructions = None\n"
         "    seed_manifest_path = usr_args.get(\"environment_seed_manifest_path\")\n"
         "    if seed_manifest_path is not None and str(seed_manifest_path).strip().lower() not in {\"\", \"none\", \"null\"}:\n"
         "        with open(str(seed_manifest_path), \"r\", encoding=\"utf-8\") as manifest_file:\n"
@@ -67,12 +69,19 @@ def patch_eval_policy_source(source: str) -> str:
         "        if manifest_entry is None:\n"
         "            raise ValueError(f\"Seed manifest has no task {args['task_name']!r}\")\n"
         "        if isinstance(manifest_entry, dict):\n"
+        "            strict_environment_instructions = manifest_entry.get(\"instructions\")\n"
         "            manifest_entry = manifest_entry.get(\"seeds\")\n"
         "        strict_environment_seeds = [int(value) for value in manifest_entry]\n"
         "        if len(strict_environment_seeds) != test_num:\n"
         "            raise ValueError(\n"
         "                f\"Seed manifest for {args['task_name']} has {len(strict_environment_seeds)} seeds, expected {test_num}\"\n"
         "            )\n"
+        "        if strict_environment_instructions is not None:\n"
+        "            strict_environment_instructions = [str(value) for value in strict_environment_instructions]\n"
+        "            if len(strict_environment_instructions) != test_num:\n"
+        "                raise ValueError(\n"
+        "                    f\"Seed manifest for {args['task_name']} has {len(strict_environment_instructions)} instructions, expected {test_num}\"\n"
+        "                )\n"
         "    deterministic_instruction_by_seed = bool(\n"
         "        usr_args.get(\"deterministic_instruction_by_seed\", False)\n"
         "    )\n",
@@ -137,8 +146,15 @@ def patch_eval_policy_source(source: str) -> str:
         "        episode_info_list = [episode_info[\"info\"]]\n"
         "        results = generate_episode_descriptions(args[\"task_name\"], episode_info_list, test_num)\n"
         "        instruction = np.random.choice(results[0][instruction_type])\n",
+        "        manifest_instruction = (\n"
+        "            None\n"
+        "            if strict_environment_instructions is None\n"
+        "            else strict_environment_instructions[succ_seed - 1]\n"
+        "        )\n"
         "        fixed_instruction = usr_args.get(\"fixed_instruction\")\n"
-        "        if fixed_instruction is not None and str(fixed_instruction).strip().lower() not in {\"\", \"none\", \"null\"}:\n"
+        "        if manifest_instruction is not None:\n"
+        "            instruction = manifest_instruction\n"
+        "        elif fixed_instruction is not None and str(fixed_instruction).strip().lower() not in {\"\", \"none\", \"null\"}:\n"
         "            instruction = str(fixed_instruction)\n"
         "        else:\n"
         "            if not expert_check:\n"

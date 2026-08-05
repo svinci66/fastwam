@@ -47,6 +47,8 @@ def eval_policy():
     assert "fixed_instruction is required" in patched
     assert "environment_seed_manifest_path" in patched
     assert "strict_environment_seeds[succ_seed]" in patched
+    assert 'manifest_entry.get("instructions")' in patched
+    assert "strict_environment_instructions[succ_seed - 1]" in patched
     assert "np.random.default_rng(int(now_seed))" in patched
     assert 'instruction_random.seed(int(now_seed))' in patched
     assert "instruction_random.setstate(instruction_random_state)" in patched
