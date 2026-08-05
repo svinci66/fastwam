@@ -68,6 +68,7 @@ class ResidualSupportIndex:
         language_similarity_threshold: float,
         neighbors: int,
         score_neighbors: int = 3,
+        language_prototype_task_ids: np.ndarray | None = None,
         artifact_path: str | Path | None = None,
     ):
         observation_features = _finite_array(
@@ -99,8 +100,27 @@ class ResidualSupportIndex:
             raise ValueError("support reference arrays have inconsistent row counts")
         if baseline_actions.shape != residual_actions.shape:
             raise ValueError("baseline and residual action shapes must match")
-        if len(task_names) != language_prototypes.shape[0]:
-            raise ValueError("task names and language prototypes must match")
+        if not task_names:
+            raise ValueError("task_names must not be empty")
+        if language_prototype_task_ids is None:
+            if len(task_names) != language_prototypes.shape[0]:
+                raise ValueError(
+                    "legacy one-prototype-per-task support requires matching "
+                    "task names and language prototypes"
+                )
+            language_prototype_task_ids = np.arange(len(task_names), dtype=np.int64)
+        else:
+            language_prototype_task_ids = np.asarray(
+                language_prototype_task_ids, dtype=np.int64
+            ).reshape(-1)
+            if language_prototype_task_ids.shape != (language_prototypes.shape[0],):
+                raise ValueError(
+                    "language_prototype_task_ids must have one entry per prototype"
+                )
+            if np.any(language_prototype_task_ids < 0) or np.any(
+                language_prototype_task_ids >= len(task_names)
+            ):
+                raise ValueError("language prototype task mapping contains an invalid task")
         if np.any(task_ids < 0) or np.any(task_ids >= len(task_names)):
             raise ValueError("task_ids contain an invalid task index")
         if neighbors <= 0:
@@ -133,6 +153,7 @@ class ResidualSupportIndex:
         self.task_ids = task_ids
         self.task_names = tuple(task_names)
         self.language_prototypes = language_prototypes
+        self.language_prototype_task_ids = language_prototype_task_ids
         self.proprio_center = np.asarray(proprio_center, dtype=np.float32)
         self.proprio_scale = np.asarray(proprio_scale, dtype=np.float32)
         self.baseline_center = np.asarray(baseline_center, dtype=np.float32)
@@ -190,8 +211,9 @@ class ResidualSupportIndex:
         if norm <= 0.0:
             raise ValueError("language_feature has zero norm")
         similarities = self.language_prototypes @ (language / norm)
-        task_id = int(np.argmax(similarities))
-        similarity = float(similarities[task_id])
+        prototype_id = int(np.argmax(similarities))
+        task_id = int(self.language_prototype_task_ids[prototype_id])
+        similarity = float(similarities[prototype_id])
         if similarity < self.language_similarity_threshold:
             return None, similarity
         return task_id, similarity
@@ -340,6 +362,11 @@ class ResidualSupportIndex:
             task_ids=arrays["task_ids"],
             task_names=tuple(metadata["task_names"]),
             language_prototypes=arrays["language_prototypes"],
+            language_prototype_task_ids=(
+                arrays["language_prototype_task_ids"]
+                if "language_prototype_task_ids" in arrays
+                else None
+            ),
             proprio_center=arrays["proprio_center"],
             proprio_scale=arrays["proprio_scale"],
             baseline_center=arrays["baseline_center"],

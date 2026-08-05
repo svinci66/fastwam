@@ -146,4 +146,7 @@ if [[ ! -f "${SUPPORT_DIR}/metadata.json" ]]; then
     --device cuda
 fi
 
+conda run --no-capture-output -n "${CONDA_ENV}" python -c \
+  "import json,math,pathlib; p=pathlib.Path('${SUPPORT_DIR}/metadata.json'); m=json.loads(p.read_text()); keys=('state_threshold','action_threshold','state_increase_threshold'); assert all(math.isfinite(float(m[k])) for k in keys), {k:m[k] for k in keys}; assert int(m['num_language_prototypes']) >= len(m['task_names']); print({'support_index':str(p.parent),'task_count':len(m['task_names']),'language_prototypes':m['num_language_prototypes'],'thresholds':{k:m[k] for k in keys}})"
+
 printf 'Corrected RoboTwin post-training artifacts are ready: %s\n' "${RUN_ROOT}"

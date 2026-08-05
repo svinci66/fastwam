@@ -130,6 +130,44 @@ def _task_balanced_quantile(
     return float(values[order[index]])
 
 
+def _language_prototypes_by_task(
+    replay: ReplayBuffer,
+    language_features: np.ndarray,
+    *,
+    task_names: tuple[str, ...],
+) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    """Keep every observed instruction variant while sharing task support."""
+
+    task_to_id = {task: index for index, task in enumerate(task_names)}
+    prototypes: list[np.ndarray] = []
+    prototype_task_ids: list[int] = []
+    counts: dict[str, int] = {}
+    for task in task_names:
+        seen: set[bytes] = set()
+        for index, transition in enumerate(replay.transitions):
+            if _support_task_name(transition) != task:
+                continue
+            feature = np.asarray(language_features[index], dtype=np.float32).reshape(-1)
+            norm = float(np.linalg.norm(feature))
+            if not np.isfinite(norm) or norm <= 0.0:
+                raise ValueError(f"task {task!r} has an invalid language feature")
+            normalized = feature / norm
+            key = np.round(normalized, decimals=6).tobytes()
+            if key in seen:
+                continue
+            seen.add(key)
+            prototypes.append(normalized.astype(np.float32, copy=False))
+            prototype_task_ids.append(task_to_id[task])
+        if not seen:
+            raise ValueError(f"task {task!r} has no language prototype")
+        counts[task] = len(seen)
+    return (
+        np.stack(prototypes),
+        np.asarray(prototype_task_ids, dtype=np.int64),
+        counts,
+    )
+
+
 def main() -> None:
     args = parse_args()
     if not 0.0 < args.calibration_fraction < 1.0:
@@ -183,17 +221,15 @@ def main() -> None:
         [task_to_id[_support_task_name(replay.transitions[index])] for index in reference_indices],
         dtype=np.int64,
     )
-    language_prototypes = []
-    for task in task_names:
-        task_rows = [
-            index
-            for index in reference_indices
-            if _support_task_name(replay.transitions[index]) == task
-        ]
-        prototype = np.mean(arrays["language_feature"][task_rows], axis=0)
-        prototype /= np.linalg.norm(prototype)
-        language_prototypes.append(prototype.astype(np.float32))
-    language_prototypes_array = np.stack(language_prototypes)
+    (
+        language_prototypes_array,
+        language_prototype_task_ids,
+        language_prototypes_per_task,
+    ) = _language_prototypes_by_task(
+        replay,
+        arrays["language_feature"],
+        task_names=task_names,
+    )
 
     proprio_center, proprio_scale = _robust_center_scale(
         arrays["proprio"][reference_indices]
@@ -219,6 +255,7 @@ def main() -> None:
         task_ids=reference_task_ids,
         task_names=task_names,
         language_prototypes=language_prototypes_array,
+        language_prototype_task_ids=language_prototype_task_ids,
         proprio_center=proprio_center,
         proprio_scale=proprio_scale,
         baseline_center=baseline_center,
@@ -299,6 +336,7 @@ def main() -> None:
         task_ids=reference_task_ids,
         task_names=task_names,
         language_prototypes=language_prototypes_array,
+        language_prototype_task_ids=language_prototype_task_ids,
         proprio_center=proprio_center,
         proprio_scale=proprio_scale,
         baseline_center=baseline_center,
@@ -382,6 +420,16 @@ def main() -> None:
             np.asarray(increases, dtype=np.float32), increase_tasks, args.quantile
         )
     )
+    thresholds = {
+        "state_threshold": state_threshold,
+        "action_threshold": action_threshold,
+        "state_increase_threshold": state_increase_threshold,
+    }
+    if any(not np.isfinite(value) for value in thresholds.values()):
+        raise ValueError(
+            "support calibration produced non-finite thresholds; "
+            f"language routing or reference coverage is incomplete: {thresholds}"
+        )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -394,6 +442,7 @@ def main() -> None:
         action_local_radius=action_local_radius_array,
         task_ids=reference_task_ids,
         language_prototypes=language_prototypes_array,
+        language_prototype_task_ids=language_prototype_task_ids,
         proprio_center=proprio_center,
         proprio_scale=proprio_scale,
         baseline_center=baseline_center,
@@ -403,6 +452,8 @@ def main() -> None:
     calibration_summary = {
         "format": SUPPORT_INDEX_FORMAT,
         "task_names": list(task_names),
+        "num_language_prototypes": int(language_prototypes_array.shape[0]),
+        "language_prototypes_per_task": language_prototypes_per_task,
         "neighbors": args.neighbors,
         "score_neighbors": args.score_neighbors,
         "quantile": args.quantile,

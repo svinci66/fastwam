@@ -119,6 +119,7 @@ def test_support_index_round_trip(tmp_path: Path):
         action_local_radius=support.action_local_radius,
         task_ids=support.task_ids,
         language_prototypes=support.language_prototypes,
+        language_prototype_task_ids=support.language_prototype_task_ids,
         proprio_center=support.proprio_center,
         proprio_scale=support.proprio_scale,
         baseline_center=support.baseline_center,
@@ -141,4 +142,45 @@ def test_support_index_round_trip(tmp_path: Path):
     )
     loaded = ResidualSupportIndex.load(tmp_path)
     assert loaded.task_names == support.task_names
+    np.testing.assert_array_equal(
+        loaded.language_prototype_task_ids,
+        support.language_prototype_task_ids,
+    )
     assert loaded.state_threshold == support.state_threshold
+
+
+def test_support_gate_routes_multiple_language_prototypes_to_one_task() -> None:
+    support = ResidualSupportIndex(
+        observation_features=np.asarray([[1.0, 0.0]], dtype=np.float32),
+        proprio=np.asarray([[0.0]], dtype=np.float32),
+        baseline_actions=np.zeros((1, 2, 2), dtype=np.float32),
+        residual_actions=np.zeros((1, 2, 2), dtype=np.float32),
+        state_local_radius=np.ones(1, dtype=np.float32),
+        action_local_radius=np.ones(1, dtype=np.float32),
+        task_ids=np.asarray([0]),
+        task_names=("robotwin2.0/task_0002",),
+        language_prototypes=np.asarray(
+            [[1.0, 0.0], [0.0, 1.0]], dtype=np.float32
+        ),
+        language_prototype_task_ids=np.asarray([0, 0]),
+        proprio_center=np.asarray([0.0], dtype=np.float32),
+        proprio_scale=np.asarray([1.0], dtype=np.float32),
+        baseline_center=np.zeros((2, 2), dtype=np.float32),
+        baseline_scale=np.ones((2, 2), dtype=np.float32),
+        residual_scale=np.asarray([0.05, 0.0], dtype=np.float32),
+        state_threshold=1.0,
+        action_threshold=1.0,
+        state_increase_threshold=1.0,
+        language_similarity_threshold=0.99,
+        neighbors=1,
+        score_neighbors=1,
+    )
+    decision = support.evaluate(
+        observation_feature=np.asarray([1.0, 0.0], dtype=np.float32),
+        proprio=np.asarray([0.0], dtype=np.float32),
+        baseline_actions=np.zeros((2, 2), dtype=np.float32),
+        candidate_residual_actions=np.zeros((2, 2), dtype=np.float32),
+        language_feature=np.asarray([0.0, 1.0], dtype=np.float32),
+    )
+    assert decision.task_name == "robotwin2.0/task_0002"
+    assert decision.language_similarity == 1.0
