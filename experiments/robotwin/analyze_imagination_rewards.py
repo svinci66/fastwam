@@ -168,8 +168,14 @@ def encode_record_images(
         {phase: {} for phase in ("current", "actual", "predicted_goal")}
         for _ in records
     ]
+    print(
+        "[robotwin-replay-encoder] "
+        f"records={len(records)} images={len(images)} batch_size={batch_size} "
+        f"device={device} dtype={str(encoder_dtype).removeprefix('torch.')}",
+        flush=True,
+    )
     with torch.inference_mode():
-        for start in range(0, len(images), batch_size):
+        for batch_index, start in enumerate(range(0, len(images), batch_size)):
             batch = processor(images=images[start : start + batch_size], return_tensors="pt")
             output = model(
                 pixel_values=batch["pixel_values"].to(
@@ -181,6 +187,13 @@ def encode_record_images(
                 record_index, phase, camera = key
                 encoded[record_index][phase][camera] = feature.astype(
                     np.float32, copy=False
+                )
+            completed = min(start + batch_size, len(images))
+            if batch_index % 20 == 0 or completed == len(images):
+                print(
+                    "[robotwin-replay-encoder] "
+                    f"encoded={completed}/{len(images)}",
+                    flush=True,
                 )
     return encoded
 
