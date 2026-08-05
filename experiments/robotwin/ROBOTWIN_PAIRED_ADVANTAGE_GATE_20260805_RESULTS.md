@@ -70,3 +70,52 @@ Checkpoint:
 
 Segment summaries:
 `evaluate_results/robotwin_residual_online/robotwin_hanging_mug_paired_advantage_actor_aligned_v4_segmented_20260805_seed*/summary.json`.
+
+## Target-task actor-aligned v5 follow-up
+
+To test whether v4 was conservative because it had no target-task residual
+outcomes, five strictly paired `hanging_mug` captures were collected with the
+actual Q+OOD residual policy.  The baseline and residual runs used the same
+fixed seed, official instruction, and initial observation for every pair.  The
+outcomes were:
+
+| Seed | FastWAM baseline | Actual Q+OOD residual | Pair label |
+| --- | --- | --- | --- |
+| 4800001 | failure | success | improvement |
+| 4800002 | failure | success | improvement |
+| 4800003 | success | failure | regression |
+| 4800004 | success | failure | regression |
+| 4800005 | success | failure | regression |
+
+The ten captures contain 261 transitions (119 policy and 142 residual).  The
+single-seed `trial_idx=0` values were relabeled to their real environment seeds
+when building the replay, so paired-advantage grouping cannot accidentally
+match different episodes.  The new shard was merged with the 3366-transition
+actor-aligned replay, producing 3627 transitions.  The replay builder now
+supports repeatable `--env-seed-override INPUT_DIR=SEED` arguments for this
+restart-safe capture layout.
+
+The v5 gate was trained with equal outcomes from actual residual episodes
+treated as negative.  Its training split contains 26 episodes / 738
+transitions; the held-out split contains 8 episodes / 248 transitions.  The
+strict validation calibration gives 0% transition false positives, 41.4% true
+positives, threshold `0.999329`, and maximum ensemble disagreement `0.000243`.
+
+The paper-aligned v5 online evaluation still succeeds on 3/5 episodes, exactly
+matching the frozen FastWAM baseline (0 improvements, 0 regressions).  It
+approved only 1 of 119 replans and applied one residual intervention.  The
+remaining target-task online predictions have ensemble disagreements around
+0.89--0.99, far above the offline calibration range, so the OOD part of the
+gate continues to reject them.  Thus adding five target episodes made the
+classifier see both rescues and regressions, but did not yet provide enough
+coverage for reliable online authorization; the result is safe but not an
+improvement claim.
+
+Checkpoint:
+`evaluate_results/robotwin_residual_rl/robotwin_4task_paired_v2_iql_20260803/iql_20epoch_imagination_paired_gate_hanging_actual_v5/checkpoint.pt`.
+
+Replay:
+`evaluate_results/robotwin_residual_rl/robotwin_4task_paired_v2_iql_20260803/replay_with_actor_aligned_hanging_actual_pairs_20260805/`.
+
+Segment summaries:
+`evaluate_results/robotwin_residual_online/robotwin_hanging_mug_paired_advantage_hanging_actual_v5b_segmented_20260805_seed*/summary.json`.

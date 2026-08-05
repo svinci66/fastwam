@@ -60,6 +60,17 @@ def parse_args() -> argparse.Namespace:
         help="Keep only records whose trial index is at most this value.",
     )
     parser.add_argument(
+        "--env-seed-override",
+        action="append",
+        default=[],
+        metavar="INPUT_DIR=SEED",
+        help=(
+            "Override the raw trial index used as env_seed for every record from "
+            "an input directory. Repeat once per input directory when several "
+            "single-seed captures are merged."
+        ),
+    )
+    parser.add_argument(
         "--camera-normalization-manifest",
         type=Path,
         help=(
@@ -71,13 +82,47 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def discover_sourced_records(input_dirs: list[Path]) -> list[dict[str, Any]]:
+def parse_env_seed_overrides(values: list[str]) -> dict[str, int]:
+    overrides: dict[str, int] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(
+                f"--env-seed-override must have INPUT_DIR=SEED format, got {value!r}"
+            )
+        raw_path, raw_seed = value.rsplit("=", 1)
+        path = Path(raw_path).expanduser().resolve()
+        try:
+            seed = int(raw_seed)
+        except ValueError as exc:
+            raise ValueError(
+                f"--env-seed-override seed must be an integer, got {raw_seed!r}"
+            ) from exc
+        if str(path) in overrides:
+            raise ValueError(f"duplicate environment-seed override for {path}")
+        overrides[str(path)] = seed
+        overrides[path.name] = seed
+    return overrides
+
+
+def discover_sourced_records(
+    input_dirs: list[Path],
+    *,
+    env_seed_overrides: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
+    env_seed_overrides = env_seed_overrides or {}
     for source_index, input_dir in enumerate(input_dirs):
         source_id = f"source{source_index:03d}-{input_dir.resolve().name}"
+        resolved_input_dir = input_dir.expanduser().resolve()
+        override = env_seed_overrides.get(str(resolved_input_dir))
+        if override is None:
+            override = env_seed_overrides.get(resolved_input_dir.name)
         for record in discover_records([input_dir]):
             record = dict(record)
             record["source_id"] = source_id
+            if override is not None:
+                record["raw_trial_idx"] = int(record["trial_idx"])
+                record["trial_idx"] = int(override)
             records.append(record)
     return records
 
@@ -331,8 +376,12 @@ def main() -> None:
         if imitation_scales is None
         else np.asarray(imitation_scales, dtype=np.float32)
     )
+    env_seed_overrides = parse_env_seed_overrides(args.env_seed_override)
     records = filter_records_by_trial_range(
-        discover_sourced_records(args.input_dir),
+        discover_sourced_records(
+            args.input_dir,
+            env_seed_overrides=env_seed_overrides,
+        ),
         min_trial_index=args.min_trial_index,
         max_trial_index=args.max_trial_index,
     )
@@ -389,6 +438,11 @@ def main() -> None:
             "input_sources": sorted(
                 {str(record["source_id"]) for record in records}
             ),
+            "env_seed_overrides": {
+                key: value
+                for key, value in sorted(env_seed_overrides.items())
+                if "/" in key
+            },
             "trial_index_filter": {
                 "minimum": args.min_trial_index,
                 "maximum": args.max_trial_index,

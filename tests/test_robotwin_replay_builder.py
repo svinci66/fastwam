@@ -10,6 +10,7 @@ from experiments.robotwin.build_residual_rl_replay import (
     load_camera_normalization_manifest,
     pad_action_chunk,
     pad_environment_rewards,
+    parse_env_seed_overrides,
     validate_episode_records,
 )
 from experiments.robotwin.imagination_reward_utils import ROBOTWIN_CAMERA_NAMES
@@ -86,6 +87,32 @@ def test_discover_sourced_records_keeps_input_episodes_separate(monkeypatch, tmp
     )
     records = discover_sourced_records([first, second])
     assert len({record["source_id"] for record in records}) == 2
+
+
+def test_discover_sourced_records_can_override_single_seed_captures(
+    monkeypatch, tmp_path
+) -> None:
+    input_dir = tmp_path / "seed_capture"
+    input_dir.mkdir()
+
+    def fake_discover(paths):
+        return [{"record_dir": str(paths[0]), "trial_idx": 0}]
+
+    monkeypatch.setattr(
+        "experiments.robotwin.build_residual_rl_replay.discover_records",
+        fake_discover,
+    )
+    overrides = parse_env_seed_overrides([f"{input_dir}=4800001"])
+    records = discover_sourced_records([input_dir], env_seed_overrides=overrides)
+    assert records[0]["trial_idx"] == 4800001
+    assert records[0]["raw_trial_idx"] == 0
+
+
+def test_parse_env_seed_overrides_rejects_malformed_values(tmp_path) -> None:
+    with pytest.raises(ValueError, match="INPUT_DIR=SEED"):
+        parse_env_seed_overrides([str(tmp_path)])
+    with pytest.raises(ValueError, match="must be an integer"):
+        parse_env_seed_overrides([f"{tmp_path}=seed"])
 
 
 def test_filter_records_by_trial_range_is_inclusive() -> None:
