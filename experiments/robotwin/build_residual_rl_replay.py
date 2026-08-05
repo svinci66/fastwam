@@ -22,6 +22,7 @@ from experiments.robotwin.analyze_imagination_rewards import (
     discover_records,
     encode_record_images,
     fit_task_balanced_camera_normalization,
+    resolve_encoder_dtype,
 )
 from experiments.robotwin.imagination_reward_utils import ROBOTWIN_CAMERA_NAMES
 from fastwam.rl.replay_buffer import ReplayBuffer, ReplayTransition
@@ -47,6 +48,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    parser.add_argument(
+        "--encoder-dtype",
+        default="auto",
+        choices=("auto", "fp32", "bf16", "fp16"),
+        help="SigLIP precision; auto matches online bf16 on CUDA and fp32 on CPU.",
     )
     parser.add_argument("--batch-size", type=int, default=24)
     parser.add_argument(
@@ -178,9 +185,26 @@ def combine_camera_features(camera_features: dict[str, np.ndarray]) -> np.ndarra
             f"expected camera features {ROBOTWIN_CAMERA_NAMES}, "
             f"got {sorted(camera_features)}"
         )
-    combined = np.concatenate(
-        [camera_features[camera] for camera in ROBOTWIN_CAMERA_NAMES]
-    ).astype(np.float32)
+    # Keep replay features byte-for-byte aligned with
+    # ``OnlineResidualPolicy.combine_normalized_camera_features``: normalize
+    # each camera independently before concatenating the camera embeddings,
+    # then normalize the fused vector once more.  A single normalization after
+    # concatenation changes the relative camera weights and makes an offline
+    # replay disagree with the online gate.
+    normalized = []
+    feature_dims: set[int] = set()
+    for camera in ROBOTWIN_CAMERA_NAMES:
+        feature = np.asarray(camera_features[camera], dtype=np.float32).reshape(-1)
+        if feature.size == 0 or not np.all(np.isfinite(feature)):
+            raise ValueError(f"camera feature {camera!r} must be finite and non-empty")
+        norm = float(np.linalg.norm(feature))
+        if not np.isfinite(norm) or norm <= 0.0:
+            raise ValueError(f"camera feature {camera!r} has invalid norm {norm}")
+        normalized.append(feature / norm)
+        feature_dims.add(int(feature.size))
+    if len(feature_dims) != 1:
+        raise ValueError(f"camera feature dimensions differ: {sorted(feature_dims)}")
+    combined = np.concatenate(normalized).astype(np.float32)
     norm = float(np.linalg.norm(combined))
     if not np.isfinite(norm) or norm <= 0.0:
         raise ValueError(f"combined camera feature has invalid norm {norm}")
@@ -377,6 +401,7 @@ def main() -> None:
         else np.asarray(imitation_scales, dtype=np.float32)
     )
     env_seed_overrides = parse_env_seed_overrides(args.env_seed_override)
+    encoder_dtype = resolve_encoder_dtype(args.encoder_dtype, device=args.device)
     records = filter_records_by_trial_range(
         discover_sourced_records(
             args.input_dir,
@@ -395,6 +420,7 @@ def main() -> None:
         encoder_path=args.encoder_path,
         device=args.device,
         batch_size=args.batch_size,
+        encoder_dtype=encoder_dtype,
     )
     normalization = (
         fit_task_balanced_camera_normalization(records, encoded)
@@ -429,6 +455,7 @@ def main() -> None:
             },
             "camera_normalization": normalization,
             "camera_image_size": 224,
+            "encoder_dtype": str(encoder_dtype).removeprefix("torch."),
             "feature_fusion": "per_camera_l2_then_head_left_right_concat_l2_v1",
             "language_encoder_version": next(iter(language_versions)),
             "language_pooling": "fastwam_umt5_masked_mean_v1",

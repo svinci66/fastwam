@@ -28,12 +28,68 @@ from fastwam.rl.rewards import (
 )
 
 
+# Keep replay construction byte-for-byte aligned with
+# ``OnlineResidualPolicy.encode_observation``.  The online path first resizes
+# each split camera view to this square resolution and only then invokes the
+# SigLIP processor.
+ROBOTWIN_CAMERA_IMAGE_SIZE = 224
+
+
+def resolve_encoder_dtype(value: str, *, device: str) -> torch.dtype:
+    """Resolve the replay encoder precision used by online residual inference."""
+
+    key = str(value).strip().lower()
+    if key == "auto":
+        key = "bf16" if torch.device(device).type == "cuda" else "fp32"
+    mapping = {
+        "fp32": torch.float32,
+        "float32": torch.float32,
+        "bf16": torch.bfloat16,
+        "bfloat16": torch.bfloat16,
+        "fp16": torch.float16,
+        "float16": torch.float16,
+    }
+    if key not in mapping:
+        raise ValueError(
+            f"Unsupported encoder dtype {value!r}; expected auto, fp32, bf16, or fp16"
+        )
+    dtype = mapping[key]
+    if torch.device(device).type == "cpu" and dtype == torch.float16:
+        raise ValueError("fp16 replay encoding is not supported on CPU")
+    return dtype
+
+
+def prepare_robotwin_camera_view(
+    view: np.ndarray,
+    *,
+    image_size: int = ROBOTWIN_CAMERA_IMAGE_SIZE,
+) -> Image.Image:
+    """Apply the same per-camera resize used by online residual inference."""
+
+    if image_size <= 0:
+        raise ValueError("image_size must be positive")
+    array = np.asarray(view)
+    if array.ndim != 3 or array.shape[2] != 3:
+        raise ValueError(f"camera view must be RGB [H,W,3], got {array.shape}")
+    if not np.issubdtype(array.dtype, np.integer):
+        raise ValueError(f"camera view must use an integer dtype, got {array.dtype}")
+    return Image.fromarray(np.clip(array, 0, 255).astype(np.uint8)).resize(
+        (image_size, image_size), Image.Resampling.BILINEAR
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", action="append", type=Path, required=True)
     parser.add_argument("--encoder-path", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--encoder-dtype",
+        default="auto",
+        choices=("auto", "fp32", "bf16", "fp16"),
+        help="SigLIP precision; auto matches online bf16 on CUDA and fp32 on CPU.",
+    )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--clip-value", type=float, default=0.1)
     parser.add_argument("--minimum-paired-trials", type=int, default=15)
@@ -78,14 +134,21 @@ def encode_record_images(
     encoder_path: Path,
     device: str,
     batch_size: int,
+    camera_image_size: int = ROBOTWIN_CAMERA_IMAGE_SIZE,
+    encoder_dtype: torch.dtype = torch.float32,
 ) -> list[dict[str, dict[str, np.ndarray]]]:
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    if camera_image_size <= 0:
+        raise ValueError("camera_image_size must be positive")
     from transformers import SiglipImageProcessor, SiglipVisionModel
 
     processor = SiglipImageProcessor.from_pretrained(encoder_path, local_files_only=True)
     model = SiglipVisionModel.from_pretrained(
-        encoder_path, local_files_only=True, low_cpu_mem_usage=True
+        encoder_path,
+        local_files_only=True,
+        low_cpu_mem_usage=True,
+        torch_dtype=encoder_dtype,
     ).to(device).eval()
     images: list[Image.Image] = []
     keys: list[tuple[int, str, str]] = []
@@ -94,7 +157,11 @@ def encode_record_images(
             with Image.open(record[f"{phase}_path"]) as image:
                 views = split_robotwin_camera_views(image.convert("RGB"))
             for camera in ROBOTWIN_CAMERA_NAMES:
-                images.append(Image.fromarray(views[camera]))
+                images.append(
+                    prepare_robotwin_camera_view(
+                        views[camera], image_size=camera_image_size
+                    )
+                )
                 keys.append((record_index, phase, camera))
 
     encoded: list[dict[str, dict[str, np.ndarray]]] = [
@@ -104,7 +171,11 @@ def encode_record_images(
     with torch.inference_mode():
         for start in range(0, len(images), batch_size):
             batch = processor(images=images[start : start + batch_size], return_tensors="pt")
-            output = model(pixel_values=batch["pixel_values"].to(device)).pooler_output
+            output = model(
+                pixel_values=batch["pixel_values"].to(
+                    device=device, dtype=encoder_dtype
+                )
+            ).pooler_output
             output = torch.nn.functional.normalize(output.float(), dim=-1).cpu().numpy()
             for key, feature in zip(keys[start : start + batch_size], output):
                 record_index, phase, camera = key
@@ -420,12 +491,14 @@ def analyze(
 
 def main() -> None:
     args = parse_args()
+    encoder_dtype = resolve_encoder_dtype(args.encoder_dtype, device=args.device)
     records = discover_records(args.input_dir)
     encoded = encode_record_images(
         records,
         encoder_path=args.encoder_path,
         device=args.device,
         batch_size=args.batch_size,
+        encoder_dtype=encoder_dtype,
     )
     rows, episodes, summary = analyze(
         records,
@@ -442,6 +515,7 @@ def main() -> None:
             for item in payload:
                 stream.write(json.dumps(item, ensure_ascii=False) + "\n")
     summary["encoder_path"] = str(args.encoder_path.resolve())
+    summary["encoder_dtype"] = str(encoder_dtype).removeprefix("torch.")
     (args.output_dir / "reward_audit_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )

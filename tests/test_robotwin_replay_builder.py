@@ -2,6 +2,7 @@ import json
 
 import numpy as np
 import pytest
+import torch
 
 from experiments.robotwin.build_residual_rl_replay import (
     combine_camera_features,
@@ -13,19 +14,47 @@ from experiments.robotwin.build_residual_rl_replay import (
     parse_env_seed_overrides,
     validate_episode_records,
 )
+from experiments.robotwin.analyze_imagination_rewards import (
+    ROBOTWIN_CAMERA_IMAGE_SIZE,
+    prepare_robotwin_camera_view,
+    resolve_encoder_dtype,
+)
 from experiments.robotwin.imagination_reward_utils import ROBOTWIN_CAMERA_NAMES
 
 
 def test_combine_camera_features_uses_all_three_views() -> None:
     features = {
-        camera: np.full(4, index + 1, dtype=np.float32)
+        camera: np.asarray(
+            [1.0 + index, 2.0 + index, 0.5 - index, -1.0], dtype=np.float32
+        )
         for index, camera in enumerate(ROBOTWIN_CAMERA_NAMES)
     }
     combined = combine_camera_features(features)
     assert combined.shape == (12,)
     assert np.linalg.norm(combined) == pytest.approx(1.0)
-    assert np.all(combined[:4] < combined[4:8])
-    assert np.all(combined[4:8] < combined[8:])
+    expected_blocks = [
+        features[camera] / np.linalg.norm(features[camera])
+        for camera in ROBOTWIN_CAMERA_NAMES
+    ]
+    expected = np.concatenate(expected_blocks)
+    expected = expected / np.linalg.norm(expected)
+    np.testing.assert_allclose(combined, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_robotwin_replay_camera_preprocessing_matches_online_resize() -> None:
+    view = np.zeros((128, 160, 3), dtype=np.uint8)
+    prepared = prepare_robotwin_camera_view(view)
+    assert prepared.size == (
+        ROBOTWIN_CAMERA_IMAGE_SIZE,
+        ROBOTWIN_CAMERA_IMAGE_SIZE,
+    )
+
+
+def test_replay_encoder_dtype_auto_matches_online_device_precision() -> None:
+    assert resolve_encoder_dtype("auto", device="cpu") == torch.float32
+    assert resolve_encoder_dtype("bf16", device="cpu") == torch.bfloat16
+    with pytest.raises(ValueError, match="fp16 replay encoding"):
+        resolve_encoder_dtype("fp16", device="cpu")
 
 
 def test_pad_partial_robotwin_chunk_repeats_last_action_and_zeros_rewards() -> None:
