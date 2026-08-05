@@ -8,6 +8,7 @@ CHECKPOINT="${CHECKPOINT:-${RUN_ROOT}/iql_corrected_imagination_20epoch_paired_g
 NO_IMAGINATION_CHECKPOINT="${NO_IMAGINATION_CHECKPOINT:-${RUN_ROOT}/iql_corrected_imagination_20epoch/checkpoint.pt}"
 SUPPORT_INDEX="${SUPPORT_INDEX:-${RUN_ROOT}/support_index_corrected_q95}"
 SEED_MANIFEST="${SEED_MANIFEST:-${PROJECT_ROOT}/experiments/robotwin/manifests/robotwin_4task_heldout5_expert_seeds_20260804.json}"
+TRIAL_OFFSET="${TRIAL_OFFSET:-0}"
 
 for path in "${CHECKPOINT}" "${NO_IMAGINATION_CHECKPOINT}" "${SUPPORT_INDEX}/metadata.json" "${SEED_MANIFEST}"; do
   [[ -e "${path}" ]] || {
@@ -21,6 +22,7 @@ env \
   VARIANTS="${VARIANTS:-baseline,imagination}" \
   TASKS="${TASKS:-adjust_bottle,hanging_mug,open_microwave,place_can_basket}" \
   EPISODES="${EPISODES:-5}" \
+  TRIAL_OFFSET="${TRIAL_OFFSET}" \
   IMAGINATION_CHECKPOINT="${CHECKPOINT}" \
   NO_IMAGINATION_CHECKPOINT="${NO_IMAGINATION_CHECKPOINT}" \
   RESIDUAL_ENCODER_VERSION=siglip-so400m-patch14-384-local-20260803 \
