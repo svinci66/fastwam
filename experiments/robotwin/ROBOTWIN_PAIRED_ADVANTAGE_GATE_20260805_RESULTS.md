@@ -145,3 +145,15 @@ cannot communicate with the driver).  CPU bf16 is suitable for a small code
 path smoke check but is too slow for rebuilding the complete replay; the exact
 bf16 rebuild is queued until CUDA is restored.  No threshold relaxation or
 additional data collection was started during this audit.
+
+## Imagination-reward sanity check (pre-correction diagnostic)
+
+On the previously built five-pair shard, the reward is informative only when
+normalized per replan.  The residual-minus-baseline mean reward was positive on
+both rescue pairs (`+0.0210`, `+0.0171`) and negative on all three regression
+pairs (`-0.0205`, `-0.0298`, `-0.0151`), giving the expected sign on 5/5 pairs.
+Raw episode sums are not a valid substitute: failed episodes execute more
+replans than successful episodes, so the sum is confounded by episode length.
+This is a useful preliminary signal, not a final result—the shard was encoded
+before the preprocessing/precision audit and must be recomputed on the
+corrected replay before it is used as evidence for training.
