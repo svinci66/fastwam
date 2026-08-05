@@ -5,6 +5,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ROOT="${RUN_ROOT:-${PROJECT_ROOT}/evaluate_results/robotwin_residual_rl/robotwin_4task_paired_v2_iql_20260803}"
 RUN_NAME="${RUN_NAME:-robotwin_hanging_mug_paired_advantage_paired5_20260805}"
 EPISODES="${EPISODES:-5}"
+PAIRED_CHECKPOINT="${PAIRED_CHECKPOINT:-${RUN_ROOT}/iql_20epoch_imagination_paired_gate_v1/checkpoint.pt}"
+VARIANTS_CSV="${VARIANTS:-baseline,imagination}"
 if [[ -z "${SEED_MANIFEST_PATH:-}" ]]; then
   case "${EPISODES}" in
     1)
@@ -26,7 +28,7 @@ env \
   "BASE_SEED=47" \
   "ENVIRONMENT_START_SEED=4800000" \
   "RUN_NAME=${RUN_NAME}" \
-  "VARIANTS=baseline,imagination" \
+  "VARIANTS=${VARIANTS_CSV}" \
   "INFERENCE_STEPS=10" \
   "REPLAN_STEPS=24" \
   "TEXT_CFG_SCALE=1.0" \
@@ -37,7 +39,7 @@ env \
   "PAPER_ALIGNED=true" \
   "STRICT_PAIRED=true" \
   "SEED_MANIFEST_PATH=${SEED_MANIFEST_PATH}" \
-  "IMAGINATION_CHECKPOINT=${RUN_ROOT}/iql_20epoch_imagination_paired_gate_v1/checkpoint.pt" \
+  "IMAGINATION_CHECKPOINT=${PAIRED_CHECKPOINT}" \
   "NO_IMAGINATION_CHECKPOINT=${RUN_ROOT}/iql_5epoch_no_imagination/checkpoint.pt" \
   "RESIDUAL_ENCODER_VERSION=siglip-so400m-patch14-384-local-20260803" \
   "RESIDUAL_LANGUAGE_MODE=training_canonical" \

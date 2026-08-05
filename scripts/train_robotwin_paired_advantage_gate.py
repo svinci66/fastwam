@@ -37,6 +37,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--include-residual-equal-outcomes-as-negative",
+        action="store_true",
+        help=(
+            "Treat an executed residual episode that ties its paired FastWAM "
+            "baseline as a non-improving negative. Equal controlled-corruption "
+            "episodes remain excluded."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -53,7 +62,13 @@ def main() -> None:
     checkpoint = torch.load(args.base_checkpoint, map_location="cpu", weights_only=False)
     if checkpoint.get("format") != "fastwam_residual_iql_v1":
         raise ValueError("base checkpoint must be fastwam_residual_iql_v1")
-    config = PairedAdvantageTrainingConfig(epochs=args.epochs, seed=args.seed)
+    config = PairedAdvantageTrainingConfig(
+        epochs=args.epochs,
+        seed=args.seed,
+        include_residual_equal_outcomes_as_negative=(
+            args.include_residual_equal_outcomes_as_negative
+        ),
+    )
     train_examples = build_paired_advantage_examples(replay, config, split="train")
     validation_examples = build_paired_advantage_examples(
         replay, config, split="validation"

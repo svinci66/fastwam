@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "description": "Single-seed recovery manifest for segmented paper-aligned hanging_mug evaluation.",
+    "episodes_per_task": 1,
+    "task_config": "demo_clean"
+  },
+  "hanging_mug": {
+    "seeds": [4800002],
+    "instructions": ["Pick the cylindrical mug with the left arm, rotate, place it, then hang it on the medium-sized rack."]
+  }
+}

@@ -77,3 +77,53 @@ def test_paired_prediction_threshold_rejects_validation_negatives():
     summary = summarize_paired_predictions(real, probabilities)
     assert summary["transition_false_positive_rate"] == 0.0
     assert summary["transition_true_positive_rate"] == 1.0
+
+
+def test_residual_equal_outcomes_can_be_strict_non_improvement_negatives():
+    replay = ReplayBuffer(
+        _episode("train-base-fail", "policy", 0, False)
+        + _episode("train-residual-positive", "residual", 0, True)
+        + _episode("train-base-fail-two", "policy", 1, False)
+        + _episode("train-residual-equal", "residual", 1, False)
+        + _episode("train-controlled-equal", "hold", 1, False)
+        + _episode("val-base-fail", "policy", 4, False)
+        + _episode("val-positive", "expert", 4, True)
+        + _episode("val-base-fail-two", "policy", 9, False)
+        + _episode("val-residual-equal", "residual", 9, False)
+    )
+    config = PairedAdvantageTrainingConfig(
+        include_residual_equal_outcomes_as_negative=True
+    )
+    train = build_paired_advantage_examples(replay, config, split="train")
+    validation = build_paired_advantage_examples(
+        replay, config, split="validation"
+    )
+    assert set(train.labels.tolist()) == {0.0, 1.0}
+    assert "train-residual-equal" in train.episode_ids
+    assert "train-controlled-equal" not in train.episode_ids
+    assert set(validation.labels.tolist()) == {0.0, 1.0}
+
+
+def test_paired_prediction_threshold_can_calibrate_above_point_999():
+    from fastwam.rl.paired_advantage import PairedAdvantageExamples
+
+    examples = PairedAdvantageExamples(
+        indices=np.arange(4),
+        labels=np.asarray([0.0, 0.0, 1.0, 1.0], dtype=np.float32),
+        weights=np.ones(4),
+        episode_ids=("n0", "n1", "p0", "p1"),
+        split="validation",
+    )
+    probabilities = np.asarray(
+        [
+            [0.99905, 0.99910],
+            [0.99907, 0.99908],
+            [0.99930, 0.99940],
+            [0.99920, 0.99925],
+        ],
+        dtype=np.float32,
+    )
+    summary = summarize_paired_predictions(examples, probabilities)
+    assert 0.999 < summary["recommended_threshold"] < 1.0
+    assert summary["transition_false_positive_rate"] == 0.0
+    assert summary["transition_true_positive_rate"] == 1.0

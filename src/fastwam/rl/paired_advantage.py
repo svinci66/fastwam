@@ -2,8 +2,10 @@
 
 The gate does not regress the absolute return used by IQL.  It learns whether a
 candidate action chunk came from an episode that outperformed the clean
-FastWAM episode with the same task and environment seed.  Equal-outcome pairs
-are intentionally left unlabeled.
+FastWAM episode with the same task and environment seed.  Equal controlled-
+corruption outcomes are left unlabeled.  Executed residual ties can optionally
+be labeled as non-improving negatives so the gate cannot learn only from the
+rare successful residual rollouts.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ class PairedAdvantageTrainingConfig:
     max_grad_norm: float = 1.0
     validation_seed_modulus: int = 5
     validation_seed_remainder: int = 4
+    include_residual_equal_outcomes_as_negative: bool = False
     seed: int = 42
 
     def validate(self) -> None:
@@ -109,7 +112,14 @@ def build_paired_advantage_examples(
         baseline_success = bool(episode_rows[baseline_id]["success"])
         candidate_success = bool(row["success"])
         if baseline_success == candidate_success:
-            continue
+            if not (
+                config.include_residual_equal_outcomes_as_negative
+                and row["behavior"] == "residual"
+            ):
+                continue
+            label = 0
+        else:
+            label = int(candidate_success and not baseline_success)
         is_validation = (
             int(row["env_seed"]) % config.validation_seed_modulus
             == config.validation_seed_remainder
@@ -117,7 +127,7 @@ def build_paired_advantage_examples(
         if is_validation != (split == "validation"):
             continue
         selected.append(
-            (episode_id, list(row["indices"]), int(candidate_success and not baseline_success))
+            (episode_id, list(row["indices"]), label)
         )
 
     labels_present = {label for _, _, label in selected}
@@ -290,7 +300,14 @@ def summarize_paired_predictions(
     positive = conservative[examples.labels == 1.0]
     if negative.size == 0 or positive.size == 0:
         raise ValueError("summary requires both labels")
-    threshold = min(0.999, max(0.5, float(np.max(negative)) + 1e-4))
+    max_negative = max(0.5, float(np.max(negative)))
+    if max_negative >= 1.0:
+        raise ValueError(
+            "cannot calibrate a strict threshold above a saturated negative"
+        )
+    threshold = float(
+        np.nextafter(np.float32(max_negative), np.float32(1.0), dtype=np.float32)
+    )
     approved = conservative >= threshold
     disagreement = np.abs(probabilities[:, 0] - probabilities[:, 1])
     episode_probabilities: dict[str, list[float]] = defaultdict(list)
@@ -315,7 +332,9 @@ def summarize_paired_predictions(
         "positive_episodes": sum(row["label"] for row in episode_rows),
         "negative_episodes": sum(1 - row["label"] for row in episode_rows),
         "recommended_threshold": threshold,
-        "recommended_max_disagreement": float(np.quantile(disagreement, 0.95)),
+        "recommended_max_disagreement": float(
+            np.quantile(disagreement[examples.labels == 1.0], 0.95)
+        ),
         "transition_true_positive_rate": float(np.mean(approved[examples.labels == 1.0])),
         "transition_false_positive_rate": float(np.mean(approved[examples.labels == 0.0])),
         "transition_brier": float(np.mean(np.square(conservative - examples.labels))),
