@@ -119,3 +119,29 @@ Replay:
 
 Segment summaries:
 `evaluate_results/robotwin_residual_online/robotwin_hanging_mug_paired_advantage_hanging_actual_v5b_segmented_20260805_seed*/summary.json`.
+
+## Deterministic preprocessing audit (2026-08-05)
+
+Before using the five target-task pairs for another training run, the saved
+`hanging_mug` seed-4800001 capture was replayed through the residual inference
+inputs.  It contains 38 replan records and preserves the online initial-state
+hash.  The audit found that the replay builder did not explicitly document the
+online camera preprocessing and precision: the online path resizes each split
+camera view to 224x224 before SigLIP, and the evaluation checkpoint uses bf16.
+Those details matter because the paired gate is evaluated at a very high
+threshold.
+
+The replay path now performs the same 224x224 per-camera resize, records the
+SigLIP precision in replay provenance, checks that precision when loading new
+checkpoints, and retains per-camera normalization before feature fusion.  The
+changes are pushed as commits `13fb76b` and `ed458c6`; 37 focused regression
+tests pass.  Existing v5 checkpoints and replay shards were deliberately not
+declared valid after this audit, because they were built before the precision
+metadata was available.  A corrected full replay and a fresh gate/actor
+training run must therefore precede any new success-rate claim.
+
+The machine reboot also left the NVIDIA driver unavailable (`nvidia-smi`
+cannot communicate with the driver).  CPU bf16 is suitable for a small code
+path smoke check but is too slow for rebuilding the complete replay; the exact
+bf16 rebuild is queued until CUDA is restored.  No threshold relaxation or
+additional data collection was started during this audit.
