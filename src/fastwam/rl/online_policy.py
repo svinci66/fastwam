@@ -453,6 +453,11 @@ class OnlineResidualPolicy:
                 "camera_image_size": int(camera_image_size),
                 "feature_fusion": str(feature_fusion),
             }
+            # New replay manifests record the SigLIP precision because bf16
+            # versus fp32 can move a high-confidence gate near its threshold.
+            # Keep legacy checkpoints loadable when this field is absent.
+            if "encoder_dtype" in provenance:
+                expected["encoder_dtype"] = str(encoder_dtype).removeprefix("torch.")
             mismatches = {
                 key: {"checkpoint": provenance.get(key), "requested": value}
                 for key, value in expected.items()

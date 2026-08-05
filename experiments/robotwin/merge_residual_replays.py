@@ -63,6 +63,7 @@ def merge_replays(input_replays: list[Path]) -> tuple[ReplayBuffer, dict]:
         "camera_weights",
         "camera_image_size",
         "feature_fusion",
+        "encoder_dtype",
         "language_encoder_version",
         "language_pooling",
         "imagination_reward_type",
@@ -73,7 +74,10 @@ def merge_replays(input_replays: list[Path]) -> tuple[ReplayBuffer, dict]:
     for field in encoder_provenance_fields:
         values = {
             json.dumps(
-                manifest.get("provenance", {}).get(field), sort_keys=True
+                manifest.get("provenance", {}).get(field, "fp32")
+                if field == "encoder_dtype"
+                else manifest.get("provenance", {}).get(field),
+                sort_keys=True,
             )
             for manifest in manifests
         }
@@ -82,6 +86,8 @@ def merge_replays(input_replays: list[Path]) -> tuple[ReplayBuffer, dict]:
                 f"Replay provenance disagrees on {field}: {sorted(values)}"
             )
         value = manifests[0].get("provenance", {}).get(field)
+        if field == "encoder_dtype" and value is None:
+            value = "fp32"
         if value is None:
             raise ValueError(f"Replay provenance is missing required field {field}")
         shared_encoder_provenance[field] = value
