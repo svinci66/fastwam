@@ -157,3 +157,61 @@ replans than successful episodes, so the sum is confounded by episode length.
 This is a useful preliminary signal, not a final result—the shard was encoded
 before the preprocessing/precision audit and must be recomputed on the
 corrected replay before it is used as evidence for training.
+
+## Corrected post-training and Q-margin online check (2026-08-05)
+
+CUDA was restored and verified on the RTX 5090 with PyTorch 2.7.1+cu128,
+including a finite bf16 matrix multiplication.  The corrected 224x224
+per-camera, bf16 replay was rebuilt from scratch with 3627 transitions and
+32643 images.  Its manifest hash is
+`22404ac...`; the new per-camera normalization statistics are recorded in the
+replay manifest rather than inherited from a pre-audit artifact.
+
+A fresh 20-epoch IQL actor/dual-Q checkpoint and a 30-epoch paired gate were
+trained from that replay.  The corrected support index contains four supported
+tasks and nine language prototypes.  Its finite q95 thresholds are 1.379398
+for state distance, 2.412055 for action distance, and 0.352421 for state
+increase.  `blocks_ranking_size` is intentionally rejected because the replay
+does not contain successful support episodes for that task.  The strict paired
+classifier still gives effectively zero target-task intervention coverage, so
+it remains disabled for this online check rather than being relaxed after
+validation.
+
+The corrected imagination reward preserves the desired episode-level ordering
+on all five target pairs when averaged per replan: both rescue pairs have a
+positive residual-minus-baseline delta, while all three regressions have a
+negative delta.  This supports using imagination consistency as one reward
+component, but does not make it a complete task reward.
+
+The first paper-aligned online smoke used dual Q, OOD support, outcome
+confirmation, and Q margin 0.0.  It rescued baseline-failure seed 4800001, but
+regressed baseline-success seed 4800003 after two low-confidence early
+interventions.  A clean pure-FastWAM rerun reproduced success on seed 4800003
+with the same official instruction, initial-state hash, 10 inference steps,
+and 24-step replanning, confirming that the failure was a residual regression.
+
+The minimum threshold change suggested directly by those Q values was then
+tested without retraining:
+
+| Seed | Frozen FastWAM | Q margin 0.0 | Q margin 0.003 | Margin-0.003 interventions |
+| --- | --- | --- | --- | --- |
+| 4800001 | failure | success | success | 3 |
+| 4800003 | success | failure | success | 0 |
+
+At margin 0.003, seed 4800001 retains three high-confidence corrections and is
+still rescued.  Seed 4800003 rejects both previously harmful candidates and
+preserves the base policy's success.  This is a useful rescue/safety feasibility
+pair, not a success-rate claim; the next evaluation should freeze this setting
+and expand to the remaining fixed seeds before any ablation or architecture
+change.
+
+Artifacts:
+
+- Corrected replay/checkpoints/support index:
+  `evaluate_results/robotwin_residual_rl/robotwin_corrected_posttrain_20260805/`.
+- Margin-0.003 summaries:
+  `evaluate_results/robotwin_residual_online/robotwin_hanging_mug_corrected_qood_outcome_margin003_seed480000{1,3}_20260805/summary.json`.
+- Easy-to-find comparison videos:
+  `evaluate_results/robotwin_residual_online/robotwin_corrected_margin003_examples_20260805/`.
+- Reproduction launcher:
+  `scripts/run_robotwin_corrected_qood_margin003_pair.sh`.
