@@ -56,6 +56,12 @@ def _episode_successes(replay: ReplayBuffer) -> dict[str, bool]:
     return dict(success)
 
 
+def _support_task_name(transition) -> str:
+    """Return a stable task identity independent of instruction wording."""
+
+    return f"{transition.task_suite}/task_{int(transition.task_id):04d}"
+
+
 def _support_episode_indices(
     replay: ReplayBuffer,
 ) -> dict[str, list[str]]:
@@ -66,7 +72,7 @@ def _support_episode_indices(
             transition.behavior_mode in {"expert", "policy"}
             and successes[transition.episode_id]
         ):
-            by_task[transition.task_description].add(transition.episode_id)
+            by_task[_support_task_name(transition)].add(transition.episode_id)
     return {task: sorted(episodes) for task, episodes in by_task.items()}
 
 
@@ -174,7 +180,7 @@ def main() -> None:
     task_names = tuple(sorted(episodes_by_task))
     task_to_id = {task: index for index, task in enumerate(task_names)}
     reference_task_ids = np.asarray(
-        [task_to_id[replay.transitions[index].task_description] for index in reference_indices],
+        [task_to_id[_support_task_name(replay.transitions[index])] for index in reference_indices],
         dtype=np.int64,
     )
     language_prototypes = []
@@ -182,7 +188,7 @@ def main() -> None:
         task_rows = [
             index
             for index in reference_indices
-            if replay.transitions[index].task_description == task
+            if _support_task_name(replay.transitions[index]) == task
         ]
         prototype = np.mean(arrays["language_feature"][task_rows], axis=0)
         prototype /= np.linalg.norm(prototype)
@@ -237,7 +243,7 @@ def main() -> None:
             observation_feature=arrays["observation_feature"][replay_index],
             proprio=arrays["proprio"][replay_index],
             baseline_actions=arrays["baseline_actions"][replay_index],
-            task_id=task_to_id[transition.task_description],
+            task_id=task_to_id[_support_task_name(transition)],
         )
         different_episode = (
             reference_episode_ids[candidates] != transition.episode_id
@@ -344,12 +350,12 @@ def main() -> None:
             state_scores.append(observed_decision.state_score)
             action_scores.append(observed_decision.action_score)
             candidate_action_scores.append(candidate_decision.action_score)
-            calibration_tasks.append(transition.task_description)
+            calibration_tasks.append(_support_task_name(transition))
             state_scores_by_episode[transition.episode_id].append(
                 (
                     transition.transition_index,
                     observed_decision.state_score,
-                    transition.task_description,
+                    _support_task_name(transition),
                 )
             )
 

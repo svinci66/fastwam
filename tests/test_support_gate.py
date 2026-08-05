@@ -1,9 +1,16 @@
 from pathlib import Path
+from dataclasses import replace
 
 import json
 import numpy as np
 
+from experiments.robotwin.build_residual_support_index import (
+    _support_episode_indices,
+    _support_task_name,
+)
+from fastwam.rl.replay_buffer import ReplayBuffer
 from fastwam.rl.support_gate import ResidualSupportIndex, SUPPORT_INDEX_FORMAT
+from test_rl_replay_buffer import make_transition
 
 
 def _support_index() -> ResidualSupportIndex:
@@ -38,6 +45,27 @@ def _support_index() -> ResidualSupportIndex:
         neighbors=2,
         score_neighbors=1,
     )
+
+
+def test_support_builder_groups_instruction_variants_by_stable_task_id() -> None:
+    first = replace(
+        make_transition("episode-a", 0, terminated=True),
+        task_suite="robotwin2.0",
+        task_id=2,
+        task_description="Hang the white mug on the rack.",
+        behavior_mode="expert",
+    )
+    second = replace(
+        make_transition("episode-b", 0, terminated=True),
+        task_suite="robotwin2.0",
+        task_id=2,
+        task_description="Turn the beige mug and hang it on the medium rack.",
+        behavior_mode="policy",
+    )
+    replay = ReplayBuffer([first, second])
+    grouped = _support_episode_indices(replay)
+    assert _support_task_name(first) == "robotwin2.0/task_0002"
+    assert grouped == {"robotwin2.0/task_0002": ["episode-a", "episode-b"]}
 
 
 def test_support_gate_checks_state_and_candidate_action():
