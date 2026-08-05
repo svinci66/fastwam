@@ -137,6 +137,31 @@ def test_discover_sourced_records_can_override_single_seed_captures(
     assert records[0]["raw_trial_idx"] == 0
 
 
+def test_env_seed_override_does_not_leak_across_same_named_directories(
+    monkeypatch, tmp_path
+) -> None:
+    first = tmp_path / "first" / "hanging_mug"
+    second = tmp_path / "second" / "hanging_mug"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+
+    def fake_discover(paths):
+        return [{"record_dir": str(paths[0]), "trial_idx": 7}]
+
+    monkeypatch.setattr(
+        "experiments.robotwin.build_residual_rl_replay.discover_records",
+        fake_discover,
+    )
+    overrides = parse_env_seed_overrides([f"{second}=4800002"])
+    records = discover_sourced_records(
+        [first, second], env_seed_overrides=overrides
+    )
+    assert records[0]["trial_idx"] == 7
+    assert "raw_trial_idx" not in records[0]
+    assert records[1]["trial_idx"] == 4800002
+    assert records[1]["raw_trial_idx"] == 7
+
+
 def test_parse_env_seed_overrides_rejects_malformed_values(tmp_path) -> None:
     with pytest.raises(ValueError, match="INPUT_DIR=SEED"):
         parse_env_seed_overrides([str(tmp_path)])

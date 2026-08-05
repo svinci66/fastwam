@@ -107,7 +107,6 @@ def parse_env_seed_overrides(values: list[str]) -> dict[str, int]:
         if str(path) in overrides:
             raise ValueError(f"duplicate environment-seed override for {path}")
         overrides[str(path)] = seed
-        overrides[path.name] = seed
     return overrides
 
 
@@ -122,8 +121,6 @@ def discover_sourced_records(
         source_id = f"source{source_index:03d}-{input_dir.resolve().name}"
         resolved_input_dir = input_dir.expanduser().resolve()
         override = env_seed_overrides.get(str(resolved_input_dir))
-        if override is None:
-            override = env_seed_overrides.get(resolved_input_dir.name)
         for record in discover_records([input_dir]):
             record = dict(record)
             record["source_id"] = source_id
