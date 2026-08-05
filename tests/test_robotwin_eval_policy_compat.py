@@ -46,8 +46,11 @@ def eval_policy():
     assert "FASTWAM_ACCEPTED_ENV_SEED" in patched
     assert "fixed_instruction is required" in patched
     assert "environment_seed_manifest_path" in patched
+    assert 'manifest_offset = int(usr_args.get("environment_episode_offset", 0))' in patched
+    assert "strict_environment_seeds[manifest_offset:manifest_stop]" in patched
     assert "strict_environment_seeds[succ_seed]" in patched
     assert 'manifest_entry.get("instructions")' in patched
+    assert "strict_environment_instructions[manifest_offset:manifest_stop]" in patched
     assert "strict_environment_instructions[succ_seed - 1]" in patched
     assert "np.random.default_rng(int(now_seed))" in patched
     assert 'instruction_random.seed(int(now_seed))' in patched
