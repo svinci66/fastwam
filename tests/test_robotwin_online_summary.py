@@ -120,6 +120,33 @@ def test_parse_online_pair_log_extracts_seed_instruction_and_outcome(tmp_path):
     assert result["episode_initial_hashes"] == {"0": "a" * 64, "1": "b" * 64}
 
 
+def test_parse_online_pair_log_supports_paired_gate_without_q_values(tmp_path):
+    log = tmp_path / "eval_paired.log"
+    log.write_text(
+        "Success rate: 1/1 => 100.0%\n"
+        "[fastwam-residual] replan=0 rms=0.000000 max_abs=0.000000 "
+        "gripper_max_abs=0.000000 gate_applied=0 "
+        "paired_advantage_min_probability=0.999000 "
+        "paired_advantage_disagreement=0.010000 paired_advantage_approved=1 "
+        "gate_approved=0 shadow_mode=0 circuit_breaker_active=1 "
+        "circuit_breaker_triggered=1 intervention_allowed=1 "
+        "intervention_count=0 intervention_budget_remaining=None "
+        "intervention_budget_exhausted=0 q_gate_effective_margin=None "
+        "candidate_residual_rms=0.010000 residual_risk_before=0.000000 "
+        "residual_risk_after=0.000000 residual_scale_factor=1.000000 "
+        "q_scale_confidence=1.000000 support_scale_confidence=1.000000 "
+        "outcome_confirmation_pending=0 last_outcome_progress=None "
+        "last_outcome_confirmed=None outcome_reanchor_remaining=0 "
+        "outcome_blocked=0\n",
+        encoding="utf-8",
+    )
+    result = parse_log(log)
+    assert result["q_gate_apply_rate"] == 0.0
+    assert "q_advantage_min_mean" not in result
+    assert result["paired_advantage_approval_rate"] == 1.0
+    assert result["paired_advantage_apply_rate"] == 0.0
+
+
 def test_load_episode_initial_hashes_groups_replans(tmp_path):
     root = tmp_path / "task" / "imagination_transitions" / "task" / "policy"
     for trial, digest in ((0, "aaa"), (1, "bbb")):

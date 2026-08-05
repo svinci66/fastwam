@@ -322,6 +322,23 @@ def main(cfg: DictConfig):
         cfg.EVALUATION.residual_q_gate_enabled,
     )
     _append_override(
+        overrides,
+        "residual_paired_advantage_gate_enabled",
+        cfg.EVALUATION.residual_paired_advantage_gate_enabled,
+    )
+    _append_override(
+        overrides,
+        "residual_paired_advantage_threshold",
+        cfg.EVALUATION.residual_paired_advantage_threshold,
+        skip_none=False,
+    )
+    _append_override(
+        overrides,
+        "residual_paired_advantage_max_disagreement",
+        cfg.EVALUATION.residual_paired_advantage_max_disagreement,
+        skip_none=False,
+    )
+    _append_override(
         overrides, "residual_q_gate_margin", cfg.EVALUATION.residual_q_gate_margin
     )
     _append_override(
@@ -495,6 +512,23 @@ def main(cfg: DictConfig):
             else str(cfg.EVALUATION.environment_seed_manifest_path)
         ),
         "action_mode": str(cfg.EVALUATION.action_mode),
+        "residual_paired_advantage_gate_enabled": bool(
+            cfg.EVALUATION.residual_paired_advantage_gate_enabled
+        ),
+        "residual_paired_advantage_threshold": (
+            None
+            if _is_none_like(cfg.EVALUATION.residual_paired_advantage_threshold)
+            else float(cfg.EVALUATION.residual_paired_advantage_threshold)
+        ),
+        "residual_paired_advantage_max_disagreement": (
+            None
+            if _is_none_like(
+                cfg.EVALUATION.residual_paired_advantage_max_disagreement
+            )
+            else float(
+                cfg.EVALUATION.residual_paired_advantage_max_disagreement
+            )
+        ),
         "residual_q_gate_risk_scale": float(
             cfg.EVALUATION.residual_q_gate_risk_scale
         ),

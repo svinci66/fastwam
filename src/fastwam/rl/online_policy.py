@@ -78,6 +78,29 @@ def load_iql_q_critics(
     return critics
 
 
+def load_paired_advantage_gates(
+    payload: Mapping[str, Any],
+    *,
+    device: torch.device | str,
+) -> tuple[ActionValueCritic, ActionValueCritic]:
+    """Load two supervised candidate-vs-baseline classifiers."""
+
+    config_payload = payload.get("paired_advantage_gate_config")
+    states = payload.get("paired_advantage_gates")
+    if not isinstance(config_payload, Mapping):
+        raise ValueError("checkpoint lacks paired_advantage_gate_config")
+    if not isinstance(states, (list, tuple)) or len(states) != 2:
+        raise ValueError("checkpoint must contain exactly two paired_advantage_gates")
+    config = _tuple_q_critic_config(config_payload)
+    gates = (ActionValueCritic(config), ActionValueCritic(config))
+    for gate, state in zip(gates, states):
+        if not isinstance(state, Mapping):
+            raise ValueError("invalid paired advantage gate state")
+        gate.load_state_dict(state, strict=True)
+        gate.to(device=device, dtype=torch.float32).eval().requires_grad_(False)
+    return gates
+
+
 def load_residual_actor_checkpoint(
     checkpoint_path: str | Path,
     *,
@@ -170,6 +193,8 @@ class ResidualPolicyOutput:
     gate_applied: bool = True
     gate_approved: bool = True
     q_advantages: tuple[float, float] | None = None
+    paired_advantage_probabilities: tuple[float, float] | None = None
+    paired_advantage_approved: bool = True
     support_decision: SupportGateDecision | None = None
     circuit_breaker_active: bool = False
     circuit_breaker_triggered: bool = False
@@ -210,6 +235,23 @@ class ResidualPolicyOutput:
             return None
         return float(abs(self.q_advantages[0] - self.q_advantages[1]))
 
+    @property
+    def paired_advantage_min_probability(self) -> float | None:
+        if self.paired_advantage_probabilities is None:
+            return None
+        return float(min(self.paired_advantage_probabilities))
+
+    @property
+    def paired_advantage_disagreement(self) -> float | None:
+        if self.paired_advantage_probabilities is None:
+            return None
+        return float(
+            abs(
+                self.paired_advantage_probabilities[0]
+                - self.paired_advantage_probabilities[1]
+            )
+        )
+
 
 class OnlineResidualPolicy:
     """Frozen SigLIP observation encoder plus a trained residual actor."""
@@ -229,6 +271,9 @@ class OnlineResidualPolicy:
         camera_image_size: int = 224,
         camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
         q_critics: tuple[torch.nn.Module, torch.nn.Module] | None = None,
+        paired_advantage_gates: tuple[torch.nn.Module, torch.nn.Module] | None = None,
+        paired_advantage_threshold: float = 0.5,
+        paired_advantage_max_disagreement: float = float("inf"),
         q_gate_margin: float = 0.0,
         q_gate_max_disagreement: float = float("inf"),
         q_gate_risk_scale: float = 0.0,
@@ -291,6 +336,21 @@ class OnlineResidualPolicy:
         if outcome_confirmation_enabled and q_critics is None:
             raise ValueError("outcome confirmation requires Q critics")
         self.q_critics = q_critics
+        if not np.isfinite(paired_advantage_threshold) or not (
+            0.0 < paired_advantage_threshold < 1.0
+        ):
+            raise ValueError("paired_advantage_threshold must be in (0,1)")
+        if paired_advantage_max_disagreement < 0.0 or np.isnan(
+            paired_advantage_max_disagreement
+        ):
+            raise ValueError(
+                "paired_advantage_max_disagreement must be non-negative"
+            )
+        self.paired_advantage_gates = paired_advantage_gates
+        self.paired_advantage_threshold = float(paired_advantage_threshold)
+        self.paired_advantage_max_disagreement = float(
+            paired_advantage_max_disagreement
+        )
         self.q_gate_margin = float(q_gate_margin)
         self.q_gate_max_disagreement = float(q_gate_max_disagreement)
         self.q_gate_risk_scale = float(q_gate_risk_scale)
@@ -343,6 +403,9 @@ class OnlineResidualPolicy:
         feature_fusion: str = RESIDUAL_FEATURE_FUSION,
         allow_legacy_provenance: bool = False,
         q_gate_enabled: bool = False,
+        paired_advantage_gate_enabled: bool = False,
+        paired_advantage_threshold: float | None = None,
+        paired_advantage_max_disagreement: float | None = None,
         q_gate_margin: float = 0.0,
         q_gate_max_disagreement: float = float("inf"),
         q_gate_risk_scale: float = 0.0,
@@ -454,6 +517,27 @@ class OnlineResidualPolicy:
             if q_gate_enabled
             else None
         )
+        paired_advantage_gates = (
+            load_paired_advantage_gates(payload, device=device)
+            if paired_advantage_gate_enabled
+            else None
+        )
+        paired_summary = payload.get("paired_advantage_summary", {})
+        validation_summary = (
+            paired_summary.get("validation", {})
+            if isinstance(paired_summary, Mapping)
+            else {}
+        )
+        resolved_paired_threshold = (
+            float(validation_summary.get("recommended_threshold", 0.5))
+            if paired_advantage_threshold is None
+            else float(paired_advantage_threshold)
+        )
+        resolved_paired_disagreement = (
+            float(validation_summary.get("recommended_max_disagreement", float("inf")))
+            if paired_advantage_max_disagreement is None
+            else float(paired_advantage_max_disagreement)
+        )
         support_index = (
             None
             if support_index_path is None
@@ -472,6 +556,9 @@ class OnlineResidualPolicy:
             camera_image_size=camera_image_size,
             camera_names=camera_names,
             q_critics=q_critics,
+            paired_advantage_gates=paired_advantage_gates,
+            paired_advantage_threshold=resolved_paired_threshold,
+            paired_advantage_max_disagreement=resolved_paired_disagreement,
             q_gate_margin=q_gate_margin,
             q_gate_max_disagreement=q_gate_max_disagreement,
             q_gate_risk_scale=q_gate_risk_scale,
@@ -631,6 +718,27 @@ class OnlineResidualPolicy:
                     and abs(q_advantages[0] - q_advantages[1])
                     <= self.q_gate_max_disagreement
                 )
+            paired_probabilities = None
+            paired_gate_approved = True
+            if self.paired_advantage_gates is not None:
+                paired_probabilities = tuple(
+                    float(
+                        torch.sigmoid(
+                            gate(
+                                actor_context,
+                                actor_baseline,
+                                candidate_prefix_tensor,
+                                actor_language,
+                            )
+                        ).item()
+                    )
+                    for gate in self.paired_advantage_gates
+                )
+                paired_gate_approved = (
+                    min(paired_probabilities) >= self.paired_advantage_threshold
+                    and abs(paired_probabilities[0] - paired_probabilities[1])
+                    <= self.paired_advantage_max_disagreement
+                )
             candidate_prefix = candidate_prefix_tensor[0].cpu().numpy()
         candidate_residual = candidate_prefix - baseline[: self.action_horizon]
         support_decision = None
@@ -670,7 +778,9 @@ class OnlineResidualPolicy:
                 and not self._support_circuit_breaker_latched
             )
         )
-        gate_approved = q_gate_approved and support_approved
+        gate_approved = (
+            q_gate_approved and paired_gate_approved and support_approved
+        )
         q_scale_confidence = 1.0
         support_scale_confidence = 1.0
         residual_scale_factor = 1.0
@@ -765,6 +875,8 @@ class OnlineResidualPolicy:
             gate_applied=gate_applied,
             gate_approved=gate_approved,
             q_advantages=q_advantages,
+            paired_advantage_probabilities=paired_probabilities,
+            paired_advantage_approved=paired_gate_approved,
             support_decision=support_decision,
             circuit_breaker_active=self._support_circuit_breaker_latched,
             circuit_breaker_triggered=circuit_breaker_triggered,

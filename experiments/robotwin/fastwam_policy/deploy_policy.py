@@ -201,6 +201,9 @@ class WorldActionRobotWinPolicy:
         residual_encoder_dtype: torch.dtype,
         residual_device: str,
         residual_q_gate_enabled: bool,
+        residual_paired_advantage_gate_enabled: bool,
+        residual_paired_advantage_threshold: Optional[float],
+        residual_paired_advantage_max_disagreement: Optional[float],
         residual_q_gate_margin: float,
         residual_q_gate_max_disagreement: float,
         residual_q_gate_risk_scale: float,
@@ -289,6 +292,13 @@ class WorldActionRobotWinPolicy:
                 camera_names=ROBOTWIN_CAMERA_NAMES,
                 feature_fusion=ROBOTWIN_RESIDUAL_FEATURE_FUSION,
                 q_gate_enabled=residual_q_gate_enabled,
+                paired_advantage_gate_enabled=(
+                    residual_paired_advantage_gate_enabled
+                ),
+                paired_advantage_threshold=residual_paired_advantage_threshold,
+                paired_advantage_max_disagreement=(
+                    residual_paired_advantage_max_disagreement
+                ),
                 q_gate_margin=residual_q_gate_margin,
                 q_gate_max_disagreement=residual_q_gate_max_disagreement,
                 q_gate_risk_scale=residual_q_gate_risk_scale,
@@ -585,13 +595,23 @@ class WorldActionRobotWinPolicy:
             gripper_residual_max = float(
                 np.max(np.abs(residual_output.residual_actions[..., [6, 13]]))
             )
-            q_gate_fields = ""
+            q_gate_fields = (
+                f" gate_applied={int(residual_output.gate_applied)}"
+            )
             if residual_output.q_advantages is not None:
-                q_gate_fields = (
-                    f" gate_applied={int(residual_output.gate_applied)}"
+                q_gate_fields += (
                     f" q_advantage_min={residual_output.q_advantage_min:.6f}"
                     " q_advantage_disagreement="
                     f"{residual_output.q_advantage_disagreement:.6f}"
+                )
+            if residual_output.paired_advantage_probabilities is not None:
+                q_gate_fields += (
+                    " paired_advantage_min_probability="
+                    f"{residual_output.paired_advantage_min_probability:.6f}"
+                    " paired_advantage_disagreement="
+                    f"{residual_output.paired_advantage_disagreement:.6f}"
+                    " paired_advantage_approved="
+                    f"{int(residual_output.paired_advantage_approved)}"
                 )
             support_fields = (
                 f" gate_approved={int(residual_output.gate_approved)}"
@@ -1129,6 +1149,30 @@ def get_model(usr_args: Dict[str, Any]):
             cfg.EVALUATION.get("residual_q_gate_enabled", False),
         )
     )
+    residual_paired_advantage_gate_enabled = _parse_bool(
+        usr_args.get(
+            "residual_paired_advantage_gate_enabled",
+            cfg.EVALUATION.get("residual_paired_advantage_gate_enabled", False),
+        )
+    )
+    residual_paired_threshold_value = usr_args.get(
+        "residual_paired_advantage_threshold",
+        cfg.EVALUATION.get("residual_paired_advantage_threshold"),
+    )
+    residual_paired_advantage_threshold = (
+        None
+        if _is_none_like(residual_paired_threshold_value)
+        else float(residual_paired_threshold_value)
+    )
+    residual_paired_disagreement_value = usr_args.get(
+        "residual_paired_advantage_max_disagreement",
+        cfg.EVALUATION.get("residual_paired_advantage_max_disagreement"),
+    )
+    residual_paired_advantage_max_disagreement = (
+        None
+        if _is_none_like(residual_paired_disagreement_value)
+        else float(residual_paired_disagreement_value)
+    )
     residual_q_gate_margin = float(
         usr_args.get(
             "residual_q_gate_margin",
@@ -1339,6 +1383,15 @@ def get_model(usr_args: Dict[str, Any]):
         residual_encoder_dtype=residual_encoder_dtype,
         residual_device=residual_device,
         residual_q_gate_enabled=residual_q_gate_enabled,
+        residual_paired_advantage_gate_enabled=(
+            residual_paired_advantage_gate_enabled
+        ),
+        residual_paired_advantage_threshold=(
+            residual_paired_advantage_threshold
+        ),
+        residual_paired_advantage_max_disagreement=(
+            residual_paired_advantage_max_disagreement
+        ),
         residual_q_gate_margin=residual_q_gate_margin,
         residual_q_gate_max_disagreement=residual_q_gate_max_disagreement,
         residual_q_gate_risk_scale=residual_q_gate_risk_scale,

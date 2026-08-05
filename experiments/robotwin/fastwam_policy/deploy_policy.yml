@@ -33,6 +33,9 @@ residual_encoder_version: null
 residual_encoder_dtype: bf16
 residual_device: same
 residual_q_gate_enabled: false
+residual_paired_advantage_gate_enabled: false
+residual_paired_advantage_threshold: null
+residual_paired_advantage_max_disagreement: null
 residual_q_gate_margin: 0.0
 residual_q_gate_max_disagreement: 0.05
 residual_q_gate_risk_scale: 0.0

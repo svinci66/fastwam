@@ -23,6 +23,18 @@ class _FirstActionCritic(torch.nn.Module):
         return self.scale * actions[..., 0].mean(dim=1)
 
 
+class _ConstantLogitGate(torch.nn.Module):
+    def __init__(self, logit: float):
+        super().__init__()
+        self.logit = float(logit)
+
+    def forward(self, context, baseline_actions, actions, language_feature=None):
+        del baseline_actions, actions, language_feature
+        return torch.full(
+            (context.shape[0],), self.logit, device=context.device
+        )
+
+
 def test_combined_camera_features_match_agent_then_wrist_replay_order():
     feature = combine_normalized_camera_features(
         {
@@ -222,6 +234,63 @@ def test_online_q_gate_applies_only_when_both_critics_prefer_candidate():
     np.testing.assert_array_equal(rejected.corrected_actions, inputs["baseline_actions"])
     np.testing.assert_array_equal(rejected.residual_actions, 0.0)
     assert np.max(np.abs(rejected.candidate_residual_actions)) > 0.0
+
+
+def test_online_paired_advantage_gate_requires_conservative_probability():
+    config = ResidualActorConfig(
+        context_dim=4,
+        action_horizon=2,
+        action_dim=3,
+        hidden_dims=(4,),
+        residual_scale=(0.05, 0.0, 0.0),
+        action_low=(-1.0, -1.0, -1.0),
+        action_high=(1.0, 1.0, 1.0),
+    )
+    actor = ResidualActor(config)
+    with torch.no_grad():
+        for parameter in actor.parameters():
+            parameter.zero_()
+        actor.network[-1].bias.copy_(
+            torch.tensor([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+        )
+    inputs = {
+        "observation_feature": np.ones(2, dtype=np.float32),
+        "proprio": np.ones(2, dtype=np.float32),
+        "baseline_actions": np.zeros((2, 3), dtype=np.float32),
+    }
+    kwargs = {
+        "actor": actor,
+        "image_processor": None,
+        "vision_encoder": torch.nn.Identity(),
+        "device": "cpu",
+        "encoder_dtype": torch.float32,
+        "checkpoint_path": "checkpoint.pt",
+        "encoder_path": "encoder",
+        "encoder_version": "encoder-v1",
+        "paired_advantage_threshold": 0.8,
+        "paired_advantage_max_disagreement": 0.1,
+    }
+    accepted = OnlineResidualPolicy(
+        **kwargs,
+        paired_advantage_gates=(
+            _ConstantLogitGate(3.0),
+            _ConstantLogitGate(2.8),
+        ),
+    ).correct_from_feature(**inputs)
+    assert accepted.gate_applied
+    assert accepted.paired_advantage_min_probability > 0.8
+    assert accepted.paired_advantage_approved
+
+    rejected = OnlineResidualPolicy(
+        **kwargs,
+        paired_advantage_gates=(
+            _ConstantLogitGate(3.0),
+            _ConstantLogitGate(0.0),
+        ),
+    ).correct_from_feature(**inputs)
+    assert not rejected.gate_applied
+    assert not rejected.paired_advantage_approved
+    np.testing.assert_array_equal(rejected.corrected_actions, inputs["baseline_actions"])
 
 
 def test_online_q_gate_uses_decaying_residual_risk_in_effective_margin():

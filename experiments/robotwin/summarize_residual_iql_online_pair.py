@@ -24,8 +24,12 @@ INITIAL_HASH_PATTERN = re.compile(
 RESIDUAL_PATTERN = re.compile(
     r"\[fastwam-residual\]\s+replan=(\d+)\s+rms=([0-9.eE+-]+)\s+"
     r"max_abs=([0-9.eE+-]+)\s+gripper_max_abs=([0-9.eE+-]+)"
-    r"(?:\s+gate_applied=(\d+)\s+q_advantage_min=([0-9.eE+-]+)"
-    r"\s+q_advantage_disagreement=([0-9.eE+-]+))?"
+    r"(?:\s+gate_applied=(\d+)"
+    r"(?:\s+q_advantage_min=([0-9.eE+-]+)"
+    r"\s+q_advantage_disagreement=([0-9.eE+-]+))?)?"
+    r"(?:\s+paired_advantage_min_probability=[0-9.eE+-]+"
+    r"\s+paired_advantage_disagreement=[0-9.eE+-]+"
+    r"\s+paired_advantage_approved=\d+)?"
     r"(?:\s+gate_approved=(\d+)\s+shadow_mode=(\d+)"
     r"\s+circuit_breaker_active=(\d+)\s+circuit_breaker_triggered=(\d+)"
     r"(?:\s+support_state_score=([0-9.eE+-]+)"
@@ -55,6 +59,12 @@ RESIDUAL_PATTERN = re.compile(
 OUTCOME_PATTERN = re.compile(
     r"\[fastwam-residual-outcome\]\s+replan=(\d+)\s+"
     r"gate_applied=(\d+)\s+imagination_progress=([0-9.eE+-]+)"
+)
+PAIRED_GATE_PATTERN = re.compile(
+    r"\[fastwam-residual\].*?gate_applied=(\d+).*?"
+    r"paired_advantage_min_probability=([0-9.eE+-]+)\s+"
+    r"paired_advantage_disagreement=([0-9.eE+-]+)\s+"
+    r"paired_advantage_approved=(\d+)"
 )
 
 
@@ -187,6 +197,36 @@ def parse_log(path: Path) -> dict[str, Any]:
         "episode_records": _episode_records(text, path),
         "episode_initial_hashes": _initial_hashes(text, path),
     }
+    paired_rows = [
+        {
+            "gate_applied": bool(int(match.group(1))),
+            "min_probability": float(match.group(2)),
+            "disagreement": float(match.group(3)),
+            "approved": bool(int(match.group(4))),
+        }
+        for match in PAIRED_GATE_PATTERN.finditer(text)
+    ]
+    if paired_rows:
+        result.update(
+            {
+                "paired_advantage_replans": len(paired_rows),
+                "paired_advantage_apply_rate": sum(
+                    int(row["gate_applied"]) for row in paired_rows
+                )
+                / len(paired_rows),
+                "paired_advantage_approval_rate": sum(
+                    int(row["approved"]) for row in paired_rows
+                )
+                / len(paired_rows),
+                "paired_advantage_min_probability_mean": sum(
+                    row["min_probability"] for row in paired_rows
+                )
+                / len(paired_rows),
+                "paired_advantage_disagreement_max": max(
+                    row["disagreement"] for row in paired_rows
+                ),
+            }
+        )
     outcome_rows = [
         {
             "replan": int(match.group(1)),
@@ -220,21 +260,24 @@ def parse_log(path: Path) -> dict[str, Any]:
         )
         gated_rows = [row for row in residual_rows if row["gate_applied"] is not None]
         if gated_rows:
-            result.update(
-                {
-                    "q_gate_apply_rate": sum(
-                        int(row["gate_applied"]) for row in gated_rows
-                    )
-                    / len(gated_rows),
+            result["q_gate_apply_rate"] = sum(
+                int(row["gate_applied"]) for row in gated_rows
+            ) / len(gated_rows)
+            q_value_rows = [
+                row for row in gated_rows if row["q_advantage_min"] is not None
+            ]
+            if q_value_rows:
+                result.update(
+                    {
                     "q_advantage_min_mean": sum(
-                        row["q_advantage_min"] for row in gated_rows
+                        row["q_advantage_min"] for row in q_value_rows
                     )
-                    / len(gated_rows),
+                    / len(q_value_rows),
                     "q_advantage_disagreement_max": max(
-                        row["q_advantage_disagreement"] for row in gated_rows
+                        row["q_advantage_disagreement"] for row in q_value_rows
                     ),
-                }
-            )
+                    }
+                )
             risk_rows = [
                 row for row in gated_rows if row["residual_risk_after"] is not None
             ]

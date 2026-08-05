@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_ROOT="${RUN_ROOT:-${PROJECT_ROOT}/evaluate_results/robotwin_residual_rl/robotwin_4task_paired_v2_iql_20260803}"
+RUN_NAME="${RUN_NAME:-robotwin_hanging_mug_paired_advantage_paired5_20260805}"
+EPISODES="${EPISODES:-5}"
+if [[ -z "${SEED_MANIFEST_PATH:-}" ]]; then
+  case "${EPISODES}" in
+    1)
+      SEED_MANIFEST_PATH="${PROJECT_ROOT}/experiments/robotwin/manifests/robotwin_4task_heldout1_expert_seeds_20260804.json"
+      ;;
+    5)
+      SEED_MANIFEST_PATH="${PROJECT_ROOT}/experiments/robotwin/manifests/robotwin_4task_heldout5_expert_seeds_20260804.json"
+      ;;
+    *)
+      printf 'SEED_MANIFEST_PATH is required when EPISODES is not 1 or 5\n' >&2
+      exit 1
+      ;;
+  esac
+fi
+
+env \
+  "TASKS=hanging_mug" \
+  "EPISODES=${EPISODES}" \
+  "BASE_SEED=47" \
+  "ENVIRONMENT_START_SEED=4800000" \
+  "RUN_NAME=${RUN_NAME}" \
+  "VARIANTS=baseline,imagination" \
+  "INFERENCE_STEPS=10" \
+  "REPLAN_STEPS=24" \
+  "TEXT_CFG_SCALE=1.0" \
+  "TASK_CONFIG=demo_clean" \
+  "EVAL_VIDEO_LOG=false" \
+  "INSTRUCTION_TYPE=unseen" \
+  "INSTRUCTION_MODE=official" \
+  "PAPER_ALIGNED=true" \
+  "STRICT_PAIRED=true" \
+  "SEED_MANIFEST_PATH=${SEED_MANIFEST_PATH}" \
+  "IMAGINATION_CHECKPOINT=${RUN_ROOT}/iql_20epoch_imagination_paired_gate_v1/checkpoint.pt" \
+  "NO_IMAGINATION_CHECKPOINT=${RUN_ROOT}/iql_5epoch_no_imagination/checkpoint.pt" \
+  "RESIDUAL_ENCODER_VERSION=siglip-so400m-patch14-384-local-20260803" \
+  "RESIDUAL_LANGUAGE_MODE=training_canonical" \
+  "RESIDUAL_Q_GATE_ENABLED=false" \
+  "RESIDUAL_PAIRED_ADVANTAGE_GATE_ENABLED=true" \
+  "RESIDUAL_PAIRED_ADVANTAGE_THRESHOLD=none" \
+  "RESIDUAL_PAIRED_ADVANTAGE_MAX_DISAGREEMENT=none" \
+  "RESIDUAL_SOFT_SCALE_ENABLED=false" \
+  "RESIDUAL_SUPPORT_INDEX_PATH=${RUN_ROOT}/support_index_imagination_20epoch_q95_probe" \
+  "RESIDUAL_SUPPORT_CIRCUIT_BREAKER_ENABLED=true" \
+  "RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE=none" \
+  "RESIDUAL_OUTCOME_CONFIRMATION_ENABLED=false" \
+  "SAVE_RESIDUAL_TRANSITIONS=false" \
+  "SAVE_BASELINE_TRANSITIONS=false" \
+  bash "${PROJECT_ROOT}/scripts/run_robotwin_residual_iql_online_pair.sh"
