@@ -172,6 +172,90 @@ def _imagined_goal_progress(
     return float(np.dot(actual, goal) - np.dot(current, goal))
 
 
+def _residual_diagnostic_metadata(residual_output: Any) -> dict[str, Any]:
+    """Serialize a residual candidate decision without coupling the replay reader.
+
+    Candidate diagnostics are recorded even when a gate rejects the action.  This
+    is required for later stratified counterfactual sampling: otherwise the
+    paired dataset would contain only actions selected by the current gate.
+    """
+
+    if residual_output is None:
+        return {}
+    metadata: dict[str, Any] = {
+        "residual_gate_applied": bool(residual_output.gate_applied),
+        "residual_gate_approved": bool(residual_output.gate_approved),
+        "residual_shadow_mode": bool(residual_output.shadow_mode),
+        "residual_intervention_allowed": bool(residual_output.intervention_allowed),
+        "residual_intervention_count": int(residual_output.intervention_count),
+        "residual_candidate_rms": float(residual_output.candidate_residual_rms),
+        "residual_scale_factor": float(residual_output.residual_scale_factor),
+        "residual_risk_before": float(residual_output.residual_risk_before),
+        "residual_risk_after": float(residual_output.residual_risk_after),
+        "residual_circuit_breaker_active": bool(
+            residual_output.circuit_breaker_active
+        ),
+        "residual_circuit_breaker_triggered": bool(
+            residual_output.circuit_breaker_triggered
+        ),
+    }
+    if residual_output.q_advantages is not None:
+        metadata.update(
+            {
+                "residual_q_advantages": [
+                    float(value) for value in residual_output.q_advantages
+                ],
+                "residual_q_advantage_min": float(
+                    residual_output.q_advantage_min
+                ),
+                "residual_q_advantage_disagreement": float(
+                    residual_output.q_advantage_disagreement
+                ),
+                "residual_q_gate_effective_margin": float(
+                    residual_output.q_gate_effective_margin
+                ),
+            }
+        )
+    if residual_output.paired_advantage_probabilities is not None:
+        metadata.update(
+            {
+                "residual_paired_advantage_probabilities": [
+                    float(value)
+                    for value in residual_output.paired_advantage_probabilities
+                ],
+                "residual_paired_advantage_approved": bool(
+                    residual_output.paired_advantage_approved
+                ),
+            }
+        )
+    if residual_output.support_decision is not None:
+        decision = residual_output.support_decision
+        metadata.update(
+            {
+                "residual_support_task_name": decision.task_name,
+                "residual_support_language_similarity": float(
+                    decision.language_similarity
+                ),
+                "residual_support_state_score": float(decision.state_score),
+                "residual_support_state_threshold": float(
+                    decision.state_threshold
+                ),
+                "residual_support_action_score": float(decision.action_score),
+                "residual_support_action_threshold": float(
+                    decision.action_threshold
+                ),
+                "residual_support_state_in_distribution": bool(
+                    decision.state_in_support
+                ),
+                "residual_support_action_in_distribution": bool(
+                    decision.action_in_support
+                ),
+                "residual_support_in_distribution": bool(decision.in_support),
+            }
+        )
+    return metadata
+
+
 class WorldActionRobotWinPolicy:
     def __init__(
         self,
@@ -783,6 +867,11 @@ class WorldActionRobotWinPolicy:
                 else instruction
             )
             language_feature = self._encode_language_feature(residual_instruction)
+            current_observation_sha256 = array_sha256(
+                np.concatenate(
+                    [current_image.reshape(-1), state_vector.reshape(-1)]
+                )
+            )
             self._pending_transition = {
                 "replan_idx": self.replan_count,
                 "instruction": instruction,
@@ -796,10 +885,33 @@ class WorldActionRobotWinPolicy:
                 "action_corruption_mask": corruption_mask[:n_exec].copy(),
                 "executed_actions": [],
                 "initial_observation_sha256": self._episode_initial_hash,
+                "current_observation_sha256": current_observation_sha256,
+                "current_image_sha256": array_sha256(current_image),
+                "current_proprio_sha256": array_sha256(state_vector),
+                "baseline_actions_sha256": array_sha256(
+                    baseline_actions[:n_exec]
+                ),
                 "residual_gate_applied": bool(
                     residual_output is not None and residual_output.gate_applied
                 ),
+                "residual_diagnostics": _residual_diagnostic_metadata(
+                    residual_output
+                ),
             }
+            if residual_output is not None:
+                candidate_residual = np.asarray(
+                    residual_output.candidate_residual_actions,
+                    dtype=np.float32,
+                )[:n_exec]
+                self._pending_transition["candidate_residual_actions"] = (
+                    candidate_residual.copy()
+                )
+                self._pending_transition["candidate_residual_actions_sha256"] = (
+                    array_sha256(candidate_residual)
+                )
+                self._pending_transition["residual_observation_feature"] = (
+                    residual_output.observation_feature.copy()
+                )
             if self.residual_outcome_confirmation_enabled:
                 if self.residual_policy is None or residual_output is None:
                     raise RuntimeError(
@@ -879,6 +991,12 @@ class WorldActionRobotWinPolicy:
             ),
             "action_corruption_seed": self.action_corruption_seed,
             "initial_observation_sha256": transition["initial_observation_sha256"],
+            "current_observation_sha256": transition[
+                "current_observation_sha256"
+            ],
+            "current_image_sha256": transition["current_image_sha256"],
+            "current_proprio_sha256": transition["current_proprio_sha256"],
+            "baseline_actions_sha256": transition["baseline_actions_sha256"],
             "environment_seed": (
                 int(os.environ["FASTWAM_ENVIRONMENT_SEED"])
                 if os.environ.get("FASTWAM_ENVIRONMENT_SEED") is not None
@@ -902,27 +1020,40 @@ class WorldActionRobotWinPolicy:
                 "residual_language_instruction"
             ],
         }
+        metadata.update(transition["residual_diagnostics"])
+        if "candidate_residual_actions_sha256" in transition:
+            metadata["candidate_residual_actions_sha256"] = transition[
+                "candidate_residual_actions_sha256"
+            ]
+        rollout_arrays = {
+            "proprio": transition["start_proprio"],
+            "next_proprio": np.asarray(
+                actual_observation["joint_action"]["vector"], dtype=np.float32
+            ),
+            "baseline_actions": transition["baseline_actions"][:effective_k],
+            "planned_actions": transition["planned_actions"][:effective_k],
+            "executed_actions": executed_actions,
+            "normalized_noise_direction": transition["normalized_noise_direction"][:effective_k],
+            "action_corruption_mask": transition["action_corruption_mask"][:effective_k],
+            "environment_rewards": np.zeros(effective_k, dtype=np.float32),
+            "language_feature": self._language_feature_cache[
+                transition["residual_language_instruction"]
+            ],
+        }
+        if "candidate_residual_actions" in transition:
+            rollout_arrays["candidate_residual_actions"] = transition[
+                "candidate_residual_actions"
+            ][:effective_k]
+            rollout_arrays["residual_observation_feature"] = transition[
+                "residual_observation_feature"
+            ]
         metadata_path = save_aligned_transition(
             record_dir,
             current_frame=transition["current_image"],
             predicted_goal_frame=transition["predicted_goal"],
             actual_frame=self._build_robotwin_image(actual_observation),
             metadata=metadata,
-            rollout_arrays={
-                "proprio": transition["start_proprio"],
-                "next_proprio": np.asarray(
-                    actual_observation["joint_action"]["vector"], dtype=np.float32
-                ),
-                "baseline_actions": transition["baseline_actions"][:effective_k],
-                "planned_actions": transition["planned_actions"][:effective_k],
-                "executed_actions": executed_actions,
-                "normalized_noise_direction": transition["normalized_noise_direction"][:effective_k],
-                "action_corruption_mask": transition["action_corruption_mask"][:effective_k],
-                "environment_rewards": np.zeros(effective_k, dtype=np.float32),
-                "language_feature": self._language_feature_cache[
-                    transition["residual_language_instruction"]
-                ],
-            },
+            rollout_arrays=rollout_arrays,
         )
         self._episode_metadata_paths.append(metadata_path)
         self._pending_transition = None
