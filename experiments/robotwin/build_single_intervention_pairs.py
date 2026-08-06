@@ -147,6 +147,11 @@ def build_pairs(
         if bool(record.get("residual_gate_applied", False)):
             residual_applied[_episode_key(record)].append(int(record["replan_idx"]))
 
+    baseline_applied: dict[tuple[str, int, int], list[int]] = defaultdict(list)
+    for record in baseline_records:
+        if bool(record.get("residual_gate_applied", False)):
+            baseline_applied[_episode_key(record)].append(int(record["replan_idx"]))
+
     candidate_keys = sorted(set(baseline_index) & set(residual_index))
     if intervention_replans is not None:
         candidate_keys = [key for key in candidate_keys if key[-1] in intervention_replans]
@@ -161,6 +166,8 @@ def build_pairs(
         applied_replans = sorted(residual_applied.get(episode_key, []))
         if applied_replans != [key[-1]]:
             reasons.append(f"expected_one_applied_intervention_at_{key[-1]}")
+        if baseline_applied.get(episode_key):
+            reasons.append("baseline_contains_applied_residual")
         if baseline.get("initial_observation_sha256") != residual.get(
             "initial_observation_sha256"
         ):
@@ -282,6 +289,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline-dir", type=Path, required=True)
     parser.add_argument("--residual-dir", type=Path, required=True)
+    parser.add_argument(
+        "--baseline-action-mode",
+        default="policy",
+        choices=("policy", "residual"),
+        help="Use residual for a shadow-mode baseline that executes no correction.",
+    )
     parser.add_argument("--intervention-replans", default="all")
     parser.add_argument("--reward-jsonl", type=Path)
     parser.add_argument("--proprio-atol", type=float, default=1e-6)
@@ -291,7 +304,9 @@ def main() -> None:
     parser.add_argument("--require-accepted", action="store_true")
     args = parser.parse_args()
 
-    baseline = discover_records(args.baseline_dir, action_mode="policy")
+    baseline = discover_records(
+        args.baseline_dir, action_mode=args.baseline_action_mode
+    )
     residual = discover_records(args.residual_dir, action_mode="residual")
     accepted, quarantined = build_pairs(
         baseline,

@@ -13,6 +13,9 @@ from experiments.robotwin.build_single_intervention_pairs import build_pairs
 from experiments.robotwin.fastwam_policy.deploy_policy import (
     _residual_diagnostic_metadata,
 )
+from experiments.robotwin.select_single_intervention_candidates import (
+    select_candidates,
+)
 
 
 def _record(
@@ -99,6 +102,55 @@ def test_build_pairs_quarantines_pre_intervention_divergence(tmp_path):
         "intervention_observation_hash_mismatch",
         "intervention_proprio_mismatch",
     }
+
+
+def test_build_pairs_accepts_shadow_baseline_without_applied_residual(tmp_path):
+    baseline = _record(tmp_path, mode="baseline", success=False)
+    baseline["action_mode"] = "residual"
+    baseline["residual_shadow_mode"] = True
+    residual = _record(
+        tmp_path, mode="residual", success=True, gate_applied=True
+    )
+
+    accepted, quarantined = build_pairs(
+        [baseline], [residual], intervention_replans={5}
+    )
+
+    assert len(accepted) == 1
+    assert not quarantined
+
+
+def test_select_candidates_covers_available_gate_strata_then_diversifies():
+    rows = []
+    for replan, stratum, rms in (
+        (1, "approved", 0.01),
+        (2, "approved", 0.03),
+        (5, "q_rejected", 0.02),
+        (8, "ood_rejected", 0.02),
+        (12, "approved", 0.02),
+    ):
+        rows.append(
+            {
+                "task_name": "hanging_mug",
+                "environment_seed": 101,
+                "trial_idx": 0,
+                "replan_idx": replan,
+                "stratum": stratum,
+                "candidate_rms": rms,
+                "q_advantage_min": -0.1 if stratum == "q_rejected" else 0.1,
+                "support_state_score": 2.0 if stratum == "ood_rejected" else 0.1,
+                "support_action_score": 0.1,
+            }
+        )
+
+    selected = select_candidates(rows, max_per_episode=4)
+
+    assert {row["stratum"] for row in selected} >= {
+        "approved",
+        "q_rejected",
+        "ood_rejected",
+    }
+    assert len(selected) == 4
 
 
 class _Support:
