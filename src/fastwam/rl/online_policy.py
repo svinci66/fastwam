@@ -33,6 +33,17 @@ ROBOTWIN_RESIDUAL_FEATURE_FUSION = (
 )
 
 
+def _encoder_dtype_for_device(
+    device: torch.device | str, encoder_dtype: torch.dtype
+) -> torch.dtype:
+    """Validate, but do not silently change, replay encoder precision."""
+
+    device = torch.device(device)
+    if device.type == "cpu" and encoder_dtype == torch.float16:
+        raise ValueError("CPU residual encoding supports fp32 or bf16, not fp16")
+    return encoder_dtype
+
+
 def _tuple_actor_config(payload: Mapping[str, Any]) -> ResidualActorConfig:
     config = dict(payload)
     for key in ("hidden_dims", "residual_scale", "action_low", "action_high"):
@@ -425,8 +436,10 @@ class OnlineResidualPolicy:
         from transformers import SiglipImageProcessor, SiglipVisionModel
 
         device = torch.device(device)
-        if device.type == "cpu" and encoder_dtype != torch.float32:
-            encoder_dtype = torch.float32
+        # Encoder precision is part of replay provenance and can affect a
+        # near-threshold Q/OOD decision.  CPU bf16 is supported by the local
+        # SigLIP runtime, so preserve it instead of silently switching to fp32.
+        encoder_dtype = _encoder_dtype_for_device(device, encoder_dtype)
         encoder_path = Path(encoder_path).expanduser().resolve()
         if not encoder_path.is_dir():
             raise FileNotFoundError(encoder_path)

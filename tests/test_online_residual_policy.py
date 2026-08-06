@@ -7,6 +7,7 @@ import torch
 from fastwam.rl.models import ResidualActor, ResidualActorConfig
 from fastwam.rl.online_policy import (
     OnlineResidualPolicy,
+    _encoder_dtype_for_device,
     combine_normalized_camera_features,
     load_residual_actor_checkpoint,
 )
@@ -33,6 +34,13 @@ class _ConstantLogitGate(torch.nn.Module):
         return torch.full(
             (context.shape[0],), self.logit, device=context.device
         )
+
+
+def test_cpu_residual_encoder_preserves_bfloat16_provenance():
+    assert _encoder_dtype_for_device("cpu", torch.bfloat16) == torch.bfloat16
+    assert _encoder_dtype_for_device("cpu", torch.float32) == torch.float32
+    with pytest.raises(ValueError, match="not fp16"):
+        _encoder_dtype_for_device("cpu", torch.float16)
 
 
 def test_combined_camera_features_match_agent_then_wrist_replay_order():
