@@ -3,6 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_NAME="${RUN_NAME:-robotwin_stratified_single_intervention_20260806}"
+TASK="${TASK:-hanging_mug}"
 SEEDS_CSV="${SEEDS:-4800001,4800002}"
 MAX_CANDIDATES_PER_SEED="${MAX_CANDIDATES_PER_SEED:-4}"
 Q_MARGIN="${Q_MARGIN:-0.003}"
@@ -12,6 +13,8 @@ CHECKPOINT="${CHECKPOINT:-${RUN_ROOT}/iql_corrected_imagination_20epoch_paired_g
 SUPPORT_INDEX="${SUPPORT_INDEX:-${RUN_ROOT}/support_index_corrected_q95}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 OUTPUT_ROOT="${PROJECT_ROOT}/evaluate_results/robotwin_residual_pairs/${RUN_NAME}"
+SEED_MANIFEST_DIR="${SEED_MANIFEST_DIR:-${PROJECT_ROOT}/experiments/robotwin/manifests}"
+SEED_MANIFEST_TAG="${SEED_MANIFEST_TAG:-20260805}"
 
 for path in "${CHECKPOINT}" "${SUPPORT_INDEX}/metadata.json"; do
   [[ -f "${path}" ]] || { printf 'Missing artifact: %s\n' "${path}" >&2; exit 1; }
@@ -25,7 +28,7 @@ IFS=',' read -r -a seeds <<< "${SEEDS_CSV}"
 for raw_seed in "${seeds[@]}"; do
   seed="${raw_seed//[[:space:]]/}"
   [[ "${seed}" =~ ^[0-9]+$ ]] || { printf 'Invalid seed: %s\n' "${raw_seed}" >&2; exit 1; }
-  manifest="${PROJECT_ROOT}/experiments/robotwin/manifests/robotwin_hanging_mug_seed${seed}_20260805.json"
+  manifest="${SEED_MANIFEST_DIR}/robotwin_${TASK}_seed${seed}_${SEED_MANIFEST_TAG}.json"
   [[ -f "${manifest}" ]] || { printf 'Missing seed manifest: %s\n' "${manifest}" >&2; exit 1; }
 
   shadow_name="${RUN_NAME}_seed${seed}_shadow"
@@ -33,7 +36,7 @@ for raw_seed in "${seeds[@]}"; do
   env \
     RUN_NAME="${shadow_name}" \
     VARIANTS=imagination \
-    TASKS=hanging_mug \
+    TASKS="${TASK}" \
     EPISODES=1 \
     IMAGINATION_CHECKPOINT="${CHECKPOINT}" \
     NO_IMAGINATION_CHECKPOINT="${CHECKPOINT}" \
@@ -76,6 +79,10 @@ for raw_seed in "${seeds[@]}"; do
 
   while IFS=$'\t' read -r task environment_seed trial_idx replan stratum; do
     [[ "${task}" == "task_name" ]] && continue
+    [[ "${task}" == "${TASK}" ]] || {
+      printf 'Candidate task mismatch: expected=%s actual=%s\n' "${TASK}" "${task}" >&2
+      exit 1
+    }
     [[ "${environment_seed}" == "${seed}" ]] || {
       printf 'Candidate seed mismatch: expected=%s actual=%s\n' "${seed}" "${environment_seed}" >&2
       exit 1

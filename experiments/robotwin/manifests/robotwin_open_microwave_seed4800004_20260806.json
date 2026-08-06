@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "description": "Single-seed rescue-search manifest for paper-aligned open_microwave evaluation.",
+    "episodes_per_task": 1,
+    "task_config": "demo_clean"
+  },
+  "open_microwave": {
+    "seeds": [4800004],
+    "instructions": ["Use the left arm to pull the handle of the kitchen microwave with slanted shape."]
+  }
+}
