@@ -16,6 +16,7 @@ from experiments.robotwin.fastwam_policy.deploy_policy import (
 from experiments.robotwin.select_single_intervention_candidates import (
     select_candidates,
 )
+from experiments.robotwin.score_single_intervention_pairs import summarize
 
 
 def _record(
@@ -151,6 +152,32 @@ def test_select_candidates_covers_available_gate_strata_then_diversifies():
         "ood_rejected",
     }
     assert len(selected) == 4
+
+
+def test_single_intervention_summary_separates_gate_strata():
+    rows = [
+        {
+            "candidate_stratum": "approved",
+            "label": "regression",
+            "baseline_episode_success": True,
+            "residual_episode_success": False,
+            "local_progress_delta": -0.02,
+        },
+        {
+            "candidate_stratum": "q_rejected",
+            "label": "local_improve",
+            "baseline_episode_success": True,
+            "residual_episode_success": True,
+            "local_progress_delta": 0.03,
+        },
+    ]
+
+    summary = summarize(rows)
+
+    assert summary["pair_count"] == 2
+    assert summary["label_counts"] == {"regression": 1, "local_improve": 1}
+    assert summary["strata"]["approved"]["residual_successes"] == 0
+    assert summary["strata"]["q_rejected"]["mean_local_progress_delta"] == 0.03
 
 
 class _Support:
