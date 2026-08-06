@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 import torch
@@ -73,12 +73,17 @@ def build_paired_advantage_examples(
     config: PairedAdvantageTrainingConfig,
     *,
     split: str,
+    behavior_modes: tuple[str, ...] | None = None,
 ) -> PairedAdvantageExamples:
     """Create trajectory-grouped labels without transition-level leakage."""
 
     config.validate()
-    if split not in {"train", "validation"}:
-        raise ValueError("split must be 'train' or 'validation'")
+    if split not in {"train", "validation", "all"}:
+        raise ValueError("split must be 'train', 'validation', or 'all'")
+    if behavior_modes is not None:
+        behavior_modes = tuple(str(value) for value in behavior_modes)
+        if not behavior_modes or any(not value for value in behavior_modes):
+            raise ValueError("behavior_modes must contain at least one non-empty value")
     grouped: dict[str, list[int]] = defaultdict(list)
     for index, transition in enumerate(replay.transitions):
         grouped[transition.episode_id].append(index)
@@ -106,6 +111,8 @@ def build_paired_advantage_examples(
     for episode_id, row in sorted(episode_rows.items()):
         if row["behavior"] == "policy":
             continue
+        if behavior_modes is not None and row["behavior"] not in behavior_modes:
+            continue
         baseline_id = baselines.get(row["task_key"])
         if baseline_id is None:
             continue
@@ -124,7 +131,7 @@ def build_paired_advantage_examples(
             int(row["env_seed"]) % config.validation_seed_modulus
             == config.validation_seed_remainder
         )
-        if is_validation != (split == "validation"):
+        if split != "all" and is_validation != (split == "validation"):
             continue
         selected.append(
             (episode_id, list(row["indices"]), label)
@@ -162,12 +169,29 @@ def build_paired_advantage_examples(
 
 
 class PairedAdvantageDataset(Dataset):
-    def __init__(self, replay: ReplayBuffer, examples: PairedAdvantageExamples):
-        arrays = replay.arrays()
+    def __init__(
+        self,
+        replay: ReplayBuffer,
+        examples: PairedAdvantageExamples,
+        *,
+        context_override: np.ndarray | None = None,
+        arrays_override: Mapping[str, np.ndarray] | None = None,
+    ):
+        arrays = replay.arrays() if arrays_override is None else arrays_override
         indices = examples.indices
-        context = np.concatenate(
-            [arrays["observation_feature"], arrays["proprio"]], axis=1
-        ).astype(np.float32)
+        if context_override is None:
+            context = np.concatenate(
+                [arrays["observation_feature"], arrays["proprio"]], axis=1
+            ).astype(np.float32)
+        else:
+            context = np.asarray(context_override, dtype=np.float32)
+            if context.ndim != 2 or context.shape[0] != len(replay.transitions):
+                raise ValueError(
+                    "context_override must have shape "
+                    f"[replay_size, context_dim], got {context.shape}"
+                )
+            if not np.all(np.isfinite(context)):
+                raise ValueError("context_override must contain only finite values")
         actions = _canonical_actions(
             arrays["executed_actions"],
             arrays["baseline_actions"],
@@ -207,10 +231,17 @@ def train_paired_advantage_ensemble(
     config: PairedAdvantageTrainingConfig,
     *,
     device: torch.device | str,
+    context_override: np.ndarray | None = None,
+    arrays_override: Mapping[str, np.ndarray] | None = None,
 ) -> list[list[dict[str, float]]]:
     config.validate()
     device = torch.device(device)
-    dataset = PairedAdvantageDataset(replay, train_examples)
+    dataset = PairedAdvantageDataset(
+        replay,
+        train_examples,
+        context_override=context_override,
+        arrays_override=arrays_override,
+    )
     histories: list[list[dict[str, float]]] = []
     for model_index, model in enumerate(models):
         model_seed = config.seed + 1009 * model_index
@@ -276,8 +307,15 @@ def predict_paired_advantage(
     *,
     device: torch.device | str,
     batch_size: int = 256,
+    context_override: np.ndarray | None = None,
+    arrays_override: Mapping[str, np.ndarray] | None = None,
 ) -> np.ndarray:
-    dataset = PairedAdvantageDataset(replay, examples)
+    dataset = PairedAdvantageDataset(
+        replay,
+        examples,
+        context_override=context_override,
+        arrays_override=arrays_override,
+    )
     loader = DataLoader(dataset, batch_size=min(batch_size, len(dataset)), shuffle=False)
     columns: list[list[np.ndarray]] = [[], []]
     device = torch.device(device)
@@ -287,6 +325,50 @@ def predict_paired_advantage(
             model.to(device).eval()
             columns[index].append(torch.sigmoid(_logits(model, batch)).cpu().numpy())
     return np.stack([np.concatenate(column) for column in columns], axis=1)
+
+
+def build_temporal_context(
+    replay: ReplayBuffer,
+    *,
+    history_length: int = 1,
+    arrays_override: Mapping[str, np.ndarray] | None = None,
+) -> np.ndarray:
+    """Build current state plus within-episode lagged state deltas.
+
+    A history length of one exactly matches the existing paired gate context:
+    concatenated frozen visual features and proprioception.  Longer histories
+    append ``current - previous`` state deltas for preceding replans.  Missing
+    history at the start of an episode is represented by zero deltas, and no
+    information is ever borrowed across episode boundaries.
+    """
+
+    if history_length <= 0:
+        raise ValueError("history_length must be positive")
+    arrays = replay.arrays() if arrays_override is None else arrays_override
+    current = np.concatenate(
+        [arrays["observation_feature"], arrays["proprio"]], axis=1
+    ).astype(np.float32)
+    if history_length == 1:
+        return current
+
+    context = np.zeros(
+        (current.shape[0], current.shape[1] * history_length), dtype=np.float32
+    )
+    context[:, : current.shape[1]] = current
+    grouped: dict[str, list[int]] = defaultdict(list)
+    for index, transition in enumerate(replay.transitions):
+        grouped[transition.episode_id].append(index)
+    width = current.shape[1]
+    for indices in grouped.values():
+        indices.sort(key=lambda value: replay.transitions[value].transition_index)
+        for position, index in enumerate(indices):
+            for lag in range(1, history_length):
+                if position < lag:
+                    continue
+                previous = indices[position - lag]
+                start = lag * width
+                context[index, start : start + width] = current[index] - current[previous]
+    return context
 
 
 def summarize_paired_predictions(

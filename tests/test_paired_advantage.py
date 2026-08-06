@@ -5,6 +5,7 @@ import numpy as np
 from fastwam.rl.paired_advantage import (
     PairedAdvantageTrainingConfig,
     build_paired_advantage_examples,
+    build_temporal_context,
     summarize_paired_predictions,
 )
 from fastwam.rl.replay_buffer import ReplayBuffer
@@ -127,3 +128,54 @@ def test_paired_prediction_threshold_can_calibrate_above_point_999():
     assert 0.999 < summary["recommended_threshold"] < 1.0
     assert summary["transition_false_positive_rate"] == 0.0
     assert summary["transition_true_positive_rate"] == 1.0
+
+
+def test_paired_examples_can_select_actual_residual_pairs_across_all_seeds():
+    replay = ReplayBuffer(
+        _episode("base-fail", "policy", 0, False)
+        + _episode("residual-rescue", "residual", 0, True)
+        + _episode("expert-rescue", "expert", 0, True)
+        + _episode("base-success", "policy", 4, True)
+        + _episode("residual-regression", "residual", 4, False)
+    )
+    examples = build_paired_advantage_examples(
+        replay,
+        PairedAdvantageTrainingConfig(),
+        split="all",
+        behavior_modes=("residual",),
+    )
+    assert set(examples.episode_ids) == {
+        "residual-rescue",
+        "residual-regression",
+    }
+    assert set(examples.labels.tolist()) == {0.0, 1.0}
+
+
+def test_temporal_context_uses_deltas_without_crossing_episode_boundaries():
+    first = _episode("episode-a", "policy", 0, False)
+    second = _episode("episode-b", "policy", 1, False)
+    first[0] = replace(
+        first[0],
+        observation_feature=np.full_like(first[0].observation_feature, 1.0),
+        proprio=np.full_like(first[0].proprio, 1.0),
+    )
+    first[1] = replace(
+        first[1],
+        observation_feature=np.full_like(first[1].observation_feature, 3.0),
+        proprio=np.full_like(first[1].proprio, 3.0),
+    )
+    second[0] = replace(
+        second[0],
+        observation_feature=np.full_like(second[0].observation_feature, 10.0),
+        proprio=np.full_like(second[0].proprio, 10.0),
+    )
+    replay = ReplayBuffer(first + second)
+    single = build_temporal_context(replay, history_length=1)
+    temporal = build_temporal_context(replay, history_length=3)
+    width = single.shape[1]
+    assert temporal.shape == (len(replay.transitions), width * 3)
+    np.testing.assert_allclose(temporal[:, :width], single)
+    np.testing.assert_allclose(temporal[0, width:], 0.0)
+    np.testing.assert_allclose(temporal[1, width : 2 * width], 2.0)
+    np.testing.assert_allclose(temporal[1, 2 * width :], 0.0)
+    np.testing.assert_allclose(temporal[2, width:], 0.0)
