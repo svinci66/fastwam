@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "description": "Single-seed rescue-search manifest for paper-aligned place_can_basket evaluation.",
+    "episodes_per_task": 1,
+    "task_config": "demo_clean"
+  },
+  "place_can_basket": {
+    "seeds": [4800005],
+    "instructions": ["Use the right arm to pick the light brown cylindrical can, place it into the yellow basket with open slots, and lift the basket."]
+  }
+}
