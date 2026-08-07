@@ -4,6 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BATCH_NAME="${BATCH_NAME:-robotwin_high_failure_rescue_batch_20260806}"
 MAX_CANDIDATES_PER_SEED="${MAX_CANDIDATES_PER_SEED:-5}"
+RESUME="${RESUME:-false}"
 PLACE_SEEDS="${PLACE_SEEDS:-4800000,4800004}"
 OPEN_SEEDS="${OPEN_SEEDS:-4800000}"
 CONDA_ENV="${CONDA_ENV:-robotwin_fastwam}"
@@ -21,9 +22,10 @@ env \
   TASK=place_can_basket \
   SEEDS="${PLACE_SEEDS}" \
   MAX_CANDIDATES_PER_SEED="${MAX_CANDIDATES_PER_SEED}" \
+  RESUME="${RESUME}" \
   SEED_MANIFEST_TAG=20260806 \
   bash "${PROJECT_ROOT}/scripts/run_robotwin_stratified_single_intervention_collection.sh" \
-  > "${DRIVER_ROOT}/place_can_basket.log" 2>&1
+  >> "${DRIVER_ROOT}/place_can_basket.log" 2>&1
 
 printf '[high-failure-batch] stage=open_microwave seeds=%s\n' "${OPEN_SEEDS}"
 env \
@@ -31,9 +33,10 @@ env \
   TASK=open_microwave \
   SEEDS="${OPEN_SEEDS}" \
   MAX_CANDIDATES_PER_SEED="${MAX_CANDIDATES_PER_SEED}" \
+  RESUME="${RESUME}" \
   SEED_MANIFEST_TAG=20260806 \
   bash "${PROJECT_ROOT}/scripts/run_robotwin_stratified_single_intervention_collection.sh" \
-  > "${DRIVER_ROOT}/open_microwave.log" 2>&1
+  >> "${DRIVER_ROOT}/open_microwave.log" 2>&1
 
 for run_name in "${PLACE_RUN}" "${OPEN_RUN}"; do
   printf '[high-failure-batch] stage=score run=%s\n' "${run_name}"
