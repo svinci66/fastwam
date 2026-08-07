@@ -112,6 +112,16 @@ def load_paired_advantage_gates(
     return gates
 
 
+def _validate_paired_gate_deployment(
+    payload: Mapping[str, Any], *, enabled: bool
+) -> None:
+    if enabled and payload.get("paired_advantage_deployment_ready") is False:
+        raise ValueError(
+            "Paired intervention gate is diagnostic-only and lacks "
+            "independent seed validation."
+        )
+
+
 def load_residual_actor_checkpoint(
     checkpoint_path: str | Path,
     *,
@@ -344,8 +354,6 @@ class OnlineResidualPolicy:
             raise ValueError("outcome_confirmation_min_progress must be finite")
         if int(outcome_confirmation_reanchor_replans) <= 0:
             raise ValueError("outcome_confirmation_reanchor_replans must be positive")
-        if outcome_confirmation_enabled and q_critics is None:
-            raise ValueError("outcome confirmation requires Q critics")
         self.q_critics = q_critics
         if not np.isfinite(paired_advantage_threshold) or not (
             0.0 < paired_advantage_threshold < 1.0
@@ -447,6 +455,9 @@ class OnlineResidualPolicy:
         summary = payload.get("summary")
         if not isinstance(summary, dict):
             raise ValueError("Residual checkpoint must contain a summary mapping.")
+        _validate_paired_gate_deployment(
+            payload, enabled=paired_advantage_gate_enabled
+        )
         encoder_version = str(encoder_version).strip()
         if not encoder_version:
             raise ValueError("encoder_version must be a non-empty immutable identifier.")

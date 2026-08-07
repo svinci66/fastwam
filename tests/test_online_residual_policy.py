@@ -8,6 +8,7 @@ from fastwam.rl.models import ResidualActor, ResidualActorConfig
 from fastwam.rl.online_policy import (
     OnlineResidualPolicy,
     _encoder_dtype_for_device,
+    _validate_paired_gate_deployment,
     combine_normalized_camera_features,
     load_residual_actor_checkpoint,
 )
@@ -41,6 +42,13 @@ def test_cpu_residual_encoder_preserves_bfloat16_provenance():
     assert _encoder_dtype_for_device("cpu", torch.float32) == torch.float32
     with pytest.raises(ValueError, match="not fp16"):
         _encoder_dtype_for_device("cpu", torch.float16)
+
+
+def test_diagnostic_intervention_gate_cannot_be_enabled_online():
+    payload = {"paired_advantage_deployment_ready": False}
+    _validate_paired_gate_deployment(payload, enabled=False)
+    with pytest.raises(ValueError, match="diagnostic-only"):
+        _validate_paired_gate_deployment(payload, enabled=True)
 
 
 def test_combined_camera_features_match_agent_then_wrist_replay_order():
@@ -380,7 +388,6 @@ def test_online_outcome_confirmation_reanchors_after_failed_progress():
         checkpoint_path="checkpoint.pt",
         encoder_path="encoder",
         encoder_version="encoder-v1",
-        q_critics=(_FirstActionCritic(1.0), _FirstActionCritic(0.9)),
         outcome_confirmation_enabled=True,
         outcome_confirmation_min_progress=0.0,
         outcome_confirmation_reanchor_replans=1,
@@ -393,6 +400,8 @@ def test_online_outcome_confirmation_reanchors_after_failed_progress():
 
     first = policy.correct_from_feature(**inputs)
     assert first.gate_applied
+    assert first.q_advantages is None
+    assert first.q_gate_effective_margin is None
     assert first.outcome_confirmation_pending
     with pytest.raises(RuntimeError, match="record_intervention_outcome"):
         policy.correct_from_feature(**inputs)
