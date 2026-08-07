@@ -18,6 +18,7 @@ def test_residual_actor_bounds_corrections_and_leaves_gripper_to_fastwam():
             action_horizon=8,
             action_dim=7,
             hidden_dims=(16,),
+            zero_init_output=False,
             residual_scale=(0.05, 0.05, 0.05, 0.1, 0.1, 0.1, 0.0),
         )
     )
@@ -28,6 +29,69 @@ def test_residual_actor_bounds_corrections_and_leaves_gripper_to_fastwam():
     residual = corrected - baseline
     assert torch.all(torch.abs(residual[..., :3]) <= 0.05 + 1e-6)
     assert torch.all(torch.abs(residual[..., 3:6]) <= 0.1 + 1e-6)
+
+
+def test_residual_actor_zero_initialized_output_preserves_fastwam_actions():
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=4,
+            action_horizon=2,
+            action_dim=3,
+            hidden_dims=(8,),
+            residual_scale=(0.05, 0.05, 0.0),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+            zero_init_output=True,
+        )
+    )
+    context = torch.randn(3, 4)
+    baseline = torch.rand(3, 2, 3) * 0.5
+
+    residual = actor.residual(context)
+    corrected = actor(context, baseline)
+
+    torch.testing.assert_close(residual, torch.zeros_like(residual))
+    torch.testing.assert_close(corrected, baseline)
+    assert torch.count_nonzero(actor.network[-1].weight) == 0
+    assert torch.count_nonzero(actor.network[-1].bias) == 0
+
+
+def test_zero_initialized_output_layer_receives_a_training_gradient():
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=4,
+            action_horizon=2,
+            action_dim=3,
+            hidden_dims=(8,),
+            residual_scale=(0.05, 0.05, 0.05),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+        )
+    )
+
+    actor.residual(torch.randn(3, 4)).sum().backward()
+
+    assert actor.network[-1].weight.grad is not None
+    assert torch.count_nonzero(actor.network[-1].weight.grad) > 0
+    assert actor.network[-1].bias.grad is not None
+    assert torch.count_nonzero(actor.network[-1].bias.grad) > 0
+
+
+def test_residual_actor_can_disable_zero_output_initialization_for_ablation():
+    actor = ResidualActor(
+        ResidualActorConfig(
+            context_dim=4,
+            action_horizon=2,
+            action_dim=3,
+            hidden_dims=(8,),
+            residual_scale=(0.05, 0.05, 0.0),
+            action_low=(-1.0, -1.0, -1.0),
+            action_high=(1.0, 1.0, 1.0),
+            zero_init_output=False,
+        )
+    )
+
+    assert torch.count_nonzero(actor.network[-1].weight) > 0
 
 
 def test_zero_scale_dimension_preserves_out_of_bounds_baseline_exactly():

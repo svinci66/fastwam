@@ -54,6 +54,7 @@ class ResidualActorConfig:
     language_feature_dim: int = 0
     language_embedding_dim: int = 0
     baseline_action_embedding_dim: int = 0
+    zero_init_output: bool = True
     residual_scale: tuple[float, ...] = (0.05, 0.05, 0.05, 0.1, 0.1, 0.1, 0.0)
     action_low: tuple[float, ...] = (-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0)
     action_high: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
@@ -79,6 +80,8 @@ class ResidualActorConfig:
         )
         if self.baseline_action_embedding_dim < 0:
             raise ValueError("baseline_action_embedding_dim must be non-negative")
+        if not isinstance(self.zero_init_output, bool):
+            raise ValueError("zero_init_output must be a boolean")
 
 
 class ResidualActor(nn.Module):
@@ -108,6 +111,12 @@ class ResidualActor(nn.Module):
             config.hidden_dims,
             config.action_horizon * config.action_dim,
         )
+        if config.zero_init_output:
+            output_layer = self.network[-1]
+            if not isinstance(output_layer, nn.Linear):
+                raise TypeError("Residual actor output layer must be linear")
+            nn.init.zeros_(output_layer.weight)
+            nn.init.zeros_(output_layer.bias)
         self.register_buffer(
             "residual_scale",
             torch.tensor(config.residual_scale, dtype=torch.float32).view(1, 1, -1),
