@@ -121,6 +121,38 @@ def test_build_pairs_accepts_shadow_baseline_without_applied_residual(tmp_path):
     assert not quarantined
 
 
+def test_build_pairs_accepts_verified_terminal_action_prefix(tmp_path):
+    baseline = _record(tmp_path, mode="baseline", success=False)
+    residual = _record(
+        tmp_path, mode="residual", success=True, gate_applied=True
+    )
+    baseline["baseline_actions_sha256"] = "same-full-action-chunk"
+    residual["baseline_actions_sha256"] = "same-full-action-chunk"
+    residual["terminated"] = True
+
+    residual_arrays_path = tmp_path / "residual" / "rollout_arrays.npz"
+    with np.load(residual_arrays_path, allow_pickle=False) as payload:
+        residual_arrays = {key: payload[key] for key in payload.files}
+    residual_arrays["baseline_actions"] = residual_arrays["baseline_actions"][:1]
+    residual_arrays["candidate_residual_actions"] = residual_arrays[
+        "candidate_residual_actions"
+    ][:1]
+    np.savez_compressed(residual_arrays_path, **residual_arrays)
+
+    accepted, quarantined = build_pairs(
+        [baseline], [residual], intervention_replans={5}
+    )
+
+    assert not quarantined
+    assert len(accepted) == 1
+    assert accepted[0]["label"] == "rescue"
+    assert accepted[0]["baseline_action_max_abs_difference"] == 0.0
+    assert (
+        accepted[0]["baseline_action_comparison"]
+        == "terminal_prefix_full_chunk_hash"
+    )
+
+
 def test_select_candidates_covers_available_gate_strata_then_diversifies():
     rows = []
     for replan, stratum, rms in (
@@ -178,6 +210,34 @@ def test_single_intervention_summary_separates_gate_strata():
     assert summary["label_counts"] == {"regression": 1, "local_improve": 1}
     assert summary["strata"]["approved"]["residual_successes"] == 0
     assert summary["strata"]["q_rejected"]["mean_local_progress_delta"] == 0.03
+
+
+def test_single_intervention_summary_excludes_invalid_local_progress():
+    rows = [
+        {
+            "candidate_stratum": "q_rejected",
+            "label": "rescue",
+            "baseline_episode_success": False,
+            "residual_episode_success": True,
+            "local_progress_valid": False,
+            "local_progress_delta": None,
+        },
+        {
+            "candidate_stratum": "q_rejected",
+            "label": "local_improve",
+            "baseline_episode_success": False,
+            "residual_episode_success": False,
+            "local_progress_valid": True,
+            "local_progress_delta": 0.04,
+        },
+    ]
+
+    summary = summarize(rows)
+
+    assert summary["pair_count"] == 2
+    assert summary["local_progress_valid_count"] == 1
+    assert summary["mean_local_progress_delta"] == 0.04
+    assert summary["strata"]["q_rejected"]["local_progress_valid_count"] == 1
 
 
 class _Support:

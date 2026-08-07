@@ -23,6 +23,9 @@ from experiments.robotwin.analyze_imagination_rewards import (
     resolve_encoder_dtype,
 )
 from experiments.robotwin.build_single_intervention_pairs import _outcome_label
+from experiments.robotwin.build_residual_rl_replay import (
+    load_camera_normalization_manifest,
+)
 from experiments.robotwin.imagination_reward_utils import ROBOTWIN_CAMERA_NAMES
 from fastwam.rl.rewards import (
     GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
@@ -101,6 +104,14 @@ def score_pairs(
         residual_dir = str(Path(pair["residual_record_dir"]).resolve())
         baseline_features = encoded_by_dir[baseline_dir]
         residual_features = encoded_by_dir[residual_dir]
+        baseline_metadata = metadata_by_dir[baseline_dir]
+        residual_metadata = metadata_by_dir[residual_dir]
+        local_progress_valid = (
+            bool(baseline_metadata.get("alignment_valid", False))
+            and bool(residual_metadata.get("alignment_valid", False))
+            and int(baseline_metadata.get("effective_k", -1))
+            == int(residual_metadata.get("effective_k", -2))
+        )
         # Both branches passed exact pre-intervention matching. Use the shadow
         # baseline's current observation and imagined goal as the common frame
         # of reference, so only the realized next observation differs.
@@ -124,8 +135,12 @@ def score_pairs(
             clip_value=clip_value,
             alignment_valid=True,
         )
-        delta = float(residual_reward.clipped_progress - baseline_reward.clipped_progress)
-        shadow_metadata = metadata_by_dir[baseline_dir]
+        delta = (
+            float(residual_reward.clipped_progress - baseline_reward.clipped_progress)
+            if local_progress_valid
+            else None
+        )
+        shadow_metadata = baseline_metadata
         row = dict(pair)
         row.update(
             {
@@ -150,21 +165,28 @@ def score_pairs(
                 "baseline_imagination_progress": float(
                     baseline_reward.clipped_progress
                 ),
-                "residual_imagination_progress": float(
-                    residual_reward.clipped_progress
+                "residual_imagination_progress": (
+                    float(residual_reward.clipped_progress)
+                    if local_progress_valid
+                    else None
                 ),
+                "local_progress_valid": local_progress_valid,
                 "local_progress_delta": delta,
-                "per_camera_local_progress_delta": {
-                    camera: float(
-                        residual_reward.per_camera[camera][
-                            "normalized_delta_alignment"
-                        ]
-                        - baseline_reward.per_camera[camera][
-                            "normalized_delta_alignment"
-                        ]
-                    )
-                    for camera in ROBOTWIN_CAMERA_NAMES
-                },
+                "per_camera_local_progress_delta": (
+                    {
+                        camera: float(
+                            residual_reward.per_camera[camera][
+                                "normalized_delta_alignment"
+                            ]
+                            - baseline_reward.per_camera[camera][
+                                "normalized_delta_alignment"
+                            ]
+                        )
+                        for camera in ROBOTWIN_CAMERA_NAMES
+                    }
+                    if local_progress_valid
+                    else None
+                ),
             }
         )
         row["label"] = _outcome_label(
@@ -181,6 +203,12 @@ def summarize(scored: list[dict[str, Any]]) -> dict[str, Any]:
     by_stratum: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in scored:
         by_stratum[str(row["candidate_stratum"])].append(row)
+    valid_local_rows = [
+        row
+        for row in scored
+        if bool(row.get("local_progress_valid", row.get("local_progress_delta") is not None))
+        and row.get("local_progress_delta") is not None
+    ]
     return {
         "schema_version": "robotwin_single_intervention_statistics_v1",
         "pair_count": len(scored),
@@ -191,11 +219,21 @@ def summarize(scored: list[dict[str, Any]]) -> dict[str, Any]:
         "residual_success_count": int(
             sum(bool(row["residual_episode_success"]) for row in scored)
         ),
-        "mean_local_progress_delta": float(
-            np.mean([float(row["local_progress_delta"]) for row in scored])
+        "local_progress_valid_count": len(valid_local_rows),
+        "mean_local_progress_delta": (
+            float(
+                np.mean(
+                    [float(row["local_progress_delta"]) for row in valid_local_rows]
+                )
+            )
+            if valid_local_rows
+            else None
         ),
         "local_progress_positive_count": int(
-            sum(float(row["local_progress_delta"]) > 0.0 for row in scored)
+            sum(
+                float(row["local_progress_delta"]) > 0.0
+                for row in valid_local_rows
+            )
         ),
         "strata": {
             stratum: {
@@ -207,8 +245,23 @@ def summarize(scored: list[dict[str, Any]]) -> dict[str, Any]:
                 "residual_successes": int(
                     sum(bool(row["residual_episode_success"]) for row in rows)
                 ),
-                "mean_local_progress_delta": float(
-                    np.mean([float(row["local_progress_delta"]) for row in rows])
+                "local_progress_valid_count": sum(
+                    row.get("local_progress_delta") is not None for row in rows
+                ),
+                "mean_local_progress_delta": (
+                    float(
+                        np.mean(
+                            [
+                                float(row["local_progress_delta"])
+                                for row in rows
+                                if row.get("local_progress_delta") is not None
+                            ]
+                        )
+                    )
+                    if any(
+                        row.get("local_progress_delta") is not None for row in rows
+                    )
+                    else None
                 ),
             }
             for stratum, rows in sorted(by_stratum.items())
@@ -223,6 +276,15 @@ def main() -> None:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--encoder-dtype", default="auto")
     parser.add_argument("--batch-size", type=int, default=24)
+    parser.add_argument(
+        "--camera-normalization-manifest",
+        type=Path,
+        help=(
+            "Replay manifest containing the frozen global per-camera "
+            "normalization used for training. If omitted, normalization is "
+            "fitted on the evaluation pairs for backward compatibility."
+        ),
+    )
     parser.add_argument("--clip-value", type=float, default=0.1)
     parser.add_argument("--local-progress-threshold", type=float, default=0.01)
     parser.add_argument("--q-margin", type=float, default=0.003)
@@ -244,7 +306,16 @@ def main() -> None:
         batch_size=args.batch_size,
         encoder_dtype=dtype,
     )
-    normalization = fit_task_balanced_camera_normalization(records, encoded)
+    if args.camera_normalization_manifest is None:
+        normalization = fit_task_balanced_camera_normalization(records, encoded)
+        normalization_source = "fitted_evaluation_pairs"
+    else:
+        normalization = load_camera_normalization_manifest(
+            args.camera_normalization_manifest
+        )
+        normalization_source = str(
+            args.camera_normalization_manifest.expanduser().resolve()
+        )
     scored = score_pairs(
         pairs,
         records,
@@ -256,6 +327,7 @@ def main() -> None:
     )
     summary = summarize(scored)
     summary["camera_normalization"] = normalization
+    summary["camera_normalization_source"] = normalization_source
     summary["encoder_path"] = str(args.encoder_path.expanduser().resolve())
     summary["encoder_dtype"] = str(dtype).removeprefix("torch.")
     args.output_dir.mkdir(parents=True, exist_ok=True)

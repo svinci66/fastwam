@@ -105,6 +105,52 @@ def _finite_max_abs_difference(left: np.ndarray, right: np.ndarray) -> float:
     return float(np.max(np.abs(left - right)))
 
 
+def _baseline_action_difference(
+    baseline: dict[str, Any],
+    residual: dict[str, Any],
+    baseline_actions: np.ndarray,
+    residual_actions: np.ndarray,
+) -> tuple[float, str]:
+    """Compare the full chunk, or a verified terminal prefix.
+
+    A successful branch can terminate before the full action chunk is
+    executed.  Transition export then stores only ``effective_k`` actions even
+    though both branches planned the same full FastWAM chunk.  Accept that
+    shorter array only when the metadata hashes of the full chunks agree, one
+    branch really terminated, and every stored prefix action is identical.
+    """
+
+    direct = _finite_max_abs_difference(baseline_actions, residual_actions)
+    if np.isfinite(direct):
+        return direct, "full_chunk"
+
+    baseline_array = np.asarray(baseline_actions, dtype=np.float64)
+    residual_array = np.asarray(residual_actions, dtype=np.float64)
+    hashes_match = (
+        bool(baseline.get("baseline_actions_sha256"))
+        and baseline.get("baseline_actions_sha256")
+        == residual.get("baseline_actions_sha256")
+    )
+    terminal_branch = bool(baseline.get("terminated", False)) or bool(
+        residual.get("terminated", False)
+    )
+    compatible_prefix = (
+        baseline_array.ndim == residual_array.ndim == 2
+        and baseline_array.shape[1:] == residual_array.shape[1:]
+        and min(baseline_array.shape[0], residual_array.shape[0]) > 0
+    )
+    if not (hashes_match and terminal_branch and compatible_prefix):
+        return float("inf"), "incompatible_shape"
+
+    common_steps = min(baseline_array.shape[0], residual_array.shape[0])
+    prefix_difference = _finite_max_abs_difference(
+        baseline_array[:common_steps], residual_array[:common_steps]
+    )
+    if not np.isfinite(prefix_difference):
+        return float("inf"), "terminal_prefix_non_finite"
+    return prefix_difference, "terminal_prefix_full_chunk_hash"
+
+
 def _episode_success(record: dict[str, Any]) -> bool:
     return bool(record.get("episode_success", False))
 
@@ -191,9 +237,13 @@ def build_pairs(
             baseline_arrays.get("proprio", np.empty(0)),
             residual_arrays.get("proprio", np.empty(0)),
         )
-        baseline_action_difference = _finite_max_abs_difference(
-            baseline_arrays.get("baseline_actions", np.empty(0)),
-            residual_arrays.get("baseline_actions", np.empty(0)),
+        baseline_action_difference, baseline_action_comparison = (
+            _baseline_action_difference(
+                baseline,
+                residual,
+                baseline_arrays.get("baseline_actions", np.empty(0)),
+                residual_arrays.get("baseline_actions", np.empty(0)),
+            )
         )
         if proprio_difference > proprio_atol:
             reasons.append("intervention_proprio_mismatch")
@@ -229,6 +279,7 @@ def build_pairs(
             "current_observation_sha256": baseline_current_hash,
             "proprio_max_abs_difference": proprio_difference,
             "baseline_action_max_abs_difference": baseline_action_difference,
+            "baseline_action_comparison": baseline_action_comparison,
             "baseline_record_dir": str(Path(baseline["record_dir"]).resolve()),
             "residual_record_dir": str(Path(residual["record_dir"]).resolve()),
             "baseline_episode_success": _episode_success(baseline),

@@ -9,12 +9,17 @@ PLACE_SEEDS="${PLACE_SEEDS:-4800000,4800004}"
 OPEN_SEEDS="${OPEN_SEEDS:-4800000}"
 CONDA_ENV="${CONDA_ENV:-robotwin_fastwam}"
 ENCODER_PATH="${ENCODER_PATH:-/home/ubuntu/sj/fastwam/checkpoints/siglip-so400m-patch14-384-modelscope}"
+CAMERA_NORMALIZATION_MANIFEST="${CAMERA_NORMALIZATION_MANIFEST:-${PROJECT_ROOT}/evaluate_results/robotwin_residual_rl/robotwin_corrected_posttrain_20260805/replay_corrected_bf16/manifest.json}"
 OUTPUT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin_residual_pairs"
 DRIVER_ROOT="${OUTPUT_BASE}/${BATCH_NAME}"
 PLACE_RUN="${BATCH_NAME}_place_can_basket"
 OPEN_RUN="${BATCH_NAME}_open_microwave"
 
 mkdir -p "${DRIVER_ROOT}"
+[[ -f "${CAMERA_NORMALIZATION_MANIFEST}" ]] || {
+  printf 'Missing camera normalization manifest: %s\n' "${CAMERA_NORMALIZATION_MANIFEST}" >&2
+  exit 1
+}
 
 printf '[high-failure-batch] stage=place_can_basket seeds=%s\n' "${PLACE_SEEDS}"
 env \
@@ -47,6 +52,7 @@ for run_name in "${PLACE_RUN}" "${OPEN_RUN}"; do
     --device cuda \
     --encoder-dtype bf16 \
     --batch-size 24 \
+    --camera-normalization-manifest "${CAMERA_NORMALIZATION_MANIFEST}" \
     --q-margin 0.003 \
     --output-dir "${OUTPUT_BASE}/${run_name}/statistics" \
     > "${DRIVER_ROOT}/${run_name}_score.log" 2>&1
