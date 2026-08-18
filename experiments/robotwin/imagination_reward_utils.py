@@ -119,6 +119,38 @@ def apply_action_chunk_hold(
     return held, mask
 
 
+def sample_composed_action_chunk_hold(
+    *,
+    action_mode: str,
+    hold_probability: float,
+    corruption_seed: int,
+    replan_idx: int | None = None,
+    hold_replans: set[int] | None = None,
+) -> bool:
+    """Sample an auditable hold that may precede a later residual recovery.
+
+    A controlled recovery pair needs the corrupted policy branch and the
+    corrupted-plus-residual branch to receive exactly the same disturbance.
+    Treating hold as a composable corruption for policy and residual modes
+    preserves that invariant while retaining the legacy hold-only mode.
+    """
+
+    mode = str(action_mode).strip().lower()
+    probability = float(hold_probability)
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError(
+            f"hold_probability must be in [0,1], got {hold_probability}"
+        )
+    if mode not in {"policy", "hold", "residual"} or probability == 0.0:
+        return False
+    if hold_replans is not None:
+        if replan_idx is None:
+            raise ValueError("replan_idx is required when hold_replans is specified")
+        if int(replan_idx) not in hold_replans:
+            return False
+    return bool(np.random.default_rng(int(corruption_seed)).random() < probability)
+
+
 def apply_first_gripper_close_delay(
     action: np.ndarray,
     *,

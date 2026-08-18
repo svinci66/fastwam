@@ -432,6 +432,11 @@ def main(cfg: DictConfig):
     )
     _append_override(
         overrides,
+        "action_hold_replans",
+        cfg.EVALUATION.action_hold_replans,
+    )
+    _append_override(
+        overrides,
         "gripper_close_delay_steps",
         cfg.EVALUATION.gripper_close_delay_steps,
     )
@@ -512,6 +517,11 @@ def main(cfg: DictConfig):
             else str(cfg.EVALUATION.environment_seed_manifest_path)
         ),
         "action_mode": str(cfg.EVALUATION.action_mode),
+        "action_hold_probability": float(
+            cfg.EVALUATION.action_hold_probability
+        ),
+        "action_hold_replans": str(cfg.EVALUATION.action_hold_replans),
+        "action_corruption_seed": int(cfg.EVALUATION.action_corruption_seed),
         "residual_paired_advantage_gate_enabled": bool(
             cfg.EVALUATION.residual_paired_advantage_gate_enabled
         ),

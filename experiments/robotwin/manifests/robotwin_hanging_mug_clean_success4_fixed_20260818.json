@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "description": "Four paper-aligned hanging_mug Clean-success seeds with their frozen official unseen instructions, for deterministic controlled replay without rerunning CuRobo expert filtering.",
+    "episodes_per_task": 4,
+    "task_config": "demo_clean",
+    "source": "robotwin_hanging_mug_expansion_20260817"
+  },
+  "hanging_mug": {
+    "seeds": [
+      4800007,
+      4800008,
+      4800011,
+      4800015
+    ],
+    "instructions": [
+      "Lift the medium mug for hot drinks from the table, spin it, set it down, and hang it on the medium-sized rack.",
+      "Pick the cylindrical mug from the table, rotate it, place it in the middle, and hang it onto the dark gray rack with flat back.",
+      "Lift the cylindrical mug with handle from the table, spin it, set it down, and hang it on the rack with straight and slanted rods.",
+      "Grab the ceramic mug on the table, rotate it, set it down in the middle, then hang it onto the medium-sized rack."
+    ]
+  }
+}

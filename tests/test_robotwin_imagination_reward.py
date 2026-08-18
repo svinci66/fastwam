@@ -8,6 +8,7 @@ from experiments.robotwin.imagination_reward_utils import (
     apply_action_chunk_hold,
     apply_first_gripper_close_delay,
     apply_normalized_action_noise,
+    sample_composed_action_chunk_hold,
     save_aligned_transition,
     split_robotwin_camera_views,
     update_episode_success,
@@ -52,6 +53,42 @@ def test_action_chunk_hold_freezes_only_arm_targets():
     np.testing.assert_array_equal(held[:, [6, 13]], baseline[:, [6, 13]])
     np.testing.assert_array_equal(mask[:, arm_indices], 1.0)
     np.testing.assert_array_equal(mask[:, [6, 13]], 0.0)
+
+
+def test_composed_hold_is_identical_for_policy_and_residual_branches():
+    decisions = {
+        mode: sample_composed_action_chunk_hold(
+            action_mode=mode,
+            hold_probability=0.25,
+            corruption_seed=19,
+        )
+        for mode in ("policy", "residual")
+    }
+    assert decisions["policy"] == decisions["residual"]
+    assert not sample_composed_action_chunk_hold(
+        action_mode="policy",
+        hold_probability=0.0,
+        corruption_seed=19,
+    )
+    assert not sample_composed_action_chunk_hold(
+        action_mode="noise",
+        hold_probability=1.0,
+        corruption_seed=19,
+    )
+
+
+def test_composed_hold_can_be_scheduled_at_one_replan():
+    decisions = [
+        sample_composed_action_chunk_hold(
+            action_mode="residual",
+            hold_probability=1.0,
+            corruption_seed=19,
+            replan_idx=replan_idx,
+            hold_replans={6},
+        )
+        for replan_idx in range(10)
+    ]
+    assert decisions == [False] * 6 + [True] + [False] * 3
 
 
 def test_gripper_close_delay_crosses_chunk_boundary_once():

@@ -26,6 +26,8 @@ INSTRUCTION_TYPE="${INSTRUCTION_TYPE:-unseen}"
 INSTRUCTION_MODE="${INSTRUCTION_MODE:-fixed}"
 PAPER_ALIGNED="${PAPER_ALIGNED:-false}"
 STRICT_PAIRED="${STRICT_PAIRED:-false}"
+DETERMINISTIC_INSTRUCTION_BY_SEED="${DETERMINISTIC_INSTRUCTION_BY_SEED:-${STRICT_PAIRED}}"
+EXPERT_CHECK="${EXPERT_CHECK:-true}"
 SEED_MANIFEST_PATH="${SEED_MANIFEST_PATH:-none}"
 GPU_ID="${GPU_ID:-0}"
 TILED="${TILED:-false}"
@@ -54,6 +56,9 @@ RESIDUAL_OUTCOME_CONFIRMATION_REANCHOR_REPLANS="${RESIDUAL_OUTCOME_CONFIRMATION_
 RESIDUAL_LANGUAGE_MODE="${RESIDUAL_LANGUAGE_MODE:-policy_instruction}"
 SAVE_RESIDUAL_TRANSITIONS="${SAVE_RESIDUAL_TRANSITIONS:-false}"
 SAVE_BASELINE_TRANSITIONS="${SAVE_BASELINE_TRANSITIONS:-false}"
+ACTION_HOLD_PROBABILITY="${ACTION_HOLD_PROBABILITY:-0.0}"
+ACTION_HOLD_REPLANS="${ACTION_HOLD_REPLANS:-all}"
+ACTION_CORRUPTION_SEED="${ACTION_CORRUPTION_SEED:-20260729}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 SUMMARY_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}"
 
@@ -230,10 +235,14 @@ for variant in "${variants[@]}"; do
       "EVALUATION.capture_decode_tiled=${CAPTURE_DECODE_TILED}" \
       "EVALUATION.replan_steps=${REPLAN_STEPS}" \
       "EVALUATION.action_mode=${action_mode}" \
+      "EVALUATION.action_hold_probability=${ACTION_HOLD_PROBABILITY}" \
+      "EVALUATION.action_hold_replans='${ACTION_HOLD_REPLANS}'" \
+      "EVALUATION.action_corruption_seed=${ACTION_CORRUPTION_SEED}" \
       "${residual_args[@]}" \
       "${instruction_args[@]}" \
       "EVALUATION.environment_seed_manifest_path=${SEED_MANIFEST_PATH}" \
-      "EVALUATION.deterministic_instruction_by_seed=${STRICT_PAIRED}" \
+      "EVALUATION.deterministic_instruction_by_seed=${DETERMINISTIC_INSTRUCTION_BY_SEED}" \
+      "EVALUATION.expert_check=${EXPERT_CHECK}" \
       "EVALUATION.paper_aligned=${PAPER_ALIGNED}" \
       "EVALUATION.strict_paired=${STRICT_PAIRED}" \
       EVALUATION.timing_enabled=true \

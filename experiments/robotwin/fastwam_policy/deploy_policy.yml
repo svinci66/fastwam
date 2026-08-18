@@ -56,6 +56,7 @@ residual_language_instruction: null
 action_noise_std: 0.0
 action_noise_seed: 20260728
 action_hold_probability: 0.0
+action_hold_replans: all
 gripper_close_delay_steps: 0
 action_corruption_seed: 20260729
 trial_offset: 0

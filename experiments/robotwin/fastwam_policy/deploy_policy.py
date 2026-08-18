@@ -32,6 +32,7 @@ from experiments.robotwin.imagination_reward_utils import (
     apply_first_gripper_close_delay,
     apply_normalized_action_noise,
     array_sha256,
+    sample_composed_action_chunk_hold,
     save_aligned_transition,
     split_robotwin_camera_views,
     update_episode_success,
@@ -308,6 +309,7 @@ class WorldActionRobotWinPolicy:
         action_noise_std: float,
         action_noise_seed: int,
         action_hold_probability: float,
+        action_hold_replans: Optional[set[int]],
         gripper_close_delay_steps: int,
         action_corruption_seed: int,
         trial_offset: int,
@@ -437,6 +439,14 @@ class WorldActionRobotWinPolicy:
             raise ValueError(
                 "action_hold_probability must be in [0,1], got "
                 f"{self.action_hold_probability}"
+            )
+        self.action_hold_replans = action_hold_replans
+        if self.action_hold_replans is not None and (
+            not self.action_hold_replans or min(self.action_hold_replans) < 0
+        ):
+            raise ValueError(
+                "action_hold_replans must be None or a non-empty set of "
+                "non-negative replan indices"
             )
         self.gripper_close_delay_steps = int(gripper_close_delay_steps)
         if self.gripper_close_delay_steps < 0:
@@ -761,15 +771,20 @@ class WorldActionRobotWinPolicy:
                 flush=True,
             )
         corruption_mask = np.zeros_like(executed_actions, dtype=np.float32)
-        if self.action_mode == "hold":
+        if self.action_mode in {"policy", "hold", "residual"} and (
+            self.action_hold_probability > 0.0
+        ):
             corruption_seed = (
                 self.action_corruption_seed
                 + self.episode_count * 100_003
                 + self.replan_count * 1_009
             )
-            hold_chunk = bool(
-                np.random.default_rng(corruption_seed).random()
-                < self.action_hold_probability
+            hold_chunk = sample_composed_action_chunk_hold(
+                action_mode=self.action_mode,
+                hold_probability=self.action_hold_probability,
+                corruption_seed=corruption_seed,
+                replan_idx=self.replan_count,
+                hold_replans=self.action_hold_replans,
             )
             executed_actions, corruption_mask = apply_action_chunk_hold(
                 executed_actions,
@@ -981,8 +996,15 @@ class WorldActionRobotWinPolicy:
                 self.action_noise_std if self.action_mode == "noise" else 0.0
             ),
             "action_noise_seed": self.action_noise_seed,
-            "action_hold_probability": (
-                self.action_hold_probability if self.action_mode == "hold" else 0.0
+            "action_hold_probability": self.action_hold_probability,
+            "action_hold_replans": (
+                "all"
+                if self.action_hold_replans is None
+                else sorted(self.action_hold_replans)
+            ),
+            "action_hold_composed_with_residual": bool(
+                self.action_mode == "residual"
+                and self.action_hold_probability > 0.0
             ),
             "gripper_close_delay_steps": (
                 self.gripper_close_delay_steps
@@ -1454,6 +1476,22 @@ def get_model(usr_args: Dict[str, Any]):
             cfg.EVALUATION.get("action_hold_probability", 0.0),
         )
     )
+    action_hold_replans_value = usr_args.get(
+        "action_hold_replans",
+        cfg.EVALUATION.get("action_hold_replans", "all"),
+    )
+    if str(action_hold_replans_value).strip().lower() == "all":
+        action_hold_replans = None
+    else:
+        action_hold_replans = {
+            int(item.strip())
+            for item in str(action_hold_replans_value).split(",")
+            if item.strip()
+        }
+        if not action_hold_replans or min(action_hold_replans) < 0:
+            raise ValueError(
+                "action_hold_replans must be 'all' or non-negative CSV indices"
+            )
     gripper_close_delay_steps = int(
         usr_args.get(
             "gripper_close_delay_steps",
@@ -1557,6 +1595,7 @@ def get_model(usr_args: Dict[str, Any]):
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
         action_hold_probability=action_hold_probability,
+        action_hold_replans=action_hold_replans,
         gripper_close_delay_steps=gripper_close_delay_steps,
         action_corruption_seed=action_corruption_seed,
         trial_offset=trial_offset,

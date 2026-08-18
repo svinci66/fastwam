@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "description": "Ten new expert-feasible hanging_mug seeds selected by the 2026-08-17 CuRobo expert scan.",
+    "episodes_per_task": 10,
+    "task_config": "demo_clean",
+    "expert_seed_scan": "evaluate_results/robotwin_residual_pairs/robotwin_hanging_mug_expansion_20260817/expert_seed_scan.json"
+  },
+  "hanging_mug": {
+    "seeds": [
+      4800007,
+      4800008,
+      4800009,
+      4800010,
+      4800011,
+      4800012,
+      4800014,
+      4800015,
+      4800016,
+      4800017
+    ]
+  }
+}
