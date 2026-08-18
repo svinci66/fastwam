@@ -38,6 +38,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--replay-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
+        "--init-checkpoint",
+        type=Path,
+        default=None,
+        help=(
+            "Warm-start actor, both online Q critics, and the value critic from "
+            "an existing fastwam_residual_iql_v1 checkpoint. Optimizer state is "
+            "intentionally reset for replay-scale changes."
+        ),
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Validate replay/config/model shapes without optimizer steps or output writes.",
@@ -87,6 +97,58 @@ def _seed_process(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def _warm_start_models(
+    checkpoint_path: Path,
+    actor: ResidualActor,
+    q_critics: tuple[ActionValueCritic, ActionValueCritic],
+    value_critic: ValueCritic,
+) -> dict[str, str]:
+    """Strictly restore trainable IQL modules while resetting optimizers."""
+
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"initialization checkpoint not found: {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if checkpoint.get("format") != "fastwam_residual_iql_v1":
+        raise ValueError(
+            "initialization checkpoint must use format fastwam_residual_iql_v1; "
+            f"got {checkpoint.get('format')!r}"
+        )
+    saved_q_critics = checkpoint.get("q_critics")
+    if not isinstance(saved_q_critics, (list, tuple)) or len(saved_q_critics) != 2:
+        raise ValueError("initialization checkpoint must contain exactly two Q critics")
+
+    expected_configs = {
+        "actor_config": actor.export_config(),
+        "q_critic_config": q_critics[0].export_config(),
+        "value_critic_config": value_critic.export_config(),
+    }
+    for key, expected in expected_configs.items():
+        actual = checkpoint.get(key)
+        # zero_init_output changes only fresh initialization; it is absent from
+        # checkpoints produced before that safety option was added and has no
+        # effect once a state dict is restored.
+        comparable_actual = dict(actual) if isinstance(actual, dict) else actual
+        comparable_expected = dict(expected)
+        if key == "actor_config" and isinstance(comparable_actual, dict):
+            comparable_actual.pop("zero_init_output", None)
+            comparable_expected.pop("zero_init_output", None)
+        if comparable_actual != comparable_expected:
+            raise ValueError(
+                f"initialization checkpoint {key} does not match the current model: "
+                f"saved={actual!r}, current={expected!r}"
+            )
+
+    actor.load_state_dict(checkpoint["actor"], strict=True)
+    for critic, state_dict in zip(q_critics, saved_q_critics):
+        critic.load_state_dict(state_dict, strict=True)
+    value_critic.load_state_dict(checkpoint["value_critic"], strict=True)
+    return {
+        "path": str(checkpoint_path.resolve()),
+        "sha256": _sha256(checkpoint_path),
+        "format": str(checkpoint["format"]),
+    }
 
 
 def main() -> None:
@@ -169,6 +231,14 @@ def main() -> None:
     )
     value_config = ValueCriticConfig(**value_cfg)
     value_critic = ValueCritic(value_config)
+    initialization_source = None
+    if args.init_checkpoint is not None:
+        initialization_source = _warm_start_models(
+            args.init_checkpoint,
+            actor,
+            q_critics,
+            value_critic,
+        )
     initialization_sha256 = {
         "actor": _state_dict_sha256(actor),
         "q1": _state_dict_sha256(q_critics[0]),
@@ -206,6 +276,7 @@ def main() -> None:
         ),
         "training_seed": iql_config.seed,
         "initialization_sha256": initialization_sha256,
+        "initialization_source": initialization_source,
         "reward_encoder_version": replay_manifest["reward_encoder_version"],
         "language_encoder_version": replay_manifest.get("language_encoder_version"),
         "imagination_reward_type": replay_manifest.get(
@@ -248,6 +319,7 @@ def main() -> None:
         "replay_manifest_sha256": _sha256(args.replay_dir / "manifest.json"),
         "replay_provenance": replay_manifest.get("provenance", {}),
         "summary": summary,
+        "initialization_source": initialization_source,
     }
     torch.save(checkpoint, args.output_dir / "checkpoint.pt")
     (args.output_dir / "history.json").write_text(
