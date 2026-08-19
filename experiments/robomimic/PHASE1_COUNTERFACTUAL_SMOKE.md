@@ -84,3 +84,33 @@ intermediate states and check three properties on held-out state groups:
 
 Only after these pass should the same collection mechanism be ported back to
 RoboTwin and attached to frozen FastWAM features.
+
+## Short-branch collection
+
+The next data-generation step is now available as an incremental, resumable
+collector. It restores an intermediate state, executes the recorded action
+sequence, restores exactly the same state, and executes a bounded pose-action
+perturbation for the first three steps. The remaining action tail is held
+fixed, so the measured score difference is attributable to the intervention.
+
+Dense RoboSuite reward ranks short branches; task success receives a separate
+large bonus and is stored explicitly. Pose actions are perturbed but the
+gripper command is preserved by default. Samples retain their official
+`train` or `valid` source split to prevent trajectory leakage during learning.
+
+Run the 20-sample quality gate:
+
+```bash
+bash scripts/run_robomimic_counterfactual_collection.sh smoke
+```
+
+Start or resume the 5,000-sample collection in a persistent tmux session:
+
+```bash
+bash scripts/start_robomimic_counterfactual_long.sh
+```
+
+The 20-sample smoke on 2026-08-19 passed: exact restoration held for all
+samples, all branches diverged, and 15/20 branches produced a non-tied score
+label. The long run writes a committed sample count and summary every ten
+samples; an interrupted run resumes deterministically from that count.
