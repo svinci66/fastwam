@@ -88,10 +88,13 @@ RoboTwin and attached to frozen FastWAM features.
 ## Short-branch collection
 
 The next data-generation step is now available as an incremental, resumable
-collector. It restores an intermediate state, executes the recorded action
-sequence, restores exactly the same state, and executes a bounded pose-action
-perturbation for the first three steps. The remaining action tail is held
-fixed, so the measured score difference is attributable to the intervention.
+collector. MuJoCo state alone does not contain the OSC controller's internal
+target history. Therefore, each branch starts by restoring the episode's exact
+initial state and replaying the same action prefix. It then executes either the
+recorded action or a bounded pose-action perturbation for the first three
+steps. The remaining action tail is held fixed, so the measured score
+difference is attributable to the intervention while controller history is
+identical between branches.
 
 Dense RoboSuite reward ranks short branches; task success receives a separate
 large bonus and is stored explicitly. Pose actions are perturbed but the
@@ -110,7 +113,7 @@ Start or resume the 5,000-sample collection in a persistent tmux session:
 bash scripts/start_robomimic_counterfactual_long.sh
 ```
 
-The 20-sample smoke on 2026-08-19 passed: exact restoration held for all
-samples, all branches diverged, and 15/20 branches produced a non-tied score
-label. The long run writes a committed sample count and summary every ten
-samples; an interrupted run resumes deterministically from that count.
+The quality gate additionally checks that successful source segments replay as
+successful base branches. The long run writes a committed sample count and
+summary every ten samples; an interrupted run resumes deterministically from
+that count.

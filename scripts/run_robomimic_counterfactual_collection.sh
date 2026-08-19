@@ -14,12 +14,12 @@ SEED="${ROBOMIMIC_COUNTERFACTUAL_SEED:-20260819}"
 case "${MODE}" in
     smoke)
         NUM_SAMPLES="${ROBOMIMIC_COUNTERFACTUAL_SAMPLES:-20}"
-        OUTPUT_PATH="${OUTPUT_ROOT}/can_smoke_${NUM_SAMPLES}_seed${SEED}.hdf5"
+        OUTPUT_PATH="${OUTPUT_ROOT}/can_smoke_prefix_${NUM_SAMPLES}_seed${SEED}.hdf5"
         QUALITY_FLAG="--require-smoke-quality"
         ;;
     long)
         NUM_SAMPLES="${ROBOMIMIC_COUNTERFACTUAL_SAMPLES:-5000}"
-        OUTPUT_PATH="${OUTPUT_ROOT}/can_long_${NUM_SAMPLES}_seed${SEED}.hdf5"
+        OUTPUT_PATH="${OUTPUT_ROOT}/can_long_prefix_${NUM_SAMPLES}_seed${SEED}.hdf5"
         QUALITY_FLAG=""
         ;;
     *)

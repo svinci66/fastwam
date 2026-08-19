@@ -9,6 +9,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from experiments.robomimic.collect_can_counterfactual_branches import (
     _make_candidate_actions,
+    _rollout_branch,
     _select_source,
     _set_or_validate_attribute,
 )
@@ -56,3 +57,34 @@ def test_resume_attribute_validation_rejects_mixed_configuration(tmp_path):
         _set_or_validate_attribute(output, "horizon", 20)
         with pytest.raises(ValueError, match="horizon"):
             _set_or_validate_attribute(output, "horizon", 40)
+
+
+def test_rollout_replays_prefix_before_recording_branch_state():
+    class FakeEnv:
+        def __init__(self):
+            self.state = np.asarray([0.0])
+
+        def reset_to(self, payload):
+            self.state = np.array(payload["states"], copy=True)
+
+        def get_state(self):
+            return {"states": np.array(self.state, copy=True)}
+
+        def is_success(self):
+            return {"task": False}
+
+        def step(self, action):
+            self.state += action
+            return {}, float(self.state[0]), False, {"is_success": {"task": False}}
+
+    result = _rollout_branch(
+        FakeEnv(),
+        model="unused-by-fake-env",
+        episode_initial_state=np.asarray([0.0]),
+        prefix_actions=np.asarray([[1.0], [2.0]]),
+        branch_actions=np.asarray([[4.0]]),
+    )
+
+    np.testing.assert_array_equal(result["branch_initial_state"], np.asarray([3.0]))
+    np.testing.assert_array_equal(result["final_state"], np.asarray([7.0]))
+    assert result["reward_sum"] == 7.0

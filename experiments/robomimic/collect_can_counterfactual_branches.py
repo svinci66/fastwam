@@ -24,6 +24,7 @@ import numpy as np
 NUMERIC_FIELDS: dict[str, tuple[Any, tuple[int, ...]]] = {
     "source_step": (np.int32, ()),
     "source_episode_success": (np.uint8, ()),
+    "source_branch_contains_success": (np.uint8, ()),
     "noise_sigma": (np.float32, ()),
     "noise_seed": (np.int64, ()),
     "intervention_steps": (np.int16, ()),
@@ -38,6 +39,8 @@ NUMERIC_FIELDS: dict[str, tuple[Any, tuple[int, ...]]] = {
     "label": (np.int8, ()),
     "informative": (np.uint8, ()),
     "restore_linf": (np.float64, ()),
+    "branch_initial_state_linf": (np.float64, ()),
+    "stored_state_linf": (np.float64, ()),
     "branch_final_state_linf": (np.float64, ()),
 }
 
@@ -93,15 +96,21 @@ def _rollout_branch(
     env: Any,
     *,
     model: str,
-    state: np.ndarray,
-    actions: np.ndarray,
+    episode_initial_state: np.ndarray,
+    prefix_actions: np.ndarray,
+    branch_actions: np.ndarray,
 ) -> dict[str, Any]:
-    env.reset_to({"model": model, "states": state})
+    """Rebuild controller history before executing the counterfactual branch."""
+
+    env.reset_to({"model": model, "states": episode_initial_state})
     restored = np.asarray(env.get_state()["states"])
-    restore_linf = float(np.max(np.abs(restored - state), initial=0.0))
+    restore_linf = float(np.max(np.abs(restored - episode_initial_state), initial=0.0))
+    for action in prefix_actions:
+        env.step(action)
+    branch_initial_state = np.asarray(env.get_state()["states"])
     rewards: list[float] = []
     success = _success_value(env.is_success())
-    for action in actions:
+    for action in branch_actions:
         _, reward, _, info = env.step(action)
         rewards.append(float(reward))
         success = success or _success_value(info.get("is_success", env.is_success()))
@@ -109,6 +118,7 @@ def _rollout_branch(
         "restore_linf": restore_linf,
         "reward_sum": float(sum(rewards)),
         "success": success,
+        "branch_initial_state": branch_initial_state,
         "final_state": np.asarray(env.get_state()["states"]),
     }
 
@@ -176,6 +186,8 @@ def _summary(samples: h5py.Group, *, target_samples: int, margin: float) -> dict
     branch_linf = np.asarray(samples["branch_final_state_linf"])
     base_success = np.asarray(samples["base_success"], dtype=bool)
     candidate_success = np.asarray(samples["candidate_success"], dtype=bool)
+    expected_success = np.asarray(samples["source_branch_contains_success"], dtype=bool)
+    reproduced_success = expected_success & base_success
     finite = all(
         bool(np.all(np.isfinite(np.asarray(samples[name]))))
         for name in ("base_score", "candidate_score", "delta_score", "restore_linf")
@@ -194,7 +206,20 @@ def _summary(samples: h5py.Group, *, target_samples: int, margin: float) -> dict
         "base_success_count": int(np.count_nonzero(base_success)),
         "candidate_success_count": int(np.count_nonzero(candidate_success)),
         "success_outcome_changed": int(np.count_nonzero(base_success != candidate_success)),
+        "expected_success_count": int(np.count_nonzero(expected_success)),
+        "reproduced_success_count": int(np.count_nonzero(reproduced_success)),
+        "success_replay_rate": (
+            float(np.count_nonzero(reproduced_success) / np.count_nonzero(expected_success))
+            if np.count_nonzero(expected_success)
+            else None
+        ),
         "max_restore_linf": float(np.max(restore, initial=0.0)),
+        "max_branch_initial_state_linf": float(
+            np.max(np.asarray(samples["branch_initial_state_linf"]), initial=0.0)
+        ),
+        "max_stored_state_linf": float(
+            np.max(np.asarray(samples["stored_state_linf"]), initial=0.0)
+        ),
         "branch_diverged_count": int(np.count_nonzero(branch_linf > 1e-10)),
         "branch_diverged_rate": float(np.mean(branch_linf > 1e-10)) if count else 0.0,
         "all_finite": finite,
@@ -256,7 +281,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         try:
             with h5py.File(output_path, "a") as output:
                 run_attributes = {
-                    "format": "fastwam.robomimic_counterfactual.v1",
+                    "format": "fastwam.robomimic_counterfactual.v2_prefix_replay",
                     "source_dataset": str(source_path),
                     "seed": args.seed,
                     "horizon": args.horizon,
@@ -287,7 +312,9 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                         late_state_fraction=args.late_state_fraction,
                     )
                     group = source["data"][demo_name]
-                    initial_state = np.asarray(group["states"][source_step])
+                    episode_initial_state = np.asarray(group["states"][0])
+                    stored_branch_state = np.asarray(group["states"][source_step])
+                    prefix_actions = np.asarray(group["actions"][:source_step])
                     base_actions = np.asarray(
                         group["actions"][source_step : source_step + args.horizon]
                     )
@@ -303,14 +330,16 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                     base = _rollout_branch(
                         env,
                         model=model,
-                        state=initial_state,
-                        actions=base_actions,
+                        episode_initial_state=episode_initial_state,
+                        prefix_actions=prefix_actions,
+                        branch_actions=base_actions,
                     )
                     candidate = _rollout_branch(
                         env,
                         model=model,
-                        state=initial_state,
-                        actions=candidate_actions,
+                        episode_initial_state=episode_initial_state,
+                        prefix_actions=prefix_actions,
+                        branch_actions=candidate_actions,
                     )
                     base_score = (
                         args.success_bonus * float(base["success"])
@@ -332,11 +361,14 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                         "source_split": split_by_demo[demo_name],
                         "source_step": source_step,
                         "source_episode_success": int(np.max(group["rewards"][()]) > 0),
+                        "source_branch_contains_success": int(
+                            np.max(group["rewards"][source_step : source_step + args.horizon]) > 0
+                        ),
                         "noise_sigma": sigma,
                         "noise_seed": noise_seed,
                         "intervention_steps": min(args.intervention_steps, len(base_actions)),
                         "horizon": len(base_actions),
-                        "initial_state": initial_state,
+                        "initial_state": base["branch_initial_state"],
                         "base_action": base_actions[0],
                         "candidate_action": candidate_actions[0],
                         "residual_action": candidate_actions[0] - base_actions[0],
@@ -350,6 +382,21 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                         "label": label,
                         "informative": int(label != 0),
                         "restore_linf": max(base["restore_linf"], candidate["restore_linf"]),
+                        "branch_initial_state_linf": float(
+                            np.max(
+                                np.abs(
+                                    base["branch_initial_state"]
+                                    - candidate["branch_initial_state"]
+                                ),
+                                initial=0.0,
+                            )
+                        ),
+                        "stored_state_linf": float(
+                            np.max(
+                                np.abs(base["branch_initial_state"] - stored_branch_state),
+                                initial=0.0,
+                            )
+                        ),
                         "base_final_state": base["final_state"],
                         "candidate_final_state": candidate["final_state"],
                         "branch_final_state_linf": float(
@@ -434,8 +481,13 @@ def main() -> None:
             summary["complete"]
             and summary["all_finite"]
             and summary["max_restore_linf"] <= 1e-10
+            and summary["max_branch_initial_state_linf"] <= 1e-10
             and summary["branch_diverged_rate"] >= 0.9
             and summary["informative_count"] > 0
+            and (
+                summary["expected_success_count"] == 0
+                or summary["success_replay_rate"] >= 0.9
+            )
         )
         if not passed:
             raise SystemExit("Counterfactual collection smoke-quality gate failed")
