@@ -16,17 +16,23 @@ case "${MODE}" in
     smoke)
         TRAIN_STATES="${ROBOMIMIC_SYMMETRIC_TRAIN_STATES:-40}"
         VALID_STATES="${ROBOMIMIC_SYMMETRIC_VALID_STATES:-10}"
-        OUTPUT_PATH="${OUTPUT_ROOT}/can_symmetric_smoke_40train_10valid_seed${SEED}.hdf5"
+        OUTPUT_PATH="${OUTPUT_ROOT}/can_symmetric_smoke_${TRAIN_STATES}train_${VALID_STATES}valid_seed${SEED}.hdf5"
         QUALITY_FLAG="--require-smoke-quality"
         ;;
     long)
         TRAIN_STATES="${ROBOMIMIC_SYMMETRIC_TRAIN_STATES:-400}"
         VALID_STATES="${ROBOMIMIC_SYMMETRIC_VALID_STATES:-100}"
-        OUTPUT_PATH="${OUTPUT_ROOT}/can_symmetric_long_400train_100valid_seed${SEED}.hdf5"
+        OUTPUT_PATH="${OUTPUT_ROOT}/can_symmetric_long_${TRAIN_STATES}train_${VALID_STATES}valid_seed${SEED}.hdf5"
+        QUALITY_FLAG=""
+        ;;
+    expanded)
+        TRAIN_STATES="${ROBOMIMIC_SYMMETRIC_TRAIN_STATES:-1200}"
+        VALID_STATES="${ROBOMIMIC_SYMMETRIC_VALID_STATES:-300}"
+        OUTPUT_PATH="${OUTPUT_ROOT}/can_symmetric_expanded_${TRAIN_STATES}train_${VALID_STATES}valid_seed${SEED}.hdf5"
         QUALITY_FLAG=""
         ;;
     *)
-        echo "usage: $0 [smoke|long]" >&2
+        echo "usage: $0 [smoke|long|expanded]" >&2
         exit 2
         ;;
 esac
