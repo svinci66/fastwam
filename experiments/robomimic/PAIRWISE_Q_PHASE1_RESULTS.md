@@ -91,3 +91,8 @@ bash scripts/run_robomimic_pairwise_q_phase1.sh
 
 Machine-readable results are written to
 `evaluate_results/robomimic_pairwise_q_phase1/comparison_multiseed.json`.
+
+The subsequent residual-proposal experiment is documented in
+`experiments/robomimic/RESIDUAL_ACTOR_PHASE1_RESULTS.md`. Pairwise Q passes, but
+the first sparse-candidate residual actor does not pass the online-readiness
+gate.
