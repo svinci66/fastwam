@@ -98,6 +98,9 @@ instead of about one random candidate. This will estimate a local improvement
 direction that a deterministic residual actor can learn. The existing 5,000
 branches remain useful for pairwise-Q training and do not need to be discarded.
 
+The targeted collector and its passing 50-state smoke are documented in
+`experiments/robomimic/SYMMETRIC_COLLECTION_SMOKE_RESULTS.md`.
+
 ## Reproduce
 
 ```bash
