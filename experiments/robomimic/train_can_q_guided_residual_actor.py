@@ -154,6 +154,20 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 
     with np.load(args.dataset, allow_pickle=False) as loaded:
         arrays = {key: loaded[key] for key in loaded.files}
+    observation_metadata = {
+        key: arrays[key].item()
+        for key in (
+            "observation_mode",
+            "encoder_path",
+            "camera_name",
+            "proprio_keys",
+            "vision_feature_dim",
+            "vision_encoder_output_dim",
+            "vision_projection_path",
+            "proprio_dim",
+        )
+        if key in arrays
+    }
     train_mask = arrays["source_split"] == "train"
     valid_mask = arrays["source_split"] == "valid"
     if set(arrays["source_demo"][train_mask]) & set(arrays["source_demo"][valid_mask]):
@@ -219,6 +233,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 "epoch": epoch,
                 "training_method": "q_guided_conservative",
                 "q_checkpoints": [str(path.resolve()) for path in args.q_checkpoint],
+                "observation_metadata": observation_metadata,
             },
             output_dir / "checkpoint.pt",
         )
@@ -333,6 +348,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "device": str(device),
         "parameter_count": sum(parameter.numel() for parameter in actor.parameters()),
         "q_ensemble_size": len(ensemble),
+        "observation_metadata": observation_metadata,
         "best_epoch": best_epoch,
         "epochs_run": len(history),
         "zero_initialized_output_verified": True,

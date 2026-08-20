@@ -118,6 +118,20 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 
     with np.load(args.dataset, allow_pickle=False) as data:
         arrays = {key: data[key] for key in data.files}
+    observation_metadata = {
+        key: arrays[key].item()
+        for key in (
+            "observation_mode",
+            "encoder_path",
+            "camera_name",
+            "proprio_keys",
+            "vision_feature_dim",
+            "vision_encoder_output_dim",
+            "vision_projection_path",
+            "proprio_dim",
+        )
+        if key in arrays
+    }
     train_mask = arrays["source_split"] == "train"
     valid_mask = arrays["source_split"] == "valid"
     if np.any(np.isin(arrays["source_demo"][train_mask], arrays["source_demo"][valid_mask])):
@@ -250,6 +264,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     "hidden_dims": args.hidden_dims,
                     "state_mode": args.state_mode,
                     "normalization": normalization,
+                    "observation_metadata": observation_metadata,
                     "epoch": epoch,
                 },
                 output_dir / "checkpoint.pt",
@@ -292,6 +307,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "device": str(device),
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
+        "observation_metadata": observation_metadata,
         "best_epoch": best_epoch,
         "epochs_run": len(history),
         "majority_baseline": {
