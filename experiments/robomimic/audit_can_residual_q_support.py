@@ -96,6 +96,8 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
         actor_checkpoint["output_dim"],
         tuple(actor_checkpoint["hidden_dims"]),
         actor_checkpoint["residual_scale"],
+        preserve_last_action_dim=actor_checkpoint.get("preserve_last_action_dim", False),
+        action_dim=actor_checkpoint.get("action_dim"),
     ).to(device)
     actor.load_state_dict(actor_checkpoint["model"])
     actor_features = _features(

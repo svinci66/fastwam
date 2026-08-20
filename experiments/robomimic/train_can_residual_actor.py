@@ -22,6 +22,8 @@ class ResidualActor(nn.Module):
         output_dim: int,
         hidden_dims: tuple[int, ...],
         residual_scale: float,
+        preserve_last_action_dim: bool = False,
+        action_dim: int | None = None,
     ) -> None:
         super().__init__()
         layers: list[nn.Module] = []
@@ -34,9 +36,20 @@ class ResidualActor(nn.Module):
         nn.init.zeros_(self.output.weight)
         nn.init.zeros_(self.output.bias)
         self.residual_scale = float(residual_scale)
+        self.preserve_last_action_dim = bool(preserve_last_action_dim)
+        self.action_dim = action_dim
+        if self.preserve_last_action_dim:
+            if action_dim is None or action_dim <= 0 or output_dim % action_dim:
+                raise ValueError("action_dim must evenly divide output_dim when preserving gripper")
+            mask = torch.ones(output_dim)
+            mask[action_dim - 1 :: action_dim] = 0.0
+        else:
+            mask = torch.ones(output_dim)
+        self.register_buffer("output_mask", mask, persistent=False)
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        return self.residual_scale * torch.tanh(self.output(self.backbone(features)))
+        output = self.residual_scale * torch.tanh(self.output(self.backbone(features)))
+        return output * self.output_mask
 
 
 def _normalization(state: np.ndarray, base_action: np.ndarray) -> dict[str, np.ndarray]:
@@ -173,6 +186,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         output_dim=train_target.shape[1],
         hidden_dims=tuple(args.hidden_dims),
         residual_scale=residual_scale,
+        preserve_last_action_dim=True,
+        action_dim=target_shape[-1],
     ).to(device)
     initial_output = _predict(
         model,
@@ -187,10 +202,40 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    best_loss = float("inf")
-    best_epoch = -1
+    positive_valid = max(int(np.count_nonzero(valid_improved)), 1)
+    negative_valid = max(len(valid_improved) - positive_valid, 1)
+    valid_weights = np.where(
+        valid_improved,
+        len(valid_improved) / (2.0 * positive_valid),
+        len(valid_improved) / (2.0 * negative_valid),
+    )
+    zero_valid_per_sample = np.mean(np.abs(valid_target), axis=(1, 2))
+    zero_actor_valid_loss = float(np.mean(zero_valid_per_sample * valid_weights))
+    best_loss = zero_actor_valid_loss
+    best_epoch = 0
     epochs_without_improvement = 0
     history: list[dict[str, float | int]] = []
+
+    def save_checkpoint(epoch: int) -> None:
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "input_dim": train_features.shape[1],
+                "output_dim": train_target.shape[1],
+                "hidden_dims": args.hidden_dims,
+                "residual_scale": residual_scale,
+                "normalization": normalization,
+                "target_shape": target_shape,
+                "preserve_last_action_dim": True,
+                "action_dim": target_shape[-1],
+                "epoch": epoch,
+            },
+            output_dir / "checkpoint.pt",
+        )
+
+    # Epoch zero is a meaningful safe baseline: it preserves the frozen base
+    # policy exactly. Never replace it unless training improves held-out error.
+    save_checkpoint(epoch=0)
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -217,13 +262,6 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             batch_size=args.batch_size,
             output_shape=target_shape,
         )
-        positive_valid = max(int(np.count_nonzero(valid_improved)), 1)
-        negative_valid = max(len(valid_improved) - positive_valid, 1)
-        valid_weights = np.where(
-            valid_improved,
-            len(valid_improved) / (2.0 * positive_valid),
-            len(valid_improved) / (2.0 * negative_valid),
-        )
         valid_per_sample = np.mean(np.abs(valid_prediction - valid_target), axis=(1, 2))
         valid_loss = float(np.mean(valid_per_sample * valid_weights))
         history.append(
@@ -237,19 +275,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             best_loss = valid_loss
             best_epoch = epoch
             epochs_without_improvement = 0
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "input_dim": train_features.shape[1],
-                    "output_dim": train_target.shape[1],
-                    "hidden_dims": args.hidden_dims,
-                    "residual_scale": residual_scale,
-                    "normalization": normalization,
-                    "target_shape": target_shape,
-                    "epoch": epoch,
-                },
-                output_dir / "checkpoint.pt",
-            )
+            save_checkpoint(epoch)
         else:
             epochs_without_improvement += 1
         if epoch == 1 or epoch % 10 == 0:
@@ -283,6 +309,11 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "zero_initialized_output_verified": True,
         "best_epoch": best_epoch,
         "epochs_run": len(history),
+        "validation_objective": {
+            "zero_actor_balanced_mae": zero_actor_valid_loss,
+            "selected_actor_balanced_mae": best_loss,
+            "improvement_over_zero": zero_actor_valid_loss - best_loss,
+        },
         "train": _actor_metrics(
             arrays["target_residual_chunk"][train_mask],
             train_prediction,

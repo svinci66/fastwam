@@ -37,6 +37,9 @@ def summarize(output_root: str | Path) -> dict[str, Any]:
             {
                 "seed": seed,
                 "best_epoch": metrics["best_epoch"],
+                "validation_mae_improvement_over_zero": metrics["validation_objective"][
+                    "improvement_over_zero"
+                ],
                 "positive_cosine_mean": metrics["valid"]["positive_cosine_mean"],
                 "positive_direction_alignment_rate": metrics["valid"][
                     "positive_direction_alignment_rate"
@@ -64,6 +67,10 @@ def summarize(output_root: str | Path) -> dict[str, Any]:
     aggregate = {key: _aggregate(rows, key) for key in metric_names}
     component_gates = {
         "zero_initialization_and_bounded_actor": True,
+        "actor_beats_zero_output": aggregate[
+            "validation_mae_improvement_over_zero"
+        ]["min"]
+        > 0.0,
         "ood_random_action_rejection": aggregate["random_action_rejection_rate"]["min"] >= 0.95,
         "positive_direction_cosine": aggregate["positive_cosine_mean"]["mean"] >= 0.20,
         "q_advantage_discrimination": aggregate["q_advantage_target_auc"]["min"] >= 0.60,

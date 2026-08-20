@@ -25,6 +25,24 @@ def test_residual_actor_is_exactly_zero_initialized_and_bounded():
     assert torch.max(actor(features)) <= 0.1
 
 
+def test_residual_actor_can_preserve_gripper_dimensions():
+    actor = ResidualActor(
+        5,
+        14,
+        (8,),
+        residual_scale=0.1,
+        preserve_last_action_dim=True,
+        action_dim=7,
+    )
+    with torch.no_grad():
+        actor.output.bias.fill_(1.0)
+
+    output = actor(torch.randn(3, 5))
+
+    torch.testing.assert_close(output[:, [6, 13]], torch.zeros(3, 2))
+    assert torch.all(output[:, [0, 7]] > 0.0)
+
+
 def test_actor_features_use_train_normalization():
     state = np.asarray([[1.0, 2.0]], dtype=np.float32)
     action = np.asarray([[[3.0, 4.0]]], dtype=np.float32)
@@ -63,6 +81,11 @@ def test_residual_summary_fails_online_gate_for_unselective_proposals(tmp_path):
         json.dumps(
             {
                 "best_epoch": 1,
+                "validation_objective": {
+                    "zero_actor_balanced_mae": 0.02,
+                    "selected_actor_balanced_mae": 0.01,
+                    "improvement_over_zero": 0.01,
+                },
                 "valid": {
                     "positive_cosine_mean": 0.1,
                     "positive_direction_alignment_rate": 0.7,
