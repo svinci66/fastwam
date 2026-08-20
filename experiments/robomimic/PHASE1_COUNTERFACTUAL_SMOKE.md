@@ -85,6 +85,10 @@ intermediate states and check three properties on held-out state groups:
 Only after these pass should the same collection mechanism be ported back to
 RoboTwin and attached to frozen FastWAM features.
 
+The held-out pairwise-Q gate has now passed. See
+`experiments/robomimic/PAIRWISE_Q_PHASE1_RESULTS.md` for the three-seed result
+and the action-only control.
+
 ## Short-branch collection
 
 The next data-generation step is now available as an incremental, resumable
