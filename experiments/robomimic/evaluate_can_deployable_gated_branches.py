@@ -180,6 +180,7 @@ def _prepare_gate(
         "in_support": in_support,
         "accepted": accepted,
         "support_reference_count": len(references),
+        "support_references": references,
     }
 
 
