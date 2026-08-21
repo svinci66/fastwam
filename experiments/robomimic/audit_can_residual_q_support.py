@@ -33,10 +33,21 @@ def kth_neighbor_distance(
 ) -> np.ndarray:
     if k <= 0 or k > len(references) - int(exclude_identical_index):
         raise ValueError("k is incompatible with the reference count")
+    # Expanding (query - reference) to a three-dimensional tensor costs several
+    # gigabytes for frozen vision features.  The quadratic identity below is
+    # equivalent, but its largest temporary is only query_count x reference_count.
+    references64 = references.astype(np.float64, copy=False)
+    reference_squared_norm = np.sum(references64 * references64, axis=1)
+    feature_dim = references.shape[1]
     distances = []
     for start in range(0, len(queries), chunk_size):
-        query = queries[start : start + chunk_size]
-        squared = np.mean((query[:, None, :] - references[None, :, :]) ** 2, axis=2)
+        query = queries[start : start + chunk_size].astype(np.float64, copy=False)
+        squared = (
+            np.sum(query * query, axis=1)[:, None]
+            + reference_squared_norm[None, :]
+            - 2.0 * query @ references64.T
+        ) / feature_dim
+        np.maximum(squared, 0.0, out=squared)
         if exclude_identical_index:
             rows = np.arange(len(query))
             columns = np.arange(start, start + len(query))
