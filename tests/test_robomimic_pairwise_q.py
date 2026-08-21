@@ -3,12 +3,19 @@ import sys
 
 import numpy as np
 import json
+import torch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from experiments.robomimic.train_can_pairwise_q import _auc, _metrics, _prepare_features
+from experiments.robomimic.train_can_pairwise_q import (
+    PairwiseQ,
+    _auc,
+    _initialize_full_from_action_only,
+    _metrics,
+    _prepare_features,
+)
 from experiments.robomimic.summarize_can_pairwise_q import summarize
 
 
@@ -43,6 +50,26 @@ def test_action_only_features_exclude_state():
     assert full.shape == (2, 7)
     assert action_only.shape == (2, 4)
     np.testing.assert_array_equal(action_only, action.reshape(2, -1))
+
+
+def test_full_q_action_initialization_exactly_preserves_action_q():
+    torch.manual_seed(7)
+    action_q = PairwiseQ(4, (8, 6))
+    checkpoint = {
+        "model": action_q.state_dict(),
+        "input_dim": 4,
+        "hidden_dims": [8, 6],
+        "state_mode": "action_only",
+    }
+    full_q = PairwiseQ(7, (8, 6))
+    teacher = _initialize_full_from_action_only(
+        full_q, checkpoint, state_dim=3, action_dim=4
+    )
+    state = torch.randn(5, 3)
+    action = torch.randn(5, 4)
+
+    torch.testing.assert_close(full_q(torch.cat([state, action], dim=1)), teacher(action))
+    torch.testing.assert_close(full_q.network[0].weight[:, :3], torch.zeros(8, 3))
 
 
 def test_multiseed_summary_requires_state_gain(tmp_path):

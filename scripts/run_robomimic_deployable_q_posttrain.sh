@@ -14,6 +14,8 @@ fi
 OUTPUT_ROOT="${ROBOMIMIC_DEPLOYABLE_Q_OUTPUT:-${DEFAULT_OUTPUT_ROOT}}"
 ENCODER_PATH="${ROBOMIMIC_SIGLIP_PATH:-/home/ubuntu/sj/fastwam/checkpoints/siglip-so400m-patch14-384-modelscope}"
 SEEDS_CSV="${ROBOMIMIC_DEPLOYABLE_Q_SEEDS:-20260820,20260821,20260822}"
+ACTION_PRIOR_INIT="${ROBOMIMIC_ACTION_PRIOR_INIT:-0}"
+TEACHER_REGULARIZATION="${ROBOMIMIC_Q_TEACHER_REGULARIZATION:-1.0}"
 
 OBS_HDF5="${OBS_ROOT}/can_wrist384_proprio.hdf5"
 OBS_FEATURES="${OBS_ROOT}/can_wrist_siglip_proprio.npz"
@@ -51,14 +53,22 @@ IFS=',' read -r -a SEEDS <<< "${SEEDS_CSV}"
 for SEED in "${SEEDS[@]}"; do
     "${PYTHON_BIN}" "${PROJECT_ROOT}/experiments/robomimic/train_can_pairwise_q.py" \
         --dataset "${Q_DATASET}" \
-        --output-dir "${OUTPUT_ROOT}/full_state_seed${SEED}" \
-        --state-mode full \
-        --seed "${SEED}"
-    "${PYTHON_BIN}" "${PROJECT_ROOT}/experiments/robomimic/train_can_pairwise_q.py" \
-        --dataset "${Q_DATASET}" \
         --output-dir "${OUTPUT_ROOT}/action_only_seed${SEED}" \
         --state-mode action_only \
         --seed "${SEED}"
+    FULL_EXTRA_ARGS=()
+    if [[ "${ACTION_PRIOR_INIT}" == "1" ]]; then
+        FULL_EXTRA_ARGS+=(
+            --initialize-action-checkpoint "${OUTPUT_ROOT}/action_only_seed${SEED}/checkpoint.pt"
+            --teacher-regularization "${TEACHER_REGULARIZATION}"
+        )
+    fi
+    "${PYTHON_BIN}" "${PROJECT_ROOT}/experiments/robomimic/train_can_pairwise_q.py" \
+        --dataset "${Q_DATASET}" \
+        --output-dir "${OUTPUT_ROOT}/full_state_seed${SEED}" \
+        --state-mode full \
+        --seed "${SEED}" \
+        "${FULL_EXTRA_ARGS[@]}"
 done
 
 "${PYTHON_BIN}" "${PROJECT_ROOT}/experiments/robomimic/summarize_can_pairwise_q.py" \

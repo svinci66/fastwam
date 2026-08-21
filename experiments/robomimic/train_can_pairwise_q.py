@@ -75,6 +75,41 @@ def _prepare_features(
     return np.concatenate([normalized_state, normalized_action], axis=1).astype(np.float32)
 
 
+def _initialize_full_from_action_only(
+    model: PairwiseQ,
+    action_checkpoint: dict[str, Any],
+    *,
+    state_dim: int,
+    action_dim: int,
+) -> PairwiseQ:
+    """Initialize a full-state Q so that it exactly matches an action-only Q."""
+    if action_checkpoint.get("state_mode") != "action_only":
+        raise ValueError("Initialization checkpoint must be an action-only Q")
+    if int(action_checkpoint["input_dim"]) != action_dim:
+        raise ValueError(
+            f"Action checkpoint input_dim={action_checkpoint['input_dim']} does not match {action_dim}"
+        )
+    hidden_dims = tuple(action_checkpoint["hidden_dims"])
+    teacher = PairwiseQ(action_dim, hidden_dims)
+    teacher.load_state_dict(action_checkpoint["model"])
+
+    full_state = model.state_dict()
+    action_state = teacher.state_dict()
+    first_weight = "network.0.weight"
+    for key, value in action_state.items():
+        if key == first_weight:
+            if full_state[key].shape[1] != state_dim + action_dim:
+                raise ValueError("Unexpected full-state first-layer shape")
+            full_state[key].zero_()
+            full_state[key][:, state_dim:] = value
+        else:
+            if full_state[key].shape != value.shape:
+                raise ValueError(f"Incompatible action checkpoint tensor: {key}")
+            full_state[key].copy_(value)
+    model.load_state_dict(full_state)
+    return teacher
+
+
 @torch.no_grad()
 def _predict(
     model: nn.Module,
@@ -179,6 +214,31 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 
     device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
     model = PairwiseQ(base_features.shape[1], tuple(args.hidden_dims)).to(device)
+    action_teacher: PairwiseQ | None = None
+    initialization_checkpoint: Path | None = args.initialize_action_checkpoint
+    state_feature_dim = 0
+    action_feature_dim = base_train.reshape(len(base_train), -1).shape[1]
+    if initialization_checkpoint is not None:
+        if args.state_mode != "full":
+            raise ValueError("Action-prior initialization requires --state-mode full")
+        initialization_checkpoint = initialization_checkpoint.expanduser().resolve()
+        action_checkpoint = torch.load(
+            initialization_checkpoint, map_location="cpu", weights_only=False
+        )
+        teacher_normalization = action_checkpoint["normalization"]
+        for key in ("action_mean", "action_std"):
+            if not np.allclose(teacher_normalization[key], normalization[key], atol=1e-6):
+                raise ValueError(f"Action checkpoint uses incompatible {key}")
+        state_feature_dim = state_train.shape[1]
+        action_teacher = _initialize_full_from_action_only(
+            model,
+            action_checkpoint,
+            state_dim=state_feature_dim,
+            action_dim=action_feature_dim,
+        ).to(device)
+        action_teacher.eval()
+        for parameter in action_teacher.parameters():
+            parameter.requires_grad_(False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     positive_count = float(np.count_nonzero(target_train))
     negative_count = float(len(target_train) - positive_count)
@@ -201,6 +261,57 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     candidate_valid = arrays["candidate_action_chunk"][valid_mask]
     target_valid = (arrays["label"][valid_mask] > 0).astype(np.int8)
 
+    def save_checkpoint(epoch: int) -> None:
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "input_dim": base_features.shape[1],
+                "hidden_dims": args.hidden_dims,
+                "state_mode": args.state_mode,
+                "normalization": normalization,
+                "observation_metadata": observation_metadata,
+                "epoch": epoch,
+                "initialization_checkpoint": (
+                    str(initialization_checkpoint) if initialization_checkpoint else None
+                ),
+                "teacher_regularization": args.teacher_regularization,
+            },
+            output_dir / "checkpoint.pt",
+        )
+
+    if action_teacher is not None:
+        initial_logits = _predict(
+            model,
+            state_valid,
+            base_valid,
+            candidate_valid,
+            state_mode=args.state_mode,
+            normalization=normalization,
+            device=device,
+            batch_size=args.batch_size,
+        )
+        initial_metrics = _metrics(target_valid, initial_logits)
+        initial_loss = float(
+            nn.functional.binary_cross_entropy_with_logits(
+                torch.from_numpy(initial_logits),
+                torch.from_numpy(target_valid.astype(np.float32)),
+            )
+        )
+        best_balanced = float(initial_metrics["balanced_accuracy"])
+        best_loss = initial_loss
+        best_epoch = 0
+        save_checkpoint(0)
+        history.append(
+            {
+                "epoch": 0,
+                "train_loss": None,
+                "valid_loss": initial_loss,
+                "valid_balanced_accuracy": initial_metrics["balanced_accuracy"],
+                "valid_auc": initial_metrics["auc"],
+            }
+        )
+        print(json.dumps(history[-1]), flush=True)
+
     for epoch in range(1, args.epochs + 1):
         model.train()
         losses: list[float] = []
@@ -213,6 +324,15 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             loss = nn.functional.binary_cross_entropy_with_logits(
                 logits, target, weight=weights
             )
+            if action_teacher is not None and args.teacher_regularization > 0.0:
+                with torch.no_grad():
+                    teacher_logits = (
+                        action_teacher(candidate[:, state_feature_dim:])
+                        - action_teacher(base[:, state_feature_dim:])
+                    )
+                loss = loss + args.teacher_regularization * nn.functional.mse_loss(
+                    logits, teacher_logits
+                )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
@@ -257,18 +377,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             best_loss = valid_loss
             best_epoch = epoch
             epochs_without_improvement = 0
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "input_dim": base_features.shape[1],
-                    "hidden_dims": args.hidden_dims,
-                    "state_mode": args.state_mode,
-                    "normalization": normalization,
-                    "observation_metadata": observation_metadata,
-                    "epoch": epoch,
-                },
-                output_dir / "checkpoint.pt",
-            )
+            save_checkpoint(epoch)
         else:
             epochs_without_improvement += 1
         if epoch % 10 == 0 or epoch == 1:
@@ -308,6 +417,10 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "device": str(device),
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "observation_metadata": observation_metadata,
+        "initialization_checkpoint": (
+            str(initialization_checkpoint) if initialization_checkpoint else None
+        ),
+        "teacher_regularization": args.teacher_regularization,
         "best_epoch": best_epoch,
         "epochs_run": len(history),
         "majority_baseline": {
@@ -339,6 +452,8 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--gradient-clip", type=float, default=5.0)
+    parser.add_argument("--initialize-action-checkpoint", type=Path)
+    parser.add_argument("--teacher-regularization", type=float, default=0.0)
     args = parser.parse_args()
     train(args)
 
