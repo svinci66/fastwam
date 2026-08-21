@@ -263,33 +263,60 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     accepted = bool(gate["accepted"][actor_index])
                     executed_residual = proposed_residual if accepted else np.zeros_like(proposed_residual)
                     group = source["data"][demo]
-                    full_actions = np.asarray(
+                    base_actions = np.asarray(
                         group["actions"][source_step : source_step + horizon]
                     ).copy()
-                    full_actions[:intervention_steps] = np.clip(
-                        base_action + executed_residual, -1.0, 1.0
-                    )
-                    branch = _rollout_branch(
+                    rollout_kwargs = {
+                        "model": str(group.attrs["model_file"]),
+                        "episode_initial_state": np.asarray(group["states"][0]),
+                        "prefix_actions": np.asarray(group["actions"][:source_step]),
+                    }
+                    # Re-run the baseline in this process. Comparing against the
+                    # score saved by an older collection can turn tiny simulator
+                    # replay drift into a false residual gain or regression.
+                    base_branch = _rollout_branch(
                         env,
-                        model=str(group.attrs["model_file"]),
-                        episode_initial_state=np.asarray(group["states"][0]),
-                        prefix_actions=np.asarray(group["actions"][:source_step]),
-                        branch_actions=full_actions,
+                        branch_actions=base_actions,
+                        **rollout_kwargs,
                     )
+                    base_score = (
+                        success_bonus * float(base_branch["success"])
+                        + base_branch["reward_sum"] / horizon
+                    )
+                    if accepted:
+                        actor_actions = base_actions.copy()
+                        actor_actions[:intervention_steps] = np.clip(
+                            base_action + executed_residual, -1.0, 1.0
+                        )
+                        branch = _rollout_branch(
+                            env,
+                            branch_actions=actor_actions,
+                            **rollout_kwargs,
+                        )
+                    else:
+                        # A rejected intervention executes the fresh baseline by
+                        # definition; do not introduce a redundant replay.
+                        branch = base_branch
                     actor_score = (
                         success_bonus * float(branch["success"])
                         + branch["reward_sum"] / horizon
                     )
-                    base_score = float(states["base_score"][collection_index])
-                    initial_linf = float(
-                        np.max(
-                            np.abs(
-                                np.asarray(branch["branch_initial_state"], dtype=np.float64)
-                                - np.asarray(states["branch_state"][collection_index], dtype=np.float64)
-                            ),
-                            initial=0.0,
-                        )
+                    expected_branch_state = np.asarray(
+                        states["branch_state"][collection_index], dtype=np.float64
                     )
+                    initial_linf = max(
+                        float(
+                            np.max(
+                                np.abs(
+                                    np.asarray(result["branch_initial_state"], dtype=np.float64)
+                                    - expected_branch_state
+                                ),
+                                initial=0.0,
+                            )
+                        )
+                        for result in (base_branch, branch)
+                    )
+                    recorded_base_score = float(states["base_score"][collection_index])
                     row = {
                         "collection_index": int(collection_index),
                         "actor_dataset_index": int(actor_index),
@@ -304,9 +331,12 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         "q_advantages": gate["advantages"][:, actor_index].tolist(),
                         "base_score": base_score,
+                        "recorded_base_score": recorded_base_score,
+                        "base_replay_score_drift": base_score - recorded_base_score,
                         "actor_score": actor_score,
                         "delta_score": actor_score - base_score,
-                        "base_success": int(states["base_success"][collection_index]),
+                        "base_success": int(base_branch["success"]),
+                        "recorded_base_success": int(states["base_success"][collection_index]),
                         "actor_success": int(branch["success"]),
                         "proposed_residual_norm": float(np.linalg.norm(proposed_residual)),
                         "residual_norm": float(np.linalg.norm(executed_residual)),
@@ -314,7 +344,9 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                         "gripper_residual_max_abs": float(
                             np.max(np.abs(executed_residual[:, -1]))
                         ),
-                        "restore_linf": float(branch["restore_linf"]),
+                        "restore_linf": float(
+                            max(base_branch["restore_linf"], branch["restore_linf"])
+                        ),
                         "branch_initial_state_linf": initial_linf,
                     }
                     rows.append(row)
@@ -346,6 +378,13 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
 
     summary = summarize_branch_results(rows, score_margin=score_margin)
     accepted = np.asarray([row["gate_accepted"] for row in rows], dtype=bool)
+    base_replay_drift = np.asarray(
+        [row["base_replay_score_drift"] for row in rows], dtype=np.float64
+    )
+    rejected_delta = np.asarray(
+        [row["delta_score"] for row in rows if not row["gate_accepted"]],
+        dtype=np.float64,
+    )
     summary.update(
         {
             "complete": True,
@@ -368,6 +407,15 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 "uncertainty_weight": args.uncertainty_weight,
                 "accepted_states": int(np.count_nonzero(accepted)),
                 "intervention_rate": float(np.mean(accepted)),
+            },
+            "fresh_baseline_audit": {
+                "mean_score_drift_from_recorded": float(np.mean(base_replay_drift)),
+                "max_abs_score_drift_from_recorded": float(
+                    np.max(np.abs(base_replay_drift), initial=0.0)
+                ),
+                "rejected_branch_max_abs_delta": float(
+                    np.max(np.abs(rejected_delta), initial=0.0)
+                ),
             },
             "constraints": {
                 "max_executed_residual_abs": float(
