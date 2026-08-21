@@ -20,6 +20,7 @@ def prepare(
     *,
     vision_pca_dim: int | None = None,
     projection_output_path: str | Path | None = None,
+    projection_input_path: str | Path | None = None,
 ) -> dict[str, Any]:
     paths = [Path(path).expanduser().resolve() for path in (
         q_source_path, actor_source_path, observation_path, q_output_path, actor_output_path
@@ -41,7 +42,29 @@ def prepare(
     raw_vision = observation["vision_feature"].astype(np.float32)
     explained_variance_ratio = None
     projection_path = None
-    if vision_pca_dim is not None:
+    if projection_input_path is not None:
+        if vision_pca_dim is not None or projection_output_path is not None:
+            raise ValueError(
+                "projection_input_path cannot be combined with PCA fitting arguments"
+            )
+        projection_path = Path(projection_input_path).expanduser().resolve()
+        with np.load(projection_path, allow_pickle=False) as loaded:
+            projection = {key: loaded[key] for key in loaded.files}
+        mean = np.asarray(projection["mean"], dtype=np.float32)
+        components = np.asarray(projection["components"], dtype=np.float32)
+        input_dim = int(projection["input_dim"])
+        output_dim = int(projection["output_dim"])
+        if str(projection.get("fitted_split", "")) != "train":
+            raise ValueError("Loaded PCA projection was not fitted on the training split")
+        if input_dim != raw_vision.shape[1] or mean.shape != (input_dim,):
+            raise ValueError("Loaded PCA projection input shape is incompatible")
+        if components.shape != (output_dim, input_dim):
+            raise ValueError("Loaded PCA projection component shape is incompatible")
+        if not np.all(np.isfinite(mean)) or not np.all(np.isfinite(components)):
+            raise ValueError("Loaded PCA projection contains non-finite values")
+        vision_pca_dim = output_dim
+        vision = ((raw_vision - mean) @ components.T).astype(np.float32)
+    elif vision_pca_dim is not None:
         train = observation["source_split"] == "train"
         if vision_pca_dim <= 0 or vision_pca_dim > min(np.count_nonzero(train), raw_vision.shape[1]):
             raise ValueError("vision_pca_dim is incompatible with train states or feature dim")
@@ -132,6 +155,7 @@ def main() -> None:
     parser.add_argument("--report-json", type=Path)
     parser.add_argument("--vision-pca-dim", type=int)
     parser.add_argument("--projection-output", type=Path)
+    parser.add_argument("--projection-input", type=Path)
     args = parser.parse_args()
     report = prepare(
         args.q_source,
@@ -141,6 +165,7 @@ def main() -> None:
         args.actor_output,
         vision_pca_dim=args.vision_pca_dim,
         projection_output_path=args.projection_output,
+        projection_input_path=args.projection_input,
     )
     if args.report_json is not None:
         args.report_json.parent.mkdir(parents=True, exist_ok=True)

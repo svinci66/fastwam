@@ -110,6 +110,48 @@ class LiveVisionEncoder:
         return feature[0].astype(np.float32)
 
 
+def load_vision_projection(
+    observation_metadata: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    path_value = observation_metadata.get("vision_projection_path")
+    if not path_value:
+        return None
+    path = Path(path_value).expanduser().resolve()
+    with np.load(path, allow_pickle=False) as loaded:
+        mean = np.asarray(loaded["mean"], dtype=np.float32)
+        components = np.asarray(loaded["components"], dtype=np.float32)
+        input_dim = int(loaded["input_dim"])
+        output_dim = int(loaded["output_dim"])
+        fitted_split = str(loaded["fitted_split"])
+    if fitted_split != "train":
+        raise ValueError("Live PCA projection was not fitted on the training split")
+    expected_input = int(observation_metadata["vision_encoder_output_dim"])
+    expected_output = int(observation_metadata["vision_feature_dim"])
+    if input_dim != expected_input or output_dim != expected_output:
+        raise ValueError("Live PCA projection metadata is incompatible with actor checkpoint")
+    if mean.shape != (input_dim,) or components.shape != (output_dim, input_dim):
+        raise ValueError("Live PCA projection has incompatible tensor shapes")
+    if not np.all(np.isfinite(mean)) or not np.all(np.isfinite(components)):
+        raise ValueError("Live PCA projection contains non-finite values")
+    return mean, components
+
+
+def project_vision_feature(
+    feature: np.ndarray,
+    projection: tuple[np.ndarray, np.ndarray] | None,
+) -> np.ndarray:
+    feature = np.asarray(feature, dtype=np.float32)
+    if projection is None:
+        return feature
+    mean, components = projection
+    if feature.shape != mean.shape:
+        raise ValueError("Live vision feature does not match PCA input dimension")
+    projected = ((feature - mean) @ components.T).astype(np.float32)
+    if not np.all(np.isfinite(projected)):
+        raise RuntimeError("Live PCA projection produced non-finite features")
+    return projected
+
+
 def _load_q_models(
     paths: list[Path], device: torch.device
 ) -> list[tuple[PairwiseQ, dict[str, Any]]]:
@@ -198,6 +240,9 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         actor_checkpoint["observation_metadata"]["encoder_path"]
     )
     encoder = LiveVisionEncoder(encoder_path, device)
+    vision_projection = load_vision_projection(
+        actor_checkpoint.get("observation_metadata", {})
+    )
     normalization = actor_checkpoint["normalization"]
     target_shape = tuple(actor_checkpoint["target_shape"])
     chunk_steps = target_shape[0]
@@ -253,7 +298,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     proprio = np.concatenate(
                         [np.asarray(obs[key]).reshape(-1) for key in PROPRIO_KEYS]
                     ).astype(np.float32)
-                    state = np.concatenate([encoder(image), proprio]).astype(np.float32)
+                    vision = project_vision_feature(encoder(image), vision_projection)
+                    state = np.concatenate([vision, proprio]).astype(np.float32)
                     if state.shape != arrays["state"].shape[1:]:
                         raise RuntimeError(
                             f"Live observation shape {state.shape} != training {arrays['state'].shape[1:]}"
