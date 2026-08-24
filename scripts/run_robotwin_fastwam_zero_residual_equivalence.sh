@@ -7,6 +7,7 @@ TASKS="${TASKS:-adjust_bottle,hanging_mug,open_microwave,place_can_basket}"
 EPISODES="${EPISODES:-1}"
 SEED_MANIFEST_PATH="${SEED_MANIFEST_PATH:-${PROJECT_ROOT}/experiments/robotwin/manifests/robotwin_4task_heldout1_expert_seeds_20260804.json}"
 RESIDUAL_CHECKPOINT="${RESIDUAL_CHECKPOINT:-${PROJECT_ROOT}/evaluate_results/robotwin_residual_rl/robotwin_corrected_posttrain_20260805/iql_corrected_imagination_20epoch_paired_gate/checkpoint.pt}"
+RESIDUAL_ENCODER_VERSION="${RESIDUAL_ENCODER_VERSION:-siglip-so400m-patch14-384-local-20260803}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 AUDIT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}"
 
@@ -40,6 +41,7 @@ env \
   CAPTURE_DECODE_TILED=false \
   IMAGINATION_CHECKPOINT="${RESIDUAL_CHECKPOINT}" \
   NO_IMAGINATION_CHECKPOINT="${RESIDUAL_CHECKPOINT}" \
+  RESIDUAL_ENCODER_VERSION="${RESIDUAL_ENCODER_VERSION}" \
   RESIDUAL_LANGUAGE_MODE=policy_instruction \
   RESIDUAL_Q_GATE_ENABLED=false \
   RESIDUAL_PAIRED_ADVANTAGE_GATE_ENABLED=false \
