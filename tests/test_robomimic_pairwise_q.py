@@ -15,6 +15,7 @@ from experiments.robomimic.train_can_pairwise_q import (
     _initialize_full_from_action_only,
     _metrics,
     _prepare_features,
+    _sample_weights,
 )
 from experiments.robomimic.summarize_can_pairwise_q import summarize
 
@@ -70,6 +71,22 @@ def test_full_q_action_initialization_exactly_preserves_action_q():
 
     torch.testing.assert_close(full_q(torch.cat([state, action], dim=1)), teacher(action))
     torch.testing.assert_close(full_q.network[0].weight[:, :3], torch.zeros(8, 3))
+
+
+def test_terminal_events_can_receive_larger_training_weight():
+    arrays = {
+        "terminal_outcome_changed": np.asarray([0, 1, 1, 0], dtype=np.uint8)
+    }
+    train_mask = np.asarray([True, True, False, True])
+
+    weights = _sample_weights(
+        arrays,
+        train_mask,
+        key="terminal_outcome_changed",
+        multiplier=20.0,
+    )
+
+    np.testing.assert_array_equal(weights, np.asarray([1.0, 20.0, 1.0]))
 
 
 def test_multiseed_summary_requires_state_gain(tmp_path):

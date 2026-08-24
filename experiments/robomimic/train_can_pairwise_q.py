@@ -110,6 +110,29 @@ def _initialize_full_from_action_only(
     return teacher
 
 
+def _sample_weights(
+    arrays: dict[str, np.ndarray],
+    train_mask: np.ndarray,
+    *,
+    key: str | None,
+    multiplier: float,
+) -> np.ndarray:
+    """Return per-row training weights for a binary event indicator."""
+    if multiplier < 1.0:
+        raise ValueError("Sample-weight multiplier must be at least 1")
+    if key is None:
+        return np.ones(int(np.count_nonzero(train_mask)), dtype=np.float32)
+    if key not in arrays:
+        raise KeyError(f"Sample-weight key is absent from dataset: {key}")
+    values = np.asarray(arrays[key])
+    if values.shape != train_mask.shape:
+        raise ValueError(
+            f"Sample-weight field {key!r} has shape {values.shape}; "
+            f"expected {train_mask.shape}"
+        )
+    return np.where(values[train_mask] > 0, multiplier, 1.0).astype(np.float32)
+
+
 @torch.no_grad()
 def _predict(
     model: nn.Module,
@@ -198,10 +221,17 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         state_mode=args.state_mode,
         **normalization,
     )
+    sample_weights = _sample_weights(
+        arrays,
+        train_mask,
+        key=args.sample_weight_key,
+        multiplier=args.sample_weight_multiplier,
+    )
     dataset = TensorDataset(
         torch.from_numpy(base_features),
         torch.from_numpy(candidate_features),
         torch.from_numpy(target_train),
+        torch.from_numpy(sample_weights),
     )
     generator = torch.Generator().manual_seed(args.seed)
     loader = DataLoader(
@@ -275,6 +305,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     str(initialization_checkpoint) if initialization_checkpoint else None
                 ),
                 "teacher_regularization": args.teacher_regularization,
+                "sample_weight_key": args.sample_weight_key,
+                "sample_weight_multiplier": args.sample_weight_multiplier,
             },
             output_dir / "checkpoint.pt",
         )
@@ -315,15 +347,17 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     for epoch in range(1, args.epochs + 1):
         model.train()
         losses: list[float] = []
-        for base, candidate, target in loader:
+        for base, candidate, target, sample_weight in loader:
             base = base.to(device)
             candidate = candidate.to(device)
             target = target.to(device)
+            sample_weight = sample_weight.to(device)
             logits = model(candidate) - model(base)
-            weights = class_weights[target.long()]
-            loss = nn.functional.binary_cross_entropy_with_logits(
-                logits, target, weight=weights
+            weights = class_weights[target.long()] * sample_weight
+            elementwise_loss = nn.functional.binary_cross_entropy_with_logits(
+                logits, target, reduction="none"
             )
+            loss = torch.sum(elementwise_loss * weights) / torch.sum(weights)
             if action_teacher is not None and args.teacher_regularization > 0.0:
                 with torch.no_grad():
                     teacher_logits = (
@@ -421,6 +455,9 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             str(initialization_checkpoint) if initialization_checkpoint else None
         ),
         "teacher_regularization": args.teacher_regularization,
+        "sample_weight_key": args.sample_weight_key,
+        "sample_weight_multiplier": args.sample_weight_multiplier,
+        "weighted_train_samples": int(np.count_nonzero(sample_weights > 1.0)),
         "best_epoch": best_epoch,
         "epochs_run": len(history),
         "majority_baseline": {
@@ -454,6 +491,8 @@ def main() -> None:
     parser.add_argument("--gradient-clip", type=float, default=5.0)
     parser.add_argument("--initialize-action-checkpoint", type=Path)
     parser.add_argument("--teacher-regularization", type=float, default=0.0)
+    parser.add_argument("--sample-weight-key")
+    parser.add_argument("--sample-weight-multiplier", type=float, default=1.0)
     args = parser.parse_args()
     train(args)
 
