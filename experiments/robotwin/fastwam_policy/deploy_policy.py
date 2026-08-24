@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import sys
@@ -868,6 +869,28 @@ class WorldActionRobotWinPolicy:
                 flush=True,
             )
 
+        # This compact record makes the paper-protocol baseline auditable without
+        # enabling the much more expensive imagined-video transition capture.
+        # A residual shadow run must match the policy run byte-for-byte on all
+        # fields below at every replan.
+        current_observation_sha256 = array_sha256(
+            np.concatenate([current_image.reshape(-1), state_vector.reshape(-1)])
+        )
+        baseline_prefix = np.asarray(baseline_actions[:n_exec], dtype=np.float32)
+        executed_prefix = np.asarray(executed_actions[:n_exec], dtype=np.float32)
+        print(
+            "FASTWAM_REPLAN_AUDIT "
+            f"episode_id={self.episode_count} "
+            f"seed={os.environ.get('FASTWAM_ENVIRONMENT_SEED', 'unknown')} "
+            f"replan={self.replan_count} "
+            f"instruction_sha256={hashlib.sha256(instruction.encode('utf-8')).hexdigest()} "
+            f"current_observation_sha256={current_observation_sha256} "
+            f"baseline_actions_sha256={array_sha256(baseline_prefix)} "
+            f"executed_actions_sha256={array_sha256(executed_prefix)} "
+            f"n_exec={n_exec}",
+            flush=True,
+        )
+
         capture_transition = self.save_imagination_transitions or bool(
             self.residual_outcome_confirmation_enabled
             and residual_output is not None
@@ -882,11 +905,6 @@ class WorldActionRobotWinPolicy:
                 else instruction
             )
             language_feature = self._encode_language_feature(residual_instruction)
-            current_observation_sha256 = array_sha256(
-                np.concatenate(
-                    [current_image.reshape(-1), state_vector.reshape(-1)]
-                )
-            )
             self._pending_transition = {
                 "replan_idx": self.replan_count,
                 "instruction": instruction,
