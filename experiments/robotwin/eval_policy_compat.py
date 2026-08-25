@@ -16,6 +16,7 @@ patches narrowly scoped source fragments before executing the evaluator:
 * optionally select an official instruction deterministically from its seed,
   including RoboTwin's internal Python-random shuffling and object aliases.
 * optionally disable upstream per-step video encoding for metric-only runs.
+* redirect evaluator results and rollout videos to the caller-owned run folder.
 
 The exact-fragment checks intentionally fail when upstream changes, rather than
 silently applying an incompatible patch.
@@ -54,6 +55,18 @@ def patch_eval_policy_source(source: str) -> str:
         '        args["eval_video_log"] = bool(eval_video_log)\n'
         '    args[\'task_name\'] = task_name\n',
         label="eval-video-override",
+    )
+    source = _replace_once(
+        source,
+        '    save_dir = Path(f"eval_result/{task_name}/{policy_name}/{task_config}/{ckpt_setting}/{current_time}")\n'
+        '    save_dir.mkdir(parents=True, exist_ok=True)\n',
+        '    requested_save_dir = usr_args.get("eval_output_dir")\n'
+        '    if requested_save_dir is None or str(requested_save_dir).strip().lower() in {"", "none", "null"}:\n'
+        '        save_dir = Path(f"eval_result/{task_name}/{policy_name}/{task_config}/{ckpt_setting}/{current_time}")\n'
+        '    else:\n'
+        '        save_dir = Path(str(requested_save_dir)).expanduser().resolve()\n'
+        '    save_dir.mkdir(parents=True, exist_ok=True)\n',
+        label="caller-owned-output-dir",
     )
     source = _replace_once(
         source,

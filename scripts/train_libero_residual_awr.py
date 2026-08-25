@@ -11,7 +11,7 @@ import hashlib
 import json
 import random
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--replay-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Override awr.seed while leaving the versioned config unchanged.",
+    )
     parser.add_argument(
         "--timeout-bootstrap-json",
         type=Path,
@@ -92,6 +98,9 @@ def main() -> None:
         raise ValueError("top-level training config must be a mapping")
     reward_config = CompositeRewardConfig(**cfg["reward"])
     awr_config = AWRConfig(**cfg["awr"])
+    if args.seed is not None:
+        awr_config = replace(awr_config, seed=int(args.seed))
+        cfg["awr"]["seed"] = int(args.seed)
     reward_config.validate()
     awr_config.validate()
     seed_training_process(awr_config.seed)

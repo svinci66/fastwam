@@ -14,6 +14,8 @@ def eval_policy():
     with open(config_path) as f:
         args = yaml.load(f)
     args['task_name'] = task_name
+    save_dir = Path(f"eval_result/{task_name}/{policy_name}/{task_config}/{ckpt_setting}/{current_time}")
+    save_dir.mkdir(parents=True, exist_ok=True)
     expert_check = True
     suc_test_seed_list = []
     while active:
@@ -43,6 +45,8 @@ def eval_policy():
     assert 'usr_args.get("expert_check", True)' in patched
     assert 'usr_args.get("eval_video_log")' in patched
     assert 'args["eval_video_log"] = bool(eval_video_log)' in patched
+    assert 'usr_args.get("eval_output_dir")' in patched
+    assert 'Path(str(requested_save_dir)).expanduser().resolve()' in patched
     assert "FASTWAM_ACCEPTED_ENV_SEED" in patched
     assert "fixed_instruction is required" in patched
     assert "environment_seed_manifest_path" in patched

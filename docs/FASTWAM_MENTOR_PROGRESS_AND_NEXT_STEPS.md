@@ -1,5 +1,7 @@
 # FastWAM 强化学习后训练：阶段总结、问题复盘与后续方案
 
+> **路线更新（2026-08-24）：** 下文关于 Twin-Q、OOD gate 和因果门控的设计保留为历史复盘，但不再是当前主实验。当前先在中等难度 RoboTwin 任务上重新验证想象奖励，并用相同数据训练 `no-imagination` / `with-imagination` 两个无 Q residual actor，随后做小规模在线配对评测和失败视频人工分析。当前执行方案见 [FASTWAM_ROBOTWIN_IMAGINATION_REWARD_RESTART_PLAN.md](./FASTWAM_ROBOTWIN_IMAGINATION_REWARD_RESTART_PLAN.md)。
+
 更新日期：2026-08-24
 
 ## 第一部分：展示用要点摘要
@@ -17,8 +19,10 @@
 - **Residual actor**：根据当前视觉、proprio、语言和 FastWAM 原动作，输出幅度受限的动作修正。
 - **IQL critic**：离线学习状态、FastWAM 动作和 residual 候选动作的长期价值。
 - **想象奖励**：比较 FastWAM 想象的未来与动作执行后的真实观测，作为密集辅助信号。
-- **因果门控**：预测 residual 候选是否比同状态的 FastWAM 原动作更好。
-- **OOD gate**：拒绝训练支持范围外的状态或 residual 动作，使系统安全回退到 FastWAM。
+- **直接因果门控**：使用同状态单次干预的 `rescue/regression` 配对，预测 residual 候选是否比 FastWAM 原动作带来更高的净成功概率，是部署时的主要批准依据。
+- **OOD gate**：作为不可绕过的安全否决器，拒绝训练支持范围外的状态或 residual 动作，使系统回退到 FastWAM。
+- **Twin-Q 辅助判断**：估计 candidate-vs-baseline 长期价值差，只作为门控特征、置信度或诊断量，不再独立批准 residual。
+- **动作仲裁器**：仅在因果门控批准且 OOD 检查通过时执行 residual，否则保持 FastWAM 原动作。
 
 ### 3. 已经得到的关键结论
 
@@ -148,6 +152,16 @@ FastWAM 同时生成机器人动作和与任务相关的未来视频想象。相
 - residual 软缩放和累积风险启发式。
 - 单次干预后的 FastWAM re-anchor。
 - 直接使用严格单次干预 pair 训练的 candidate-vs-baseline 分类门控。
+
+三者不是同一个模块：
+
+- Q 门控比较两个 IQL critic 对 `FastWAM + residual` 与 FastWAM 原动作的预测价值；它依赖 replay 覆盖，可能在 OOD 候选上共同高估，因此不是因果门控。
+- 因果门控直接使用同一前缀下的 `rescue/regression/neutral` 终局差异训练，目标是判断“执行这次 residual 相对不执行是否产生净收益”。
+- OOD gate 不负责发现 rescue，只负责否决没有数据支持的状态和动作。
+
+历史版本曾以 `Twin-Q + OOD` 作为主要在线批准链路。由于后续严格 pair 出现“Q 拒绝 rescue、批准 regression”的反例，当前方案已将 Q 降级为辅助信息：高 Q 不能绕过因果门控或 OOD 拒绝，两个 Q 意见一致也不能单独作为安全证明。
+
+当前 Stage 1 单次干预采集会关闭 Q、因果和 OOD 门控，在预注册位置强制执行一次 residual，专门生成门控训练需要的正反例；离线准入通过后，因果门控和 OOD gate 才会重新接入正式在线评测。
 
 ### 4. 工程和评测修正
 
@@ -435,4 +449,3 @@ Residual actor 保持零初始化、小尺度和 gripper ownership，不先扩�
 一句话版本：
 
 > 当前已经证明 residual actor 能修复 FastWAM 的个别失败，但现有 Q 和想象奖励不能可靠判断干预时机；下一步将在严格论文设置下收集 FastWAM 原生、actor-aligned 的单次干预因果数据，重新训练安全门控，并用“目标任务净提升且高成功率任务不退化”作为硬标准。
-

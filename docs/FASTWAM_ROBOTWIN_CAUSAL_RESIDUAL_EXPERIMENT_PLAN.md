@@ -2,13 +2,77 @@
 
 更新日期：2026-08-24
 
+> **状态：已暂停，不再作为当前执行方案。** 2026-08-24 起，项目先回到最小研究问题：在中等难度 RoboTwin 任务上重新验证想象奖励，并比较不加/加入想象奖励的 Residual actor。Twin-Q、IQL critic、OOD gate 和因果门控均退出本轮实验。当前方案见 [FASTWAM_ROBOTWIN_IMAGINATION_REWARD_RESTART_PLAN.md](./FASTWAM_ROBOTWIN_IMAGINATION_REWARD_RESTART_PLAN.md)。下文仅作为历史设计保留。
+
 ## 1. 实验目标
 
 在论文对齐的 RoboTwin 闭环中，验证由冻结 FastWAM、Residual actor 和安全门控组成的策略能修复部分 FastWAM 失败，同时基本不破坏 FastWAM 已成功的轨迹。
 
 本阶段先证明系统级的 `FastWAM + Residual` 有效，不立即微调 FastWAM 主干。只有系统级结果通过正式标准后，才考虑把 residual 能力蒸馏为 FastWAM adapter、residual head 或 LoRA 后训练。
 
-## 2. 任务和数据划分
+## 2. 当前系统结构与门控职责
+
+完整推理结构如下：
+
+```text
+三相机观测 + proprio + 官方语言指令
+                    │
+                    ▼
+              冻结的 FastWAM
+                    │
+                    ├──► baseline action chunk
+                    └──► imagined future（仅用于训练辅助奖励）
+                    │
+                    ▼
+              Residual actor
+                    │
+                    └──► candidate = baseline + bounded residual
+                                      │
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+               直接因果门控        OOD gate          Twin-Q
+               主要批准依据         安全否决器         辅助置信度
+                    └─────────────────┼─────────────────┘
+                                      ▼
+                         执行 candidate 或回退 baseline
+                                      │
+                                      ▼
+                              下一次 FastWAM replan
+```
+
+各模块的边界必须明确：
+
+- **Residual actor** 只生成有界候选修正，不决定是否执行；运动维度最大修正为 `0.05`，gripper residual 固定为零。
+- **直接因果门控** 是部署时的主要批准依据。它使用同状态单次干预 pair 的 `rescue`、`regression` 和 neutral 结果，学习 candidate 相对 baseline 的净成功收益。
+- **OOD gate** 是独立安全否决器。状态或 residual 动作缺少训练支持时必须回退到 FastWAM，即使其他模块给出高分也不能绕过。
+- **Twin-Q** 估计长期价值差，作为门控输入、置信度或诊断量保留，但不得单独批准 residual，也不得覆盖因果门控和 OOD 拒绝。
+- **动作仲裁器** 只有在因果门控批准且 OOD 检查通过时才允许执行 residual；其余情况保持原始 FastWAM 动作。
+
+### Q 门控为什么不是因果门控
+
+现有 Twin-Q 计算近似的 candidate-vs-baseline value advantage：
+
+```text
+delta_Q = min_i [Q_i(s, a_fastwam + r) - Q_i(s, a_fastwam)]
+```
+
+它来自离线 replay 的 Bellman 学习，只表示模型预测的长期价值差。两个 Q 同时给出高值，仍可能是共同的数据偏差或 OOD 外推；此前实验已经出现 Q 拒绝真实 rescue、批准 regression 的反例。因此“双 Q 一致”不等于“干预具有因果收益”。
+
+直接因果门控使用严格匹配的两条闭环分支近似估计：
+
+```text
+delta_success = P(success | do(candidate)) - P(success | do(baseline))
+```
+
+RoboTwin 当前不是模拟器内存级状态克隆，所以这里属于经过初始观测、指令、proprio、干预观测和 FastWAM 动作哈希审计的匹配反事实近似，而不是无条件的形式化因果证明。任何前缀不一致的 pair 都必须隔离，不能训练门控。
+
+### 不同阶段的门控开关
+
+- **阶段 1 数据采集**：关闭 Q、因果和 OOD 门控，在预注册 replan 强制执行且只执行一次 residual，以观察真实 `rescue/regression`；否则无法获得门控会拒绝的反例。
+- **阶段 2 离线训练与验证**：训练直接因果门控，单独评估 OOD 安全性，并把 Twin-Q 作为辅助信息做消融和校准。
+- **阶段 3/4 在线部署**：只有通过离线准入的因果门控和 OOD gate 可以决定执行；Twin-Q 不具有独立放行权。
+
+## 3. 任务和数据划分
 
 任务分为三类：
 
@@ -23,7 +87,7 @@
 - 20% 最终测试；训练结束前不得查看结果。
 - 同一环境 seed 不得跨集合出现。
 
-## 3. 阶段 0：冻结并审计 FastWAM 基线
+## 4. 阶段 0：冻结并审计 FastWAM 基线
 
 统一使用：
 
@@ -42,7 +106,7 @@
 - 最终成功结果必须完全一致。
 - 任一不一致都会使该批后续结果无效；必须先修复协议，然后从基线重新执行。
 
-## 4. 阶段 1：收集 FastWAM 原生因果配对数据
+## 5. 阶段 1：收集 FastWAM 原生因果配对数据
 
 不再以普通专家轨迹为主要数据，而是收集 actor-aligned 单次干预配对。
 
@@ -87,7 +151,7 @@
 - 强制 residual 完全不能产生 rescue 时，才进入 actor 结构/候选产生方式的修改。
 - actor 能产生 rescue 但 Q 全部拒绝时，优先修复 critic/gate 数据，而不是扩大 actor。
 
-## 5. 阶段 2：训练 Residual actor、IQL 和门控
+## 6. 阶段 2：训练 Residual actor、IQL 和门控
 
 ### Residual actor
 
@@ -131,10 +195,12 @@ r = r_success + r_imitation + r_imagination
 部署批准顺序：
 
 1. 直接因果门控判断 candidate 是否比当前 FastWAM 动作更可能成功。
-2. OOD gate 拒绝训练支持范围外的状态和 residual 动作。
-3. Twin-Q 仅作为辅助置信度，不再作为唯一批准依据。
+2. OOD gate 对训练支持范围外的状态和 residual 动作执行不可绕过的否决。
+3. Twin-Q 仅作为因果门控的辅助特征、置信度或诊断量，不拥有独立放行权。
 
-## 6. 离线准入标准
+最终执行条件为“因果门控批准且 OOD 检查通过”；不能用降低 Q 阈值代替因果门控验证，也不能让高 Q 覆盖 OOD 拒绝。
+
+## 7. 离线准入标准
 
 在完全未参与训练的验证 seed 上，必须同时满足：
 
@@ -153,7 +219,7 @@ r = r_success + r_imitation + r_imagination
 - 三个训练 seed 差异过大：判定数据覆盖不足，不进入在线评测。
 - 两轮数据修正和重新训练后仍不通过：停止当前 gate 结构，再评估 patch token、LSTM/GRU 或新的时序输入。
 
-## 7. 阶段 3：10 回合在线准入测试
+## 8. 阶段 3：10 回合在线准入测试
 
 每个任务使用 10 个相同 held-out seed 分别运行：
 
@@ -182,7 +248,7 @@ r = r_success + r_imitation + r_imagination
 - 批准很多但没有 rescue：判定 Q/gate 排序失效，重做门控训练。
 - 强制 residual 也没有 rescue：回到 actor 和候选数据设计。
 
-## 8. 阶段 4：正式配对评测
+## 9. 阶段 4：正式配对评测
 
 小规模测试通过后，每个任务扩大到至少 30 个独立 held-out seed。
 
@@ -197,7 +263,7 @@ r = r_success + r_imitation + r_imagination
 
 论文级最终结果应继续扩大到每任务 50--100 个独立 seed，并报告置信区间。
 
-## 9. 全流程停止和重新执行规则
+## 10. 全流程停止和重新执行规则
 
 成功停止要求：
 
@@ -217,4 +283,3 @@ r = r_success + r_imitation + r_imagination
 - 高成功率任务下降超过 5 个百分点。
 
 只有协议错误、进程异常或产物损坏时才原样重新执行。指标不达标时禁止只更换随机 seed 重复同一配置，必须按失败类型重新采集数据、训练对应模块或修改模型。
-
