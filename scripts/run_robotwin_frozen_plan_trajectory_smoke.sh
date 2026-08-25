@@ -11,6 +11,7 @@ RUN_NAME="${RUN_NAME:-robotwin_frozen_plan_trajectory_v2_smoke_20260825}"
 TASK="${TASK:-hanging_mug}"
 INTERVENTION_REPLAN="${INTERVENTION_REPLAN:-3}"
 MAX_ABS_DELTA="${MAX_ABS_DELTA:-0.05}"
+ACTION_NOISE_SEED="${ACTION_NOISE_SEED:-20260825}"
 GPU_ID="${GPU_ID:-0}"
 ENVIRONMENT_START_SEED="${ENVIRONMENT_START_SEED:-4800003}"
 ENVIRONMENT_EPISODE_OFFSET="${ENVIRONMENT_EPISODE_OFFSET:-0}"
@@ -47,7 +48,8 @@ branch_complete() {
     && [[ -f "${metadata}" ]] \
     && rg -q 'robotwin_imagination_trajectory_v2' "${metadata}" \
     && rg -q "\"environment_seed\": ${ENVIRONMENT_START_SEED}" "${metadata}" \
-    && rg -q "\"trial_idx\": ${TRIAL_OFFSET}" "${metadata}"
+    && rg -q "\"trial_idx\": ${TRIAL_OFFSET}" "${metadata}" \
+    && rg -q "\"action_noise_seed\": ${ACTION_NOISE_SEED}" "${metadata}"
 }
 
 branch_selected() {
@@ -80,7 +82,7 @@ run_branch() {
     EVALUATION.eval_video_log=true EVALUATION.num_inference_steps=10 \
     EVALUATION.replan_steps=24 EVALUATION.text_cfg_scale=1.0 \
     "EVALUATION.action_mode=${mode}" "EVALUATION.action_noise_std=${noise_std}" \
-    EVALUATION.action_noise_seed=20260825 \
+    "EVALUATION.action_noise_seed=${ACTION_NOISE_SEED}" \
     "EVALUATION.action_noise_replans=${INTERVENTION_REPLAN}" \
     EVALUATION.action_hold_probability=0.0 EVALUATION.gripper_close_delay_steps=0 \
     "EVALUATION.trial_offset=${TRIAL_OFFSET}" \

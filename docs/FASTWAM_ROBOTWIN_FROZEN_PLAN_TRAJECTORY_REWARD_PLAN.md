@@ -114,3 +114,13 @@ r_imagination = mean_camera(mean_time(alignment(delta_actual, delta_imagined)))
 3. 扰动后失败时，补跑 `clean`；若 clean 不能复现成功，则排除该 seed。
 4. clean 成功后补跑 `corrected`；只有 corrected 恢复成功且三分支审计通过，才计算 Wan VAE reward。
 5. 累计达到 8 个严格 pair 后才计算正式排序指标并判断是否进入阶段 4；候选用尽仍不足 8 个时，停止训练并扩大独立 baseline-success seed，而不是加大扰动或调相机权重。
+
+### 长期自动配对发现
+
+在正式确认集之前，可以运行一个可恢复的发现任务，自动遍历已经确认 baseline-success 的独立 seed、预注册关键 replan 和多组固定的有界扰动种子。发现任务先运行 `corrupt-only`；只有扰动导致失败时，才补齐 `clean/corrected`、动作审计和冻结轨迹审计，并把三分支录像集中到人工复核目录。
+
+- 每个独立 seed 最多保留一个严格 pair。
+- 最大归一化动作差仍固定为 `0.05`，不以奖励值调强度。
+- 默认最多筛选 64 个组合、最多保留 8 个严格 pair。
+- 磁盘剩余空间低于 80GB 时自动停止。
+- 人工复核可以排除不合理破坏，但该发现集不能直接充当最终无偏统计集；奖励公式确定后必须在未参与筛选的新 seed/扰动上确认。
