@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import hashlib
 import json
 from pathlib import Path
@@ -261,6 +262,10 @@ def save_aligned_transition(
     actual_frame: Any,
     metadata: dict[str, Any],
     rollout_arrays: dict[str, np.ndarray],
+    predicted_trajectory_frames: Sequence[Any] | None = None,
+    predicted_trajectory_action_offsets: Sequence[int] | None = None,
+    actual_trajectory_frames: Sequence[Any] | None = None,
+    actual_trajectory_action_offsets: Sequence[int] | None = None,
 ) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -280,6 +285,63 @@ def save_aligned_transition(
             )
         Image.fromarray(frames[name]).save(output_dir / f"{name}.png")
 
+    def save_trajectory(
+        *,
+        name: str,
+        trajectory_frames: Sequence[Any] | None,
+        action_offsets: Sequence[int] | None,
+    ) -> tuple[list[str], list[int]]:
+        if trajectory_frames is None and action_offsets is None:
+            return [], []
+        if trajectory_frames is None or action_offsets is None:
+            raise ValueError(
+                f"{name} trajectory frames and action offsets must be provided together"
+            )
+        offsets = [int(offset) for offset in action_offsets]
+        if len(trajectory_frames) != len(offsets):
+            raise ValueError(
+                f"{name} trajectory has {len(trajectory_frames)} frames but "
+                f"{len(offsets)} offsets"
+            )
+        if not offsets or offsets[0] != 0:
+            raise ValueError(f"{name} trajectory must start at action offset 0")
+        if any(offset < 0 for offset in offsets) or any(
+            right <= left for left, right in zip(offsets, offsets[1:])
+        ):
+            raise ValueError(
+                f"{name} trajectory offsets must be non-negative and strictly increasing"
+            )
+
+        trajectory_dir = output_dir / f"{name}_trajectory"
+        trajectory_dir.mkdir(parents=True, exist_ok=True)
+        relative_paths: list[str] = []
+        target_h, target_w = expected_shape[:2]
+        for trajectory_frame, offset in zip(trajectory_frames, offsets):
+            array = frame_to_rgb_array(trajectory_frame)
+            if array.shape != expected_shape:
+                array = np.asarray(
+                    Image.fromarray(array).resize(
+                        (target_w, target_h), Image.Resampling.BILINEAR
+                    ),
+                    dtype=np.uint8,
+                )
+            filename = f"frame_action_{offset:04d}.png"
+            path = trajectory_dir / filename
+            Image.fromarray(array).save(path)
+            relative_paths.append(str(path.relative_to(output_dir)))
+        return relative_paths, offsets
+
+    predicted_paths, predicted_offsets = save_trajectory(
+        name="predicted",
+        trajectory_frames=predicted_trajectory_frames,
+        action_offsets=predicted_trajectory_action_offsets,
+    )
+    actual_paths, actual_offsets = save_trajectory(
+        name="actual",
+        trajectory_frames=actual_trajectory_frames,
+        action_offsets=actual_trajectory_action_offsets,
+    )
+
     arrays: dict[str, np.ndarray] = {}
     for name, value in rollout_arrays.items():
         array = np.asarray(value)
@@ -294,6 +356,12 @@ def save_aligned_transition(
 
     serializable = dict(metadata)
     serializable["rollout_arrays_file"] = array_path.name
+    if predicted_paths:
+        serializable["predicted_trajectory_files"] = predicted_paths
+        serializable["predicted_trajectory_action_offsets"] = predicted_offsets
+    if actual_paths:
+        serializable["actual_trajectory_files"] = actual_paths
+        serializable["actual_trajectory_action_offsets"] = actual_offsets
     metadata_path = output_dir / "metadata.json"
     metadata_path.write_text(
         json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8"

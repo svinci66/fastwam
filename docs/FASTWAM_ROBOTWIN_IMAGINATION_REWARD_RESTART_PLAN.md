@@ -2,7 +2,9 @@
 
 更新日期：2026-08-24
 
-状态：**当前唯一执行方案**。此前以 Twin-Q、OOD gate、因果门控和 IQL 为核心的路线暂停，不参与本轮实验。
+状态：总体实验边界说明。当前奖励实现和执行停止标准以
+[`FASTWAM_ROBOTWIN_FROZEN_PLAN_TRAJECTORY_REWARD_PLAN.md`](FASTWAM_ROBOTWIN_FROZEN_PLAN_TRAJECTORY_REWARD_PLAN.md)
+为准；此前以 Twin-Q、OOD gate、因果门控和 IQL 为核心的路线暂停，不参与本轮实验。
 
 ## 1. 本轮只回答两个问题
 
@@ -138,12 +140,14 @@ evaluate_results/robotwin_imagination_restart/<run_name>/
 
 ### 奖励计算
 
-首轮冻结当前 `delta_alignment` 形式：比较 FastWAM 想象的未来视觉变化方向和动作执行后的实际视觉变化方向。
+不再把 SigLIP 终点 `delta_alignment` 当作正式奖励。每次 replan 的 FastWAM
+想象在完整 action chunk 内冻结，并在 `0, 4, 8, 12, 16, 20, 24` 多个时刻与
+实际轨迹比较；三个相机分别计算并暂时等权。表征优先验证 Wan VAE latent，随后验证
+Wan Video Expert token。详细 schema、审计要求和停止标准见冻结规划轨迹奖励执行方案。
 
 - 各相机使用训练 seed 的全局统计分别归一化。
-- 相机权重在查看 held-out 结果以前固定。
 - episode 想象奖励累计绝对值裁剪到 `1.0`。
-- 终局成功标签只用于验证奖励，不参与本阶段奖励计算。
+- 终局成功标签仍作为最终锚点，不由想象奖励替代。
 
 ### 评价指标
 

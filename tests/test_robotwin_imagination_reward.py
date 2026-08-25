@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -152,6 +153,54 @@ def test_saved_transition_can_backfill_episode_success(tmp_path: Path):
     )
     update_episode_success([metadata_path], True)
     assert '"episode_success": true' in metadata_path.read_text(encoding="utf-8")
+
+
+def test_saved_transition_writes_aligned_trajectory_v2(tmp_path: Path):
+    frames = [
+        Image.fromarray(np.full((384, 320, 3), value, dtype=np.uint8))
+        for value in (0, 40, 80)
+    ]
+    metadata_path = save_aligned_transition(
+        tmp_path / "transition",
+        current_frame=frames[0],
+        predicted_goal_frame=frames[-1],
+        actual_frame=frames[-1],
+        metadata={"schema_version": "robotwin_imagination_trajectory_v2"},
+        rollout_arrays={"actions": np.zeros((8, 14), dtype=np.float32)},
+        predicted_trajectory_frames=frames,
+        predicted_trajectory_action_offsets=[0, 4, 8],
+        actual_trajectory_frames=frames,
+        actual_trajectory_action_offsets=[0, 4, 8],
+    )
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert payload["predicted_trajectory_action_offsets"] == [0, 4, 8]
+    assert payload["actual_trajectory_action_offsets"] == [0, 4, 8]
+    assert len(payload["predicted_trajectory_files"]) == 3
+    assert len(payload["actual_trajectory_files"]) == 3
+    trajectory_files = (
+        payload["predicted_trajectory_files"] + payload["actual_trajectory_files"]
+    )
+    for name in trajectory_files:
+        assert (metadata_path.parent / name).is_file()
+
+
+def test_saved_transition_rejects_misaligned_trajectory_offsets(tmp_path: Path):
+    frame = Image.fromarray(np.zeros((384, 320, 3), dtype=np.uint8))
+    try:
+        save_aligned_transition(
+            tmp_path / "transition",
+            current_frame=frame,
+            predicted_goal_frame=frame,
+            actual_frame=frame,
+            metadata={},
+            rollout_arrays={"actions": np.zeros((1, 14), dtype=np.float32)},
+            predicted_trajectory_frames=[frame, frame],
+            predicted_trajectory_action_offsets=[0, 0],
+        )
+    except ValueError as error:
+        assert "strictly increasing" in str(error)
+    else:
+        raise AssertionError("Expected duplicate trajectory offsets to be rejected")
 
 
 def test_reward_discovery_ignores_pairing_quarantine(tmp_path: Path):

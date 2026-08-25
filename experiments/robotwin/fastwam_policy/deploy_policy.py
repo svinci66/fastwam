@@ -976,6 +976,16 @@ class WorldActionRobotWinPolicy:
                 "residual_language_instruction": residual_instruction,
                 "current_image": current_image,
                 "predicted_goal": predicted_frames[-1],
+                "predicted_trajectory_frames": predicted_frames,
+                "predicted_trajectory_action_offsets": list(
+                    range(
+                        0,
+                        n_exec + 1,
+                        self.action_video_freq_ratio,
+                    )
+                ),
+                "actual_trajectory_frames": [current_image.copy()],
+                "actual_trajectory_action_offsets": [0],
                 "start_proprio": state_vector.copy(),
                 "baseline_actions": baseline_actions[:n_exec].copy(),
                 "controlled_corrupted_actions": corrupted_actions[:n_exec].copy(),
@@ -1036,6 +1046,24 @@ class WorldActionRobotWinPolicy:
         executed_actions = np.asarray(transition["executed_actions"], dtype=np.float32)
         effective_k = int(executed_actions.shape[0])
         target_k = int(self.replan_steps)
+        expected_trajectory_offsets = list(
+            range(0, target_k + 1, self.action_video_freq_ratio)
+        )
+        predicted_trajectory_offsets = list(
+            transition["predicted_trajectory_action_offsets"]
+        )
+        actual_trajectory_offsets = list(
+            transition["actual_trajectory_action_offsets"]
+        )
+        trajectory_alignment_valid = bool(
+            effective_k == target_k
+            and predicted_trajectory_offsets == expected_trajectory_offsets
+            and actual_trajectory_offsets == expected_trajectory_offsets
+            and len(transition["predicted_trajectory_frames"])
+            == len(expected_trajectory_offsets)
+            and len(transition["actual_trajectory_frames"])
+            == len(expected_trajectory_offsets)
+        )
         success = bool(task_env.eval_success)
         truncated = bool(task_env.take_action_cnt >= task_env.step_lim and not success)
         if self.residual_outcome_confirmation_enabled:
@@ -1071,7 +1099,7 @@ class WorldActionRobotWinPolicy:
             / f"replan_{int(transition['replan_idx']):04d}"
         )
         metadata = {
-            "schema_version": "robotwin_imagination_transition_v1",
+            "schema_version": "robotwin_imagination_trajectory_v2",
             "task_suite": "robotwin2.0",
             "task_name": self.task_name,
             "task_description": transition["instruction"],
@@ -1128,6 +1156,15 @@ class WorldActionRobotWinPolicy:
             "transition_success": success,
             "episode_success": success,
             "alignment_valid": effective_k == target_k,
+            "trajectory_alignment_valid": trajectory_alignment_valid,
+            "trajectory_expected_action_offsets": expected_trajectory_offsets,
+            "trajectory_num_predicted_frames": len(
+                transition["predicted_trajectory_frames"]
+            ),
+            "trajectory_num_actual_frames": len(
+                transition["actual_trajectory_frames"]
+            ),
+            "trajectory_reference_policy": "frozen_once_per_action_chunk",
             "camera_layout": "head_256x320_over_left_right_128x160_v1",
             "policy_version": "fastwam_infer_action",
             "predictor_version": "fastwam_infer_joint",
@@ -1177,6 +1214,12 @@ class WorldActionRobotWinPolicy:
             actual_frame=self._build_robotwin_image(actual_observation),
             metadata=metadata,
             rollout_arrays=rollout_arrays,
+            predicted_trajectory_frames=transition[
+                "predicted_trajectory_frames"
+            ],
+            predicted_trajectory_action_offsets=predicted_trajectory_offsets,
+            actual_trajectory_frames=transition["actual_trajectory_frames"],
+            actual_trajectory_action_offsets=actual_trajectory_offsets,
         )
         self._episode_metadata_paths.append(metadata_path)
         self._pending_transition = None
@@ -1209,13 +1252,30 @@ class WorldActionRobotWinPolicy:
         self.step_count += 1
         if self._pending_transition is not None:
             self._pending_transition["executed_actions"].append(action.copy())
-        if self._pending_transition is not None and (
-            not self.pending_actions
-            or bool(task_env.eval_success)
-            or task_env.take_action_cnt >= task_env.step_lim
-        ):
-            actual_observation = task_env.get_obs()
-            self._save_pending_transition(task_env, actual_observation)
+        if self._pending_transition is not None:
+            effective_k = len(self._pending_transition["executed_actions"])
+            capture_intermediate = (
+                effective_k % self.action_video_freq_ratio == 0
+            )
+            finish_transition = bool(
+                not self.pending_actions
+                or bool(task_env.eval_success)
+                or task_env.take_action_cnt >= task_env.step_lim
+            )
+            actual_observation = None
+            if capture_intermediate or finish_transition:
+                actual_observation = task_env.get_obs()
+            if capture_intermediate:
+                self._pending_transition["actual_trajectory_frames"].append(
+                    self._build_robotwin_image(actual_observation)
+                )
+                self._pending_transition[
+                    "actual_trajectory_action_offsets"
+                ].append(effective_k)
+            if finish_transition:
+                if actual_observation is None:
+                    raise RuntimeError("Transition ended without a final observation")
+                self._save_pending_transition(task_env, actual_observation)
 
     def reset_timing_rollout(self) -> None:
         self._timing_rollout["infer_s"] = 0.0
