@@ -34,10 +34,10 @@ cases=(
   "stack_blocks_two 4800002 2 2 2 stack_seed4800002_red"
   "stack_blocks_two 4800003 3 3 9 stack_seed4800003_green"
   "stack_blocks_two 4800004 4 4 2 stack_seed4800004_red"
-  "hanging_mug 4800007 2 2 3 hanging_seed4800007"
-  "hanging_mug 4800008 3 3 3 hanging_seed4800008"
-  "hanging_mug 4800011 4 4 3 hanging_seed4800011"
-  "hanging_mug 4800015 5 5 3 hanging_seed4800015"
+  "hanging_mug 4800007 2 0 3 hanging_seed4800007"
+  "hanging_mug 4800008 3 0 3 hanging_seed4800008"
+  "hanging_mug 4800011 4 0 3 hanging_seed4800011"
+  "hanging_mug 4800015 5 0 3 hanging_seed4800015"
 )
 
 record_status() {
@@ -89,8 +89,20 @@ for case_spec in "${cases[@]}"; do
 
   printf '[reward-expansion] corrupt screen case=%s task=%s seed=%s replan=%s\n' \
     "${case_tag}" "${task}" "${seed}" "${intervention}"
-  run_branches "${run_name}" "${task}" "${seed}" "${episode_offset}" \
-    "${trial_offset}" "${intervention}" corrupted false
+  if ! run_branches "${run_name}" "${task}" "${seed}" "${episode_offset}" \
+    "${trial_offset}" "${intervention}" corrupted false; then
+    case_log="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${run_name}/driver.log"
+    if [[ -s "${case_log}" ]] && rg -q \
+      'Strict environment seed .* (is not expert-feasible|failed expert validation|became unstable)' \
+      "${case_log}"; then
+      record_status "${task}" "${seed}" "${episode_offset}" "${trial_offset}" \
+        "${intervention}" not_run not_run not_run strict_seed_rejected
+      printf '[reward-expansion] reject case=%s reason=strict_seed_rejected\n' "${case_tag}"
+      continue
+    fi
+    printf '[reward-expansion] fatal infrastructure/evaluation error case=%s\n' "${case_tag}" >&2
+    exit 70
+  fi
   corrupt_result="$(result_value "${run_name}" corrupted "${task}")"
   if is_success "${corrupt_result}"; then
     record_status "${task}" "${seed}" "${episode_offset}" "${trial_offset}" \
