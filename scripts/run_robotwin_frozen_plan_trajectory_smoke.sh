@@ -14,8 +14,10 @@ MAX_ABS_DELTA="${MAX_ABS_DELTA:-0.05}"
 GPU_ID="${GPU_ID:-0}"
 ENVIRONMENT_START_SEED="${ENVIRONMENT_START_SEED:-4800003}"
 ENVIRONMENT_EPISODE_OFFSET="${ENVIRONMENT_EPISODE_OFFSET:-0}"
+TRIAL_OFFSET="${TRIAL_OFFSET:-0}"
 ARTIFACT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${RUN_NAME}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
+EPISODE_DIR="episode_$(printf '%04d' "${TRIAL_OFFSET}")"
 
 for path in "${CHECKPOINT}" "${DATASET_STATS}" "${MANIFEST}"; do
   [[ -f "${path}" ]] || { printf 'Missing file: %s\n' "${path}" >&2; exit 1; }
@@ -29,7 +31,7 @@ nvidia-smi -L
 
 transition_root() {
   local tag="$1" mode_tag="$2"
-  printf '%s' "${RESULT_BASE}/${RUN_NAME}_${tag}/${TASK}/imagination_transitions/${TASK}/${mode_tag}/episode_0000"
+  printf '%s' "${RESULT_BASE}/${RUN_NAME}_${tag}/${TASK}/imagination_transitions/${TASK}/${mode_tag}/${EPISODE_DIR}"
 }
 
 branch_complete() {
@@ -70,7 +72,7 @@ run_branch() {
     EVALUATION.action_noise_seed=20260825 \
     "EVALUATION.action_noise_replans=${INTERVENTION_REPLAN}" \
     EVALUATION.action_hold_probability=0.0 EVALUATION.gripper_close_delay_steps=0 \
-    EVALUATION.trial_offset=0 \
+    "EVALUATION.trial_offset=${TRIAL_OFFSET}" \
     "EVALUATION.environment_start_seed=${ENVIRONMENT_START_SEED}" \
     "EVALUATION.environment_seed_manifest_path=${MANIFEST}" \
     "EVALUATION.environment_episode_offset=${ENVIRONMENT_EPISODE_OFFSET}" \

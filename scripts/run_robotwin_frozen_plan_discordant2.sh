@@ -11,25 +11,27 @@ mkdir -p "${ARTIFACT_DIR}"
 exec > >(tee -a "${ARTIFACT_DIR}/driver.log") 2>&1
 
 cases=(
-  "hanging_mug 4800004 1 3 hanging_seed4800004"
-  "place_can_basket 4800001 0 2 place_seed4800001"
+  "hanging_mug 4800004 1 1 3 hanging_seed4800004"
+  "place_can_basket 4800001 0 0 2 place_seed4800001"
 )
 validation_files=()
 
 for case_spec in "${cases[@]}"; do
-  read -r task seed episode_offset intervention case_tag <<< "${case_spec}"
+  read -r task seed episode_offset trial_offset intervention case_tag <<< "${case_spec}"
   run_name="${BASE_RUN_NAME}_${case_tag}"
   printf '[discordant2] start task=%s seed=%s intervention=%s\n' \
     "${task}" "${seed}" "${intervention}"
   RUN_NAME="${run_name}" TASK="${task}" \
     ENVIRONMENT_START_SEED="${seed}" INTERVENTION_REPLAN="${intervention}" \
     ENVIRONMENT_EPISODE_OFFSET="${episode_offset}" \
+    TRIAL_OFFSET="${trial_offset}" \
     MANIFEST="${MANIFEST}" \
     bash "${PROJECT_ROOT}/scripts/run_robotwin_frozen_plan_trajectory_smoke.sh"
 
-  clean_root="${RESULT_BASE}/${run_name}_clean/${task}/imagination_transitions/${task}/policy/episode_0000"
-  corrupt_root="${RESULT_BASE}/${run_name}_corrupted/${task}/imagination_transitions/${task}/controlled_corrupt_0.050/episode_0000"
-  correct_root="${RESULT_BASE}/${run_name}_corrected/${task}/imagination_transitions/${task}/controlled_correct_0.050/episode_0000"
+  episode_dir="episode_$(printf '%04d' "${trial_offset}")"
+  clean_root="${RESULT_BASE}/${run_name}_clean/${task}/imagination_transitions/${task}/policy/${episode_dir}"
+  corrupt_root="${RESULT_BASE}/${run_name}_corrupted/${task}/imagination_transitions/${task}/controlled_corrupt_0.050/${episode_dir}"
+  correct_root="${RESULT_BASE}/${run_name}_corrected/${task}/imagination_transitions/${task}/controlled_correct_0.050/${episode_dir}"
   validation_json="${ARTIFACT_DIR}/${case_tag}_vae_reward.json"
   conda run --no-capture-output -n robotwin_fastwam python -u \
     "${PROJECT_ROOT}/experiments/robotwin/validate_frozen_plan_vae_reward.py" \
