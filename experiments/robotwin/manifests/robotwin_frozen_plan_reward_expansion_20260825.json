@@ -1,0 +1,68 @@
+{
+  "_meta": {
+    "description": "Pre-registered baseline-success candidates for bounded single-replan frozen-plan Wan VAE reward expansion.",
+    "task_config": "demo_clean",
+    "num_inference_steps": 10,
+    "replan_steps": 24,
+    "max_abs_action_delta": 0.05,
+    "selection_rule": "Baseline success under the aligned 10-step/24-action FastWAM protocol; no reward value was used for candidate selection."
+  },
+  "adjust_bottle": {
+    "seeds": [
+      4800000,
+      4800001,
+      4800002,
+      4800003,
+      4800004
+    ],
+    "instructions": [
+      "Use the right arm to grab the green plastic bottle with ridged bottom head-up.",
+      "Grab the brown bottle from the table with the right arm",
+      "Pick up the green plastic bottle with ridged bottom carefully using the left arm",
+      "Lift the brown bottle from the table using the right arm.",
+      "Use the right arm to grab the green bottle with white label upright"
+    ]
+  },
+  "stack_blocks_two": {
+    "seeds": [
+      4800000,
+      4800001,
+      4800002,
+      4800003,
+      4800004
+    ],
+    "instructions": [
+      "Use the left arm to move red block to the center, then set the right arm and stack green block on red block.",
+      "Bring red block and green block to the center, then position green block above red block.",
+      "Place red block in the center, then stack green block on it.",
+      "Bring red block and green block to the center, then position green block above red block.",
+      "Use the right arm to move red block to the center, then set the left arm and stack green block on red block."
+    ]
+  },
+  "hanging_mug": {
+    "seeds": [
+      4800003,
+      4800005,
+      4800007,
+      4800008,
+      4800011,
+      4800015
+    ],
+    "instructions": [
+      "Grab the beige coffee mug, turn it, set it on the table, then hang it on the medium-sized rack.",
+      "Pick the matte black mug from the table, rotate it, place it in the middle, and hang it onto the medium-sized rack.",
+      "Lift the medium mug for hot drinks from the table, spin it, set it down, and hang it on the medium-sized rack.",
+      "Pick the cylindrical mug from the table, rotate it, place it in the middle, and hang it onto the dark gray rack with flat back.",
+      "Lift the cylindrical mug with handle from the table, spin it, set it down, and hang it on the rack with straight and slanted rods.",
+      "Grab the ceramic mug on the table, rotate it, set it down in the middle, then hang it onto the medium-sized rack."
+    ]
+  },
+  "place_can_basket": {
+    "seeds": [
+      4800003
+    ],
+    "instructions": [
+      "Grab the cylindrical can with bright colors and put it in the basket with rounded edges, then lift the basket with rounded edges."
+    ]
+  }
+}

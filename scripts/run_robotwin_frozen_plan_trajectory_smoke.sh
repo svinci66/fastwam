@@ -15,6 +15,8 @@ GPU_ID="${GPU_ID:-0}"
 ENVIRONMENT_START_SEED="${ENVIRONMENT_START_SEED:-4800003}"
 ENVIRONMENT_EPISODE_OFFSET="${ENVIRONMENT_EPISODE_OFFSET:-0}"
 TRIAL_OFFSET="${TRIAL_OFFSET:-0}"
+BRANCHES="${BRANCHES:-clean,corrupted,corrected}"
+RUN_AUDIT="${RUN_AUDIT:-auto}"
 ARTIFACT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${RUN_NAME}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 EPISODE_DIR="episode_$(printf '%04d' "${TRIAL_OFFSET}")"
@@ -44,7 +46,16 @@ branch_complete() {
     && [[ -s "${video}" ]] \
     && [[ -f "${metadata}" ]] \
     && rg -q 'robotwin_imagination_trajectory_v2' "${metadata}" \
-    && rg -q "\"environment_seed\": ${ENVIRONMENT_START_SEED}" "${metadata}"
+    && rg -q "\"environment_seed\": ${ENVIRONMENT_START_SEED}" "${metadata}" \
+    && rg -q "\"trial_idx\": ${TRIAL_OFFSET}" "${metadata}"
+}
+
+branch_selected() {
+  local requested="$1"
+  case ",${BRANCHES}," in
+    *",${requested},"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 run_branch() {
@@ -88,29 +99,56 @@ run_branch() {
   printf '[trajectory-smoke] complete branch=%s\n' "${tag}"
 }
 
-run_branch clean policy 0.0 policy
-run_branch corrupted controlled_corrupt "${MAX_ABS_DELTA}" "controlled_corrupt_$(printf '%.3f' "${MAX_ABS_DELTA}")"
-run_branch corrected controlled_correct "${MAX_ABS_DELTA}" "controlled_correct_$(printf '%.3f' "${MAX_ABS_DELTA}")"
+if branch_selected clean; then
+  run_branch clean policy 0.0 policy
+fi
+if branch_selected corrupted; then
+  run_branch corrupted controlled_corrupt "${MAX_ABS_DELTA}" "controlled_corrupt_$(printf '%.3f' "${MAX_ABS_DELTA}")"
+fi
+if branch_selected corrected; then
+  run_branch corrected controlled_correct "${MAX_ABS_DELTA}" "controlled_correct_$(printf '%.3f' "${MAX_ABS_DELTA}")"
+fi
 
 CLEAN_ROOT="$(transition_root clean policy)"
 CORRUPT_ROOT="$(transition_root corrupted "controlled_corrupt_$(printf '%.3f' "${MAX_ABS_DELTA}")")"
 CORRECT_ROOT="$(transition_root corrected "controlled_correct_$(printf '%.3f' "${MAX_ABS_DELTA}")")"
 
-conda run --no-capture-output -n "${CONDA_ENV}" python -u \
-  "${PROJECT_ROOT}/experiments/robotwin/audit_controlled_imagination_triplet.py" \
-  --clean-root "${CLEAN_ROOT}" --corrupt-root "${CORRUPT_ROOT}" \
-  --correct-root "${CORRECT_ROOT}" --intervention-replan "${INTERVENTION_REPLAN}" \
-  --output-json "${ARTIFACT_DIR}/action_triplet_audit.json"
+if [[ "${RUN_AUDIT}" == auto ]]; then
+  if [[ "${BRANCHES}" == "clean,corrupted,corrected" ]]; then
+    RUN_AUDIT=true
+  else
+    RUN_AUDIT=false
+  fi
+fi
 
-conda run --no-capture-output -n "${CONDA_ENV}" python -u \
-  "${PROJECT_ROOT}/experiments/robotwin/audit_frozen_plan_trajectory_triplet.py" \
-  --clean-root "${CLEAN_ROOT}" --corrupt-root "${CORRUPT_ROOT}" \
-  --correct-root "${CORRECT_ROOT}" --intervention-replan "${INTERVENTION_REPLAN}" \
-  --output-json "${ARTIFACT_DIR}/trajectory_triplet_audit.json"
+if [[ "${RUN_AUDIT}" == true ]]; then
+  for branch_spec in "clean policy" \
+    "corrupted controlled_corrupt_$(printf '%.3f' "${MAX_ABS_DELTA}")" \
+    "corrected controlled_correct_$(printf '%.3f' "${MAX_ABS_DELTA}")"; do
+    read -r tag mode_tag <<< "${branch_spec}"
+    branch_complete "${tag}" "${mode_tag}" || {
+      printf '[trajectory-smoke] cannot audit incomplete branch=%s\n' "${tag}" >&2
+      exit 66
+    }
+  done
+  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+    "${PROJECT_ROOT}/experiments/robotwin/audit_controlled_imagination_triplet.py" \
+    --clean-root "${CLEAN_ROOT}" --corrupt-root "${CORRUPT_ROOT}" \
+    --correct-root "${CORRECT_ROOT}" --intervention-replan "${INTERVENTION_REPLAN}" \
+    --output-json "${ARTIFACT_DIR}/action_triplet_audit.json"
 
-mkdir -p "${ARTIFACT_DIR}/videos"
-for tag in clean corrupted corrected; do
-  ln -sfn "${RESULT_BASE}/${RUN_NAME}_${tag}/${TASK}/episode0.mp4" \
-    "${ARTIFACT_DIR}/videos/${tag}.mp4"
-done
-printf '[trajectory-smoke] PASS audit=%s\n' "${ARTIFACT_DIR}/trajectory_triplet_audit.json"
+  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+    "${PROJECT_ROOT}/experiments/robotwin/audit_frozen_plan_trajectory_triplet.py" \
+    --clean-root "${CLEAN_ROOT}" --corrupt-root "${CORRUPT_ROOT}" \
+    --correct-root "${CORRECT_ROOT}" --intervention-replan "${INTERVENTION_REPLAN}" \
+    --output-json "${ARTIFACT_DIR}/trajectory_triplet_audit.json"
+
+  mkdir -p "${ARTIFACT_DIR}/videos"
+  for tag in clean corrupted corrected; do
+    ln -sfn "${RESULT_BASE}/${RUN_NAME}_${tag}/${TASK}/episode0.mp4" \
+      "${ARTIFACT_DIR}/videos/${tag}.mp4"
+  done
+  printf '[trajectory-smoke] PASS audit=%s\n' "${ARTIFACT_DIR}/trajectory_triplet_audit.json"
+else
+  printf '[trajectory-smoke] branch-only pass branches=%s\n' "${BRANCHES}"
+fi

@@ -103,4 +103,14 @@ r_imagination = mean_camera(mean_time(alignment(delta_actual, delta_imagined)))
 
 ## 5. 当前执行点
 
-本轮从阶段 1 开始：实现 trajectory-v2 schema，运行一个固定 seed 的三分支 smoke，并执行 fail-closed 确定性审计。审计通过后再实现 Wan 原生特征奖励；审计失败则只修复采集链路，不继续训练。
+阶段 1 已完成，trajectory-v2 的动作、轨迹、seed、instruction 和 trial offset 审计均已通过。Wan VAE latent 首轮 2 组严格 outcome-discordant pair 也得到正确排序：`clean/corrected` 分数均高于 `corrupt`，且 matched reference 均明显优于 shuffled reference；当前只能视为正向 smoke，尚未达到样本量准入线。
+
+当前继续阶段 3 的固定协议扩展：保持 `0.05` 最大归一化动作扰动、三个相机等权和 `0/4/8/12/16/20/24` 七个时刻不变。候选只依据对齐配置下的 baseline 成功记录和录像中的任务阶段预注册，不查看 Wan VAE 奖励后选样本。
+
+为减少无效计算，扩展按以下顺序自动执行：
+
+1. 先只运行单次 `controlled_corrupt` 分支。
+2. 扰动后仍成功的候选直接排除，不补跑另外两支。
+3. 扰动后失败时，补跑 `clean`；若 clean 不能复现成功，则排除该 seed。
+4. clean 成功后补跑 `corrected`；只有 corrected 恢复成功且三分支审计通过，才计算 Wan VAE reward。
+5. 累计达到 8 个严格 pair 后才计算正式排序指标并判断是否进入阶段 4；候选用尽仍不足 8 个时，停止训练并扩大独立 baseline-success seed，而不是加大扰动或调相机权重。
