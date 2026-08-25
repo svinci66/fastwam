@@ -50,6 +50,7 @@
 - 每 24 个动作重新调用 FastWAM。
 - 官方 unseen instruction。
 - 同一任务不同方法使用完全相同的环境 seed、指令、初始状态和推理随机性。
+- RoboTwin 官方指令候选会受单次运行的 episode 数量影响，因此筛选完成后必须同时冻结实际接受的 `seed + instruction` manifest；后续配对不能只复用 seed。
 - Residual 最大尺度首轮固定为 `0.05`，gripper residual 固定为零。
 - 每个 episode 只在预注册的一个 replan 执行一次 residual，其余时间完全执行 FastWAM。
 

@@ -146,6 +146,28 @@ def main() -> None:
     }
     summary_path = args.artifact_dir / "screen_summary.json"
     summary_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    manifest = {
+        "_meta": {
+            "description": (
+                "Exact accepted environment seeds and official unseen instructions from "
+                "the RoboTwin imagination-reward medium-task screen. Reuse both fields "
+                "for every later paired variant."
+            ),
+            "source_summary": str(summary_path.resolve()),
+            "task_config": "demo_clean",
+        }
+    }
+    for row in rows:
+        if row.get("status") != "complete":
+            continue
+        records = row["episode_records"]
+        manifest[row["task"]] = {
+            "seeds": [int(record["seed"]) for record in records],
+            "instructions": [str(record["instruction"]) for record in records],
+        }
+    (args.artifact_dir / "screen_seed_instruction_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    )
     with (args.artifact_dir / "failure_review.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=REVIEW_FIELDS)
         writer.writeheader()

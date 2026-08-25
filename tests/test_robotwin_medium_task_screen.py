@@ -41,6 +41,11 @@ def test_medium_screen_organizes_failure_and_success_videos(tmp_path, monkeypatc
 
     summary = json.loads((artifact_dir / "screen_summary.json").read_text())
     assert summary["rows"][0]["successes"] == 1
+    manifest = json.loads(
+        (artifact_dir / "screen_seed_instruction_manifest.json").read_text()
+    )
+    assert manifest["hanging_mug"]["seeds"] == [4800001, 4800002]
+    assert manifest["hanging_mug"]["instructions"] == ["hang mug", "hang mug"]
     assert (
         artifact_dir
         / "videos"
