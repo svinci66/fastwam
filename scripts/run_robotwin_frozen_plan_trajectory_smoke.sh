@@ -13,6 +13,7 @@ INTERVENTION_REPLAN="${INTERVENTION_REPLAN:-3}"
 MAX_ABS_DELTA="${MAX_ABS_DELTA:-0.05}"
 GPU_ID="${GPU_ID:-0}"
 ENVIRONMENT_START_SEED="${ENVIRONMENT_START_SEED:-4800003}"
+ENVIRONMENT_EPISODE_OFFSET="${ENVIRONMENT_EPISODE_OFFSET:-0}"
 ARTIFACT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${RUN_NAME}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 
@@ -40,7 +41,8 @@ branch_complete() {
   [[ -n "${log_file}" ]] && rg -q 'Success rate:' "${log_file}" \
     && [[ -s "${video}" ]] \
     && [[ -f "${metadata}" ]] \
-    && rg -q 'robotwin_imagination_trajectory_v2' "${metadata}"
+    && rg -q 'robotwin_imagination_trajectory_v2' "${metadata}" \
+    && rg -q "\"environment_seed\": ${ENVIRONMENT_START_SEED}" "${metadata}"
 }
 
 run_branch() {
@@ -71,7 +73,7 @@ run_branch() {
     EVALUATION.trial_offset=0 \
     "EVALUATION.environment_start_seed=${ENVIRONMENT_START_SEED}" \
     "EVALUATION.environment_seed_manifest_path=${MANIFEST}" \
-    EVALUATION.environment_episode_offset=0 \
+    "EVALUATION.environment_episode_offset=${ENVIRONMENT_EPISODE_OFFSET}" \
     EVALUATION.deterministic_instruction_by_seed=true EVALUATION.expert_check=true \
     EVALUATION.fixed_instruction=null EVALUATION.paper_aligned=false \
     EVALUATION.strict_paired=false EVALUATION.save_imagination_transitions=true \

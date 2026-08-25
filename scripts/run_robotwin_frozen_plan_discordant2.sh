@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BASE_RUN_NAME="${BASE_RUN_NAME:-robotwin_frozen_plan_discordant2_v2_20260825}"
+BASE_RUN_NAME="${BASE_RUN_NAME:-robotwin_frozen_plan_discordant2_v2_fixed_20260825}"
 MANIFEST="${MANIFEST:-${PROJECT_ROOT}/experiments/robotwin/manifests/robotwin_imagination_reward_formal5_20260825.json}"
 VAE_PATH="${VAE_PATH:-/home/ubuntu/sj/fastwam/checkpoints/DiffSynth-Studio/Wan-Series-Converted-Safetensors/Wan2.2_VAE.safetensors}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
@@ -11,18 +11,19 @@ mkdir -p "${ARTIFACT_DIR}"
 exec > >(tee -a "${ARTIFACT_DIR}/driver.log") 2>&1
 
 cases=(
-  "hanging_mug 4800004 3 hanging_seed4800004"
-  "place_can_basket 4800001 2 place_seed4800001"
+  "hanging_mug 4800004 1 3 hanging_seed4800004"
+  "place_can_basket 4800001 0 2 place_seed4800001"
 )
 validation_files=()
 
 for case_spec in "${cases[@]}"; do
-  read -r task seed intervention case_tag <<< "${case_spec}"
+  read -r task seed episode_offset intervention case_tag <<< "${case_spec}"
   run_name="${BASE_RUN_NAME}_${case_tag}"
   printf '[discordant2] start task=%s seed=%s intervention=%s\n' \
     "${task}" "${seed}" "${intervention}"
   RUN_NAME="${run_name}" TASK="${task}" \
     ENVIRONMENT_START_SEED="${seed}" INTERVENTION_REPLAN="${intervention}" \
+    ENVIRONMENT_EPISODE_OFFSET="${episode_offset}" \
     MANIFEST="${MANIFEST}" \
     bash "${PROJECT_ROOT}/scripts/run_robotwin_frozen_plan_trajectory_smoke.sh"
 
