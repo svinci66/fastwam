@@ -11,14 +11,89 @@ TARGET_STRICT_PAIRS="${TARGET_STRICT_PAIRS:-8}"
 MAX_SCREEN_RUNS="${MAX_SCREEN_RUNS:-64}"
 MIN_FREE_GB="${MIN_FREE_GB:-80}"
 MAX_ABS_DELTA="${MAX_ABS_DELTA:-0.05}"
+GPU_ID="${GPU_ID:-0}"
+JOB_COOLDOWN_SECONDS="${JOB_COOLDOWN_SECONDS:-30}"
+SEGMENT_SCREEN_RUNS="${SEGMENT_SCREEN_RUNS:-4}"
+SEGMENT_COOLDOWN_SECONDS="${SEGMENT_COOLDOWN_SECONDS:-120}"
+GPU_TELEMETRY_INTERVAL_SECONDS="${GPU_TELEMETRY_INTERVAL_SECONDS:-2}"
 mkdir -p "${ARTIFACT_DIR}" "${REVIEW_DIR}"
 exec > >(tee -a "${ARTIFACT_DIR}/driver.log") 2>&1
+
+for value_name in JOB_COOLDOWN_SECONDS SEGMENT_SCREEN_RUNS \
+  SEGMENT_COOLDOWN_SECONDS GPU_TELEMETRY_INTERVAL_SECONDS; do
+  value="${!value_name}"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    printf '[pair-discovery] %s must be a non-negative integer, got %q\n' \
+      "${value_name}" "${value}" >&2
+    exit 64
+  fi
+done
+
+# A second collector would double GPU load and can also corrupt the status file.
+# flock is automatically released after a process or machine restart.
+LOCK_FILE="${ARTIFACT_DIR}/collector.lock"
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+  printf '[pair-discovery] another collector owns lock=%s\n' "${LOCK_FILE}" >&2
+  exit 73
+fi
 
 STATUS_TSV="${ARTIFACT_DIR}/status.tsv"
 if [[ ! -f "${STATUS_TSV}" ]]; then
   printf 'timestamp\tcombo_key\ttask\tseed\treplan\tnoise_seed\tclean\tcorrupted\tcorrected\tdecision\treview_dir\n' \
     > "${STATUS_TSV}"
 fi
+
+TELEMETRY_CSV="${ARTIFACT_DIR}/gpu_telemetry.csv"
+TELEMETRY_ERROR_LOG="${ARTIFACT_DIR}/gpu_telemetry_errors.log"
+GPU_TELEMETRY_PID=''
+
+start_gpu_telemetry() {
+  (( GPU_TELEMETRY_INTERVAL_SECONDS > 0 )) || return 0
+  if [[ ! -s "${TELEMETRY_CSV}" ]]; then
+    printf 'sample_time,boot_id,gpu_index,temperature_c,power_draw_w,power_limit_w,utilization_gpu_pct,utilization_memory_pct,memory_used_mib,memory_total_mib,pstate\n' \
+      > "${TELEMETRY_CSV}"
+  fi
+  local boot_id
+  boot_id="$(< /proc/sys/kernel/random/boot_id)"
+  (
+    while :; do
+      sample_time="$(date --iso-8601=seconds)"
+      if gpu_rows="$(nvidia-smi -i "${GPU_ID}" \
+        --query-gpu=index,temperature.gpu,power.draw,power.limit,utilization.gpu,utilization.memory,memory.used,memory.total,pstate \
+        --format=csv,noheader,nounits 2>> "${TELEMETRY_ERROR_LOG}")"; then
+        while IFS= read -r gpu_row; do
+          [[ -n "${gpu_row}" ]] || continue
+          printf '%s,%s,%s\n' "${sample_time}" "${boot_id}" "${gpu_row}"
+        done <<< "${gpu_rows}"
+      else
+        printf '%s telemetry query failed\n' "${sample_time}" \
+          >> "${TELEMETRY_ERROR_LOG}"
+      fi
+      sleep "${GPU_TELEMETRY_INTERVAL_SECONDS}"
+    done
+  ) >> "${TELEMETRY_CSV}" &
+  GPU_TELEMETRY_PID=$!
+  printf '[pair-discovery] gpu telemetry pid=%s interval=%ss output=%s\n' \
+    "${GPU_TELEMETRY_PID}" "${GPU_TELEMETRY_INTERVAL_SECONDS}" "${TELEMETRY_CSV}"
+}
+
+stop_gpu_telemetry() {
+  if [[ -n "${GPU_TELEMETRY_PID}" ]] && kill -0 "${GPU_TELEMETRY_PID}" 2>/dev/null; then
+    kill "${GPU_TELEMETRY_PID}" 2>/dev/null || true
+    wait "${GPU_TELEMETRY_PID}" 2>/dev/null || true
+  fi
+}
+
+trap stop_gpu_telemetry EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+start_gpu_telemetry
+
+printf '[pair-discovery] safety config job_cooldown=%ss segment_size=%s segment_cooldown=%ss telemetry_interval=%ss gpu=%s boot_id=%s\n' \
+  "${JOB_COOLDOWN_SECONDS}" "${SEGMENT_SCREEN_RUNS}" \
+  "${SEGMENT_COOLDOWN_SECONDS}" "${GPU_TELEMETRY_INTERVAL_SECONDS}" \
+  "${GPU_ID}" "$(< /proc/sys/kernel/random/boot_id)"
 
 # Each case has already succeeded under the current FastWAM protocol. Replans
 # are pre-registered from grasp/contact/place phases, not selected by reward.
@@ -68,6 +143,9 @@ record_status() {
     "$(date --iso-8601=seconds)" "${combo_key}" "${task}" "${seed}" \
     "${replan}" "${noise_seed}" "${clean}" "${corrupt}" "${correct}" \
     "${decision}" "${review_path}" >> "${STATUS_TSV}"
+  # Persist each completed decision immediately so a hard reset only repeats
+  # the branch that was in flight, never earlier completed combinations.
+  sync -d "${STATUS_TSV}" 2>/dev/null || true
   done_combos["${combo_key}"]=1
 }
 
@@ -85,12 +163,39 @@ is_success() {
 run_branches() {
   local run_name="$1" task="$2" seed="$3" episode_offset="$4"
   local trial_offset="$5" replan="$6" noise_seed="$7" branches="$8" audit="$9"
-  RUN_NAME="${run_name}" TASK="${task}" ENVIRONMENT_START_SEED="${seed}" \
-    ENVIRONMENT_EPISODE_OFFSET="${episode_offset}" TRIAL_OFFSET="${trial_offset}" \
-    INTERVENTION_REPLAN="${replan}" ACTION_NOISE_SEED="${noise_seed}" \
-    MAX_ABS_DELTA="${MAX_ABS_DELTA}" MANIFEST="${MANIFEST}" \
-    BRANCHES="${branches}" RUN_AUDIT="${audit}" \
-    bash "${PROJECT_ROOT}/scripts/run_robotwin_frozen_plan_trajectory_smoke.sh"
+  local rc=0
+  if RUN_NAME="${run_name}" TASK="${task}" ENVIRONMENT_START_SEED="${seed}" \
+      ENVIRONMENT_EPISODE_OFFSET="${episode_offset}" TRIAL_OFFSET="${trial_offset}" \
+      INTERVENTION_REPLAN="${replan}" ACTION_NOISE_SEED="${noise_seed}" \
+      MAX_ABS_DELTA="${MAX_ABS_DELTA}" MANIFEST="${MANIFEST}" GPU_ID="${GPU_ID}" \
+      BRANCHES="${branches}" RUN_AUDIT="${audit}" \
+      bash "${PROJECT_ROOT}/scripts/run_robotwin_frozen_plan_trajectory_smoke.sh"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if (( JOB_COOLDOWN_SECONDS > 0 )); then
+    printf '[pair-discovery] gpu job finished rc=%s; cooldown=%ss\n' \
+      "${rc}" "${JOB_COOLDOWN_SECONDS}"
+    sleep "${JOB_COOLDOWN_SECONDS}"
+  fi
+  return "${rc}"
+}
+
+new_screen_runs=0
+last_segment_pause_at=-1
+maybe_segment_cooldown() {
+  (( SEGMENT_SCREEN_RUNS > 0 )) || return 0
+  (( new_screen_runs > 0 )) || return 0
+  (( new_screen_runs % SEGMENT_SCREEN_RUNS == 0 )) || return 0
+  (( last_segment_pause_at != new_screen_runs )) || return 0
+  last_segment_pause_at="${new_screen_runs}"
+  sync -d "${STATUS_TSV}" 2>/dev/null || true
+  if (( SEGMENT_COOLDOWN_SECONDS > 0 )); then
+    printf '[pair-discovery] segment complete new_screens=%s; cooldown=%ss\n' \
+      "${new_screen_runs}" "${SEGMENT_COOLDOWN_SECONDS}"
+    sleep "${SEGMENT_COOLDOWN_SECONDS}"
+  fi
 }
 
 strict_pairs="${#accepted_cases[@]}"
@@ -130,6 +235,7 @@ for noise_seed in "${noise_seeds[@]}"; do
       fi
 
       screen_runs=$((screen_runs + 1))
+      new_screen_runs=$((new_screen_runs + 1))
       run_name="${BASE_RUN_NAME}_${combo_key}"
       printf '[pair-discovery] screen %s/%s combo=%s free_gb=%s\n' \
         "${screen_runs}" "${MAX_SCREEN_RUNS}" "${combo_key}" "${free_gb}"
@@ -142,6 +248,7 @@ for noise_seed in "${noise_seeds[@]}"; do
           record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
             "${noise_seed}" not_run not_run not_run strict_seed_rejected ''
           invalid_cases["${case_tag}"]=1
+          maybe_segment_cooldown
           continue
         fi
         printf '[pair-discovery] fatal evaluation error combo=%s\n' "${combo_key}" >&2
@@ -152,6 +259,7 @@ for noise_seed in "${noise_seeds[@]}"; do
       if is_success "${corrupt_result}"; then
         record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
           "${noise_seed}" not_run "${corrupt_result}" not_run corrupt_still_succeeds ''
+        maybe_segment_cooldown
         continue
       fi
 
@@ -163,6 +271,7 @@ for noise_seed in "${noise_seeds[@]}"; do
         record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
           "${noise_seed}" "${clean_result}" "${corrupt_result}" not_run clean_not_reproduced ''
         invalid_cases["${case_tag}"]=1
+        maybe_segment_cooldown
         continue
       fi
 
@@ -172,6 +281,7 @@ for noise_seed in "${noise_seeds[@]}"; do
       if ! is_success "${correct_result}"; then
         record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
           "${noise_seed}" "${clean_result}" "${corrupt_result}" "${correct_result}" correction_did_not_recover ''
+        maybe_segment_cooldown
         continue
       fi
 
@@ -196,6 +306,7 @@ for noise_seed in "${noise_seeds[@]}"; do
       strict_pairs=$((strict_pairs + 1))
       printf '[pair-discovery] accepted strict_pair=%s/%s review=%s\n' \
         "${strict_pairs}" "${TARGET_STRICT_PAIRS}" "${review_path}"
+      maybe_segment_cooldown
     done
   done
 done
