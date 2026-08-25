@@ -15,6 +15,9 @@ from experiments.robotwin.imagination_reward_utils import (
     split_robotwin_camera_views,
     update_episode_success,
 )
+from experiments.robotwin.validate_frozen_plan_vae_reward import (
+    compute_trajectory_alignment,
+)
 
 
 def test_split_robotwin_composite_preserves_three_views():
@@ -201,6 +204,30 @@ def test_saved_transition_rejects_misaligned_trajectory_offsets(tmp_path: Path):
         assert "strictly increasing" in str(error)
     else:
         raise AssertionError("Expected duplicate trajectory offsets to be rejected")
+
+
+def test_trajectory_alignment_averages_times_then_equal_camera_weights():
+    predicted = {}
+    actual = {}
+    for camera_index, camera in enumerate(("head", "left_wrist", "right_wrist")):
+        scale = float(camera_index + 1)
+        predicted[camera] = [
+            np.array([0.0, 0.0], dtype=np.float32),
+            np.array([scale, 0.0], dtype=np.float32),
+            np.array([2.0 * scale, 0.0], dtype=np.float32),
+        ]
+        actual[camera] = [
+            np.array([0.0, 0.0], dtype=np.float32),
+            np.array([scale, 0.0], dtype=np.float32),
+            np.array([0.0, 2.0 * scale], dtype=np.float32),
+        ]
+    result = compute_trajectory_alignment(predicted, actual)
+    assert result["equal_camera_mean"] == 0.5
+    assert result["camera_scores"] == {
+        "head": 0.5,
+        "left_wrist": 0.5,
+        "right_wrist": 0.5,
+    }
 
 
 def test_reward_discovery_ignores_pairing_quarantine(tmp_path: Path):
