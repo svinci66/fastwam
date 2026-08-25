@@ -30,6 +30,7 @@ from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_js
 from experiments.robotwin.imagination_reward_utils import (
     ROBOTWIN_CAMERA_NAMES,
     apply_action_chunk_hold,
+    apply_bounded_normalized_action_corruption,
     apply_first_gripper_close_delay,
     apply_normalized_action_noise,
     array_sha256,
@@ -309,6 +310,7 @@ class WorldActionRobotWinPolicy:
         residual_language_instruction: Optional[str],
         action_noise_std: float,
         action_noise_seed: int,
+        action_noise_replans: Optional[set[int]],
         action_hold_probability: float,
         action_hold_replans: Optional[set[int]],
         gripper_close_delay_steps: int,
@@ -347,13 +349,16 @@ class WorldActionRobotWinPolicy:
         if self.action_mode not in {
             "policy",
             "noise",
+            "controlled_corrupt",
+            "controlled_correct",
             "hold",
             "gripper_delay",
             "residual",
         }:
             raise ValueError(
                 f"Unsupported action_mode={self.action_mode!r}; expected one of "
-                "['policy', 'noise', 'hold', 'gripper_delay', 'residual']."
+                "['policy', 'noise', 'controlled_corrupt', "
+                "'controlled_correct', 'hold', 'gripper_delay', 'residual']."
             )
         self.residual_policy: Optional[OnlineResidualPolicy] = None
         self.residual_intervention_replans = residual_intervention_replans
@@ -434,7 +439,21 @@ class WorldActionRobotWinPolicy:
             )
         if self.action_mode == "policy" and self.action_noise_std != 0.0:
             raise ValueError("action_mode='policy' requires action_noise_std=0")
+        if self.action_mode in {"controlled_corrupt", "controlled_correct"} and (
+            self.action_noise_std <= 0.0
+        ):
+            raise ValueError(
+                f"action_mode={self.action_mode!r} requires action_noise_std > 0"
+            )
         self.action_noise_seed = int(action_noise_seed)
+        self.action_noise_replans = action_noise_replans
+        if self.action_noise_replans is not None and (
+            not self.action_noise_replans or min(self.action_noise_replans) < 0
+        ):
+            raise ValueError(
+                "action_noise_replans must be None or a non-empty set of "
+                "non-negative replan indices"
+            )
         self.action_hold_probability = float(action_hold_probability)
         if not 0.0 <= self.action_hold_probability <= 1.0:
             raise ValueError(
@@ -529,6 +548,8 @@ class WorldActionRobotWinPolicy:
             return "policy"
         if self.action_mode == "noise":
             return f"noise_{self.action_noise_std:.3f}"
+        if self.action_mode in {"controlled_corrupt", "controlled_correct"}:
+            return f"{self.action_mode}_{self.action_noise_std:.3f}"
         if self.action_mode == "hold":
             return f"hold_{self.action_hold_probability:.3f}"
         if self.action_mode == "gripper_delay":
@@ -601,8 +622,10 @@ class WorldActionRobotWinPolicy:
     ) -> tuple[
         np.ndarray,
         np.ndarray,
-        Optional[list[Image.Image]],
         np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        Optional[list[Image.Image]],
         np.ndarray,
         np.ndarray,
         Any,
@@ -645,9 +668,14 @@ class WorldActionRobotWinPolicy:
                 f"Expected normalized action [T,D], got {normalized_baseline.shape}"
             )
         normalized_executed = normalized_baseline.copy()
+        normalized_corrupted = normalized_baseline.copy()
         residual_output = None
         epsilon = np.zeros_like(normalized_baseline, dtype=np.float32)
-        if self.action_mode == "noise":
+        noise_selected = (
+            self.action_noise_replans is None
+            or self.replan_count in self.action_noise_replans
+        )
+        if self.action_mode == "noise" and noise_selected:
             noise_seed = (
                 self.action_noise_seed
                 + self.episode_count * 100_003
@@ -658,13 +686,31 @@ class WorldActionRobotWinPolicy:
                 noise_std=self.action_noise_std,
                 rng=np.random.default_rng(noise_seed),
             )
+            normalized_corrupted = normalized_executed.copy()
+        elif self.action_mode in {"controlled_corrupt", "controlled_correct"} and noise_selected:
+            noise_seed = (
+                self.action_noise_seed
+                + self.episode_count * 100_003
+                + self.replan_count * 1_009
+            )
+            normalized_corrupted, epsilon = apply_bounded_normalized_action_corruption(
+                normalized_baseline,
+                max_abs_delta=self.action_noise_std,
+                rng=np.random.default_rng(noise_seed),
+            )
+            if self.action_mode == "controlled_corrupt":
+                normalized_executed = normalized_corrupted.copy()
 
         baseline_actions = self._denormalize_action(
             torch.from_numpy(normalized_baseline)
         )[0]
+        corrupted_actions = self._denormalize_action(
+            torch.from_numpy(normalized_corrupted)
+        )[0]
         executed_actions = self._denormalize_action(
             torch.from_numpy(normalized_executed)
         )[0]
+        controlled_target_residual = baseline_actions - corrupted_actions
         if self.action_mode == "residual":
             if self.residual_policy is None:
                 raise RuntimeError("residual action mode was initialized without a policy")
@@ -833,6 +879,8 @@ class WorldActionRobotWinPolicy:
             self._timing_rollout["infer_s"] += time.perf_counter() - infer_t0
         return (
             baseline_actions,
+            corrupted_actions,
+            controlled_target_residual,
             executed_actions,
             predicted_frames,
             current_image,
@@ -844,6 +892,8 @@ class WorldActionRobotWinPolicy:
     def _fill_action_queue(self, observation: Dict[str, Any], instruction: str) -> None:
         (
             baseline_actions,
+            corrupted_actions,
+            controlled_target_residual,
             executed_actions,
             predicted_frames,
             current_image,
@@ -878,6 +928,10 @@ class WorldActionRobotWinPolicy:
         )
         baseline_prefix = np.asarray(baseline_actions[:n_exec], dtype=np.float32)
         executed_prefix = np.asarray(executed_actions[:n_exec], dtype=np.float32)
+        noise_selected = (
+            self.action_noise_replans is None
+            or self.replan_count in self.action_noise_replans
+        )
         print(
             "FASTWAM_REPLAN_AUDIT "
             f"episode_id={self.episode_count} "
@@ -890,6 +944,17 @@ class WorldActionRobotWinPolicy:
             f"n_exec={n_exec}",
             flush=True,
         )
+        if self.action_mode in {"controlled_corrupt", "controlled_correct"}:
+            print(
+                "FASTWAM_CONTROLLED_CORRUPTION "
+                f"episode_id={self.episode_count} "
+                f"replan={self.replan_count} "
+                f"selected={int(noise_selected)} "
+                f"corrupted_actions_sha256={array_sha256(corrupted_actions[:n_exec])} "
+                f"target_residual_sha256={array_sha256(controlled_target_residual[:n_exec])} "
+                f"normalized_delta_max_abs={float(np.max(np.abs(epsilon[:n_exec]))):.8f}",
+                flush=True,
+            )
 
         capture_transition = self.save_imagination_transitions or bool(
             self.residual_outcome_confirmation_enabled
@@ -913,6 +978,10 @@ class WorldActionRobotWinPolicy:
                 "predicted_goal": predicted_frames[-1],
                 "start_proprio": state_vector.copy(),
                 "baseline_actions": baseline_actions[:n_exec].copy(),
+                "controlled_corrupted_actions": corrupted_actions[:n_exec].copy(),
+                "controlled_target_residual_actions": (
+                    controlled_target_residual[:n_exec].copy()
+                ),
                 "planned_actions": executed_actions[:n_exec].copy(),
                 "normalized_noise_direction": epsilon[:n_exec].copy(),
                 "action_corruption_mask": corruption_mask[:n_exec].copy(),
@@ -1011,9 +1080,17 @@ class WorldActionRobotWinPolicy:
             "action_mode": self.action_mode,
             "behavior_tag": mode_tag,
             "action_noise_std": (
-                self.action_noise_std if self.action_mode == "noise" else 0.0
+                self.action_noise_std
+                if self.action_mode
+                in {"noise", "controlled_corrupt", "controlled_correct"}
+                else 0.0
             ),
             "action_noise_seed": self.action_noise_seed,
+            "action_noise_replans": (
+                "all"
+                if self.action_noise_replans is None
+                else sorted(self.action_noise_replans)
+            ),
             "action_hold_probability": self.action_hold_probability,
             "action_hold_replans": (
                 "all"
@@ -1071,6 +1148,12 @@ class WorldActionRobotWinPolicy:
                 actual_observation["joint_action"]["vector"], dtype=np.float32
             ),
             "baseline_actions": transition["baseline_actions"][:effective_k],
+            "controlled_corrupted_actions": transition[
+                "controlled_corrupted_actions"
+            ][:effective_k],
+            "controlled_target_residual_actions": transition[
+                "controlled_target_residual_actions"
+            ][:effective_k],
             "planned_actions": transition["planned_actions"][:effective_k],
             "executed_actions": executed_actions,
             "normalized_noise_direction": transition["normalized_noise_direction"][:effective_k],
@@ -1488,6 +1571,22 @@ def get_model(usr_args: Dict[str, Any]):
     action_noise_seed = int(
         usr_args.get("action_noise_seed", cfg.EVALUATION.get("action_noise_seed", 0))
     )
+    action_noise_replans_value = usr_args.get(
+        "action_noise_replans",
+        cfg.EVALUATION.get("action_noise_replans", "all"),
+    )
+    if str(action_noise_replans_value).strip().lower() == "all":
+        action_noise_replans = None
+    else:
+        action_noise_replans = {
+            int(item.strip())
+            for item in str(action_noise_replans_value).split(",")
+            if item.strip()
+        }
+        if not action_noise_replans or min(action_noise_replans) < 0:
+            raise ValueError(
+                "action_noise_replans must be 'all' or non-negative CSV indices"
+            )
     action_hold_probability = float(
         usr_args.get(
             "action_hold_probability",
@@ -1612,6 +1711,7 @@ def get_model(usr_args: Dict[str, Any]):
         residual_language_instruction=residual_language_instruction,
         action_noise_std=action_noise_std,
         action_noise_seed=action_noise_seed,
+        action_noise_replans=action_noise_replans,
         action_hold_probability=action_hold_probability,
         action_hold_replans=action_hold_replans,
         gripper_close_delay_steps=gripper_close_delay_steps,

@@ -6,6 +6,7 @@ from PIL import Image
 from experiments.robotwin.analyze_imagination_rewards import discover_records
 from experiments.robotwin.imagination_reward_utils import (
     apply_action_chunk_hold,
+    apply_bounded_normalized_action_corruption,
     apply_first_gripper_close_delay,
     apply_normalized_action_noise,
     sample_composed_action_chunk_hold,
@@ -38,6 +39,22 @@ def test_shared_noise_seed_scales_same_direction_and_excludes_grippers():
     np.testing.assert_array_equal(mild_epsilon, strong_epsilon)
     np.testing.assert_allclose(strong, 3.0 * mild, atol=1e-6)
     np.testing.assert_array_equal(mild[:, [6, 13]], 0.0)
+
+
+def test_controlled_corruption_is_bounded_invertible_and_seeded():
+    baseline = np.linspace(-4.99, 4.99, 56, dtype=np.float32).reshape(4, 14)
+    first, delta = apply_bounded_normalized_action_corruption(
+        baseline, max_abs_delta=0.05, rng=np.random.default_rng(23)
+    )
+    second, second_delta = apply_bounded_normalized_action_corruption(
+        baseline, max_abs_delta=0.05, rng=np.random.default_rng(23)
+    )
+
+    np.testing.assert_array_equal(first, second)
+    np.testing.assert_array_equal(delta, second_delta)
+    np.testing.assert_allclose(first - delta, baseline, atol=1e-6)
+    assert float(np.max(np.abs(delta))) <= 0.05 + 1e-7
+    np.testing.assert_array_equal(delta[:, [6, 13]], 0.0)
 
 
 def test_action_chunk_hold_freezes_only_arm_targets():

@@ -427,6 +427,11 @@ def main(cfg: DictConfig):
     _append_override(overrides, "action_noise_seed", cfg.EVALUATION.action_noise_seed)
     _append_override(
         overrides,
+        "action_noise_replans",
+        cfg.EVALUATION.action_noise_replans,
+    )
+    _append_override(
+        overrides,
         "action_hold_probability",
         cfg.EVALUATION.action_hold_probability,
     )
@@ -517,6 +522,9 @@ def main(cfg: DictConfig):
             else str(cfg.EVALUATION.environment_seed_manifest_path)
         ),
         "action_mode": str(cfg.EVALUATION.action_mode),
+        "action_noise_std": float(cfg.EVALUATION.action_noise_std),
+        "action_noise_seed": int(cfg.EVALUATION.action_noise_seed),
+        "action_noise_replans": str(cfg.EVALUATION.action_noise_replans),
         "action_hold_probability": float(
             cfg.EVALUATION.action_hold_probability
         ),

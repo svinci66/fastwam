@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "description": "One accepted medium-difficulty seed/instruction pair for the controlled imagination-reward triplet smoke test.",
+    "source": "robotwin_imagination_medium_screen_5ep_20260825/screen_seed_instruction_manifest.json",
+    "task_config": "demo_clean"
+  },
+  "hanging_mug": {
+    "seeds": [4800003],
+    "instructions": [
+      "Grab the beige coffee mug, turn it, set it on the table, then hang it on the medium-sized rack."
+    ]
+  }
+}

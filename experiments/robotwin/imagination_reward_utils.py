@@ -79,6 +79,47 @@ def apply_normalized_action_noise(
     return perturbed.astype(np.float32, copy=False), epsilon
 
 
+def apply_bounded_normalized_action_corruption(
+    action: np.ndarray,
+    *,
+    max_abs_delta: float,
+    rng: np.random.Generator,
+    gripper_indices: tuple[int, ...] = ROBOTWIN_GRIPPER_INDICES,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Apply an auditable, bounded corruption in normalized action space.
+
+    Unlike Gaussian exploration noise, every non-gripper component is bounded
+    by ``max_abs_delta``.  The returned delta is the *actual* post-clipping
+    change, so its exact inverse can be used as a supervised residual target.
+    """
+
+    baseline = np.asarray(action, dtype=np.float32)
+    if baseline.ndim != 2:
+        raise ValueError(f"Expected normalized actions [T,D], got {baseline.shape}")
+    if not np.isfinite(max_abs_delta) or max_abs_delta < 0.0:
+        raise ValueError(
+            "max_abs_delta must be finite and non-negative, got "
+            f"{max_abs_delta}"
+        )
+    if any(index < 0 or index >= baseline.shape[1] for index in gripper_indices):
+        raise ValueError(
+            f"gripper indices {gripper_indices} are invalid for action dim "
+            f"{baseline.shape[1]}"
+        )
+
+    requested_delta = rng.uniform(
+        low=-float(max_abs_delta),
+        high=float(max_abs_delta),
+        size=baseline.shape,
+    ).astype(np.float32)
+    requested_delta[:, list(gripper_indices)] = 0.0
+    corrupted = np.clip(baseline + requested_delta, -5.0, 5.0).astype(
+        np.float32, copy=False
+    )
+    actual_delta = (corrupted - baseline).astype(np.float32, copy=False)
+    return corrupted, actual_delta
+
+
 def apply_action_chunk_hold(
     action: np.ndarray,
     *,

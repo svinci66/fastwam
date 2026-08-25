@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "description": "Five accepted baseline-success seed/instruction pairs for controlled RoboTwin imagination-reward validation.",
+    "source": "robotwin_imagination_medium_screen_5ep_20260825/screen_seed_instruction_manifest.json",
+    "task_config": "demo_clean"
+  },
+  "hanging_mug": {
+    "seeds": [4800003, 4800004, 4800005],
+    "instructions": [
+      "Grab the beige coffee mug, turn it, set it on the table, then hang it on the medium-sized rack.",
+      "Pick up the ceramic mug, rotate it, place it on the table, and hang it on the rack with straight and slanted rods.",
+      "Pick the matte black mug from the table, rotate it, place it in the middle, and hang it onto the medium-sized rack."
+    ]
+  },
+  "place_can_basket": {
+    "seeds": [4800001, 4800003],
+    "instructions": [
+      "Grab the red can with white top, drop it into the medium basket with smooth texture, lift the medium basket with smooth texture with another arm.",
+      "Grab the cylindrical can with bright colors and put it in the basket with rounded edges, then lift the basket with rounded edges."
+    ]
+  }
+}
