@@ -12,6 +12,7 @@ TASK="${TASK:-hanging_mug}"
 INTERVENTION_REPLAN="${INTERVENTION_REPLAN:-3}"
 MAX_ABS_DELTA="${MAX_ABS_DELTA:-0.05}"
 GPU_ID="${GPU_ID:-0}"
+ENVIRONMENT_START_SEED="${ENVIRONMENT_START_SEED:-4800003}"
 ARTIFACT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${RUN_NAME}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 
@@ -67,7 +68,8 @@ run_branch() {
     EVALUATION.action_noise_seed=20260825 \
     "EVALUATION.action_noise_replans=${INTERVENTION_REPLAN}" \
     EVALUATION.action_hold_probability=0.0 EVALUATION.gripper_close_delay_steps=0 \
-    EVALUATION.trial_offset=0 EVALUATION.environment_start_seed=4800003 \
+    EVALUATION.trial_offset=0 \
+    "EVALUATION.environment_start_seed=${ENVIRONMENT_START_SEED}" \
     "EVALUATION.environment_seed_manifest_path=${MANIFEST}" \
     EVALUATION.environment_episode_offset=0 \
     EVALUATION.deterministic_instruction_by_seed=true EVALUATION.expert_check=true \
