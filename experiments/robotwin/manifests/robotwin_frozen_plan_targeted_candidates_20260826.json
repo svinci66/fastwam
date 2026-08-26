@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "description": "Independent targeted candidates for clean prescreen and bounded frozen-plan pair discovery.",
+    "task_config": "demo_clean",
+    "num_inference_steps": 10,
+    "replan_steps": 24,
+    "max_abs_action_delta": 0.05,
+    "selection_rule": "Seeds come from prior baseline evidence only. Every seed must reproduce clean success under the current protocol before corruption screening; reward values are never used for selection."
+  },
+  "hanging_mug": {
+    "seeds": [
+      4800004,
+      4800009,
+      4800010,
+      4800012,
+      4800014,
+      4800017
+    ]
+  },
+  "place_can_basket": {
+    "seeds": [
+      4800001
+    ]
+  }
+}

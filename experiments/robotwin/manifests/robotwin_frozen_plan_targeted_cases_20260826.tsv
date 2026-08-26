@@ -1,0 +1,8 @@
+# task seed manifest_offset trial_offset replan_csv case_tag
+hanging_mug 4800004 0 0 2,3,9,10 hanging_target_seed4800004
+hanging_mug 4800009 1 1 2,3,9,10 hanging_target_seed4800009
+hanging_mug 4800010 2 2 2,3,9,10 hanging_target_seed4800010
+hanging_mug 4800012 3 3 2,3,9,10 hanging_target_seed4800012
+hanging_mug 4800014 4 4 2,3,9,10 hanging_target_seed4800014
+hanging_mug 4800017 5 5 2,3,9,10 hanging_target_seed4800017
+place_can_basket 4800001 0 0 5,2,8 place_target_seed4800001

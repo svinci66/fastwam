@@ -4,6 +4,9 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE_RUN_NAME="${BASE_RUN_NAME:-robotwin_frozen_plan_pair_discovery_long_20260825}"
 MANIFEST="${MANIFEST:-${PROJECT_ROOT}/experiments/robotwin/manifests/robotwin_frozen_plan_reward_expansion_20260825.json}"
+CASES_FILE="${CASES_FILE:-}"
+NOISE_SEEDS_CSV="${NOISE_SEEDS_CSV:-}"
+CLEAN_PRESCREEN="${CLEAN_PRESCREEN:-false}"
 RESULT_BASE="${PROJECT_ROOT}/evaluate_results/robotwin/robotwin_uncond_3cam_384"
 ARTIFACT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${BASE_RUN_NAME}"
 REVIEW_DIR="${ARTIFACT_DIR}/manual_review"
@@ -28,6 +31,16 @@ for value_name in JOB_COOLDOWN_SECONDS SEGMENT_SCREEN_RUNS \
     exit 64
   fi
 done
+if [[ "${CLEAN_PRESCREEN}" != true && "${CLEAN_PRESCREEN}" != false ]]; then
+  printf '[pair-discovery] CLEAN_PRESCREEN must be true or false, got %q\n' \
+    "${CLEAN_PRESCREEN}" >&2
+  exit 64
+fi
+if [[ -n "${CASES_FILE}" && ! -s "${CASES_FILE}" ]]; then
+  printf '[pair-discovery] CASES_FILE is missing or empty: %s\n' \
+    "${CASES_FILE}" >&2
+  exit 64
+fi
 
 # A second collector would double GPU load and can also corrupt the status file.
 # flock is automatically released after a process or machine restart.
@@ -42,6 +55,10 @@ STATUS_TSV="${ARTIFACT_DIR}/status.tsv"
 if [[ ! -f "${STATUS_TSV}" ]]; then
   printf 'timestamp\tcombo_key\ttask\tseed\treplan\tnoise_seed\tclean\tcorrupted\tcorrected\tdecision\treview_dir\n' \
     > "${STATUS_TSV}"
+fi
+PRESCREEN_TSV="${ARTIFACT_DIR}/clean_prescreen.tsv"
+if [[ ! -f "${PRESCREEN_TSV}" ]]; then
+  printf 'timestamp\tcase_tag\ttask\tseed\tclean\tdecision\n' > "${PRESCREEN_TSV}"
 fi
 
 TELEMETRY_CSV="${ARTIFACT_DIR}/gpu_telemetry.csv"
@@ -116,14 +133,35 @@ cases=(
   "hanging_mug 4800011 4 0 2,3,4,9,10 hanging_seed4800011"
   "hanging_mug 4800015 5 0 2,3,4,9,10 hanging_seed4800015"
 )
+if [[ -n "${CASES_FILE}" ]]; then
+  mapfile -t cases < <(
+    awk 'NF && $1 !~ /^#/ { print }' "${CASES_FILE}"
+  )
+  (( ${#cases[@]} > 0 )) || {
+    printf '[pair-discovery] CASES_FILE has no runnable cases: %s\n' \
+      "${CASES_FILE}" >&2
+    exit 64
+  }
+fi
 
 # These seeds define deterministic bounded joint-action perturbation directions.
 # They are discovery conditions, not an independently reported test set.
 noise_seeds=(20260826 20260827 20260828 20260829 20260830 20260831 20260832 20260833)
+if [[ -n "${NOISE_SEEDS_CSV}" ]]; then
+  IFS=',' read -r -a noise_seeds <<< "${NOISE_SEEDS_CSV}"
+  for noise_seed in "${noise_seeds[@]}"; do
+    [[ "${noise_seed}" =~ ^[0-9]+$ ]] || {
+      printf '[pair-discovery] invalid noise seed: %q\n' "${noise_seed}" >&2
+      exit 64
+    }
+  done
+fi
 
 declare -A done_combos=()
 declare -A accepted_cases=()
 declare -A invalid_cases=()
+declare -A prescreened_cases=()
+declare -A prescreen_invalid_cases=()
 while IFS=$'\t' read -r _timestamp combo_key _task _seed _replan _noise_seed \
   _clean _corrupt _correct decision _review_dir; do
   [[ "${combo_key}" == combo_key || -z "${combo_key}" ]] && continue
@@ -135,6 +173,14 @@ while IFS=$'\t' read -r _timestamp combo_key _task _seed _replan _noise_seed \
     invalid_cases["${case_tag}"]=1
   fi
 done < "${STATUS_TSV}"
+while IFS=$'\t' read -r _timestamp case_tag _task _seed _clean decision; do
+  [[ "${case_tag}" == case_tag || -z "${case_tag}" ]] && continue
+  if [[ "${decision}" == clean_prescreen_pass ]]; then
+    prescreened_cases["${case_tag}"]=1
+  else
+    prescreen_invalid_cases["${case_tag}"]=1
+  fi
+done < "${PRESCREEN_TSV}"
 
 record_status() {
   local combo_key="$1" task="$2" seed="$3" replan="$4" noise_seed="$5"
@@ -147,6 +193,19 @@ record_status() {
   # the branch that was in flight, never earlier completed combinations.
   sync -d "${STATUS_TSV}" 2>/dev/null || true
   done_combos["${combo_key}"]=1
+}
+
+record_prescreen() {
+  local case_tag="$1" task="$2" seed="$3" clean="$4" decision="$5"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date --iso-8601=seconds)" "${case_tag}" "${task}" "${seed}" \
+    "${clean}" "${decision}" >> "${PRESCREEN_TSV}"
+  sync -d "${PRESCREEN_TSV}" 2>/dev/null || true
+  if [[ "${decision}" == clean_prescreen_pass ]]; then
+    prescreened_cases["${case_tag}"]=1
+  else
+    prescreen_invalid_cases["${case_tag}"]=1
+  fi
 }
 
 result_value() {
@@ -202,6 +261,9 @@ strict_pairs="${#accepted_cases[@]}"
 screen_runs="${#done_combos[@]}"
 printf '[pair-discovery] resume strict_pairs=%s target=%s screen_runs=%s max=%s\n' \
   "${strict_pairs}" "${TARGET_STRICT_PAIRS}" "${screen_runs}" "${MAX_SCREEN_RUNS}"
+printf '[pair-discovery] search cases=%s noise_seeds=%s clean_prescreen=%s cases_file=%s\n' \
+  "${#cases[@]}" "${#noise_seeds[@]}" "${CLEAN_PRESCREEN}" \
+  "${CASES_FILE:-builtin}"
 
 stop_requested=false
 for noise_seed in "${noise_seeds[@]}"; do
@@ -210,6 +272,7 @@ for noise_seed in "${noise_seeds[@]}"; do
       read -r task seed episode_offset trial_offset replan_csv case_tag <<< "${case_spec}"
       [[ -n "${accepted_cases[${case_tag}]:-}" ]] && continue
       [[ -n "${invalid_cases[${case_tag}]:-}" ]] && continue
+      [[ -n "${prescreen_invalid_cases[${case_tag}]:-}" ]] && continue
       IFS=',' read -r -a replans <<< "${replan_csv}"
       (( stage_slot < ${#replans[@]} )) || continue
       replan="${replans[${stage_slot}]}"
@@ -226,6 +289,40 @@ for noise_seed in "${noise_seeds[@]}"; do
         stop_requested=true
         break 3
       fi
+
+      if [[ "${CLEAN_PRESCREEN}" == true \
+          && -z "${prescreened_cases[${case_tag}]:-}" ]]; then
+        prescreen_run_name="${BASE_RUN_NAME}_prescreen_${case_tag}"
+        printf '[pair-discovery] clean prescreen case=%s task=%s seed=%s\n' \
+          "${case_tag}" "${task}" "${seed}"
+        if ! run_branches "${prescreen_run_name}" "${task}" "${seed}" \
+          "${episode_offset}" "${trial_offset}" "${replan}" "${noise_seed}" \
+          clean false; then
+          case_log="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${prescreen_run_name}/driver.log"
+          if [[ -s "${case_log}" ]] && rg -q \
+            'Strict environment seed .* (is not expert-feasible|failed expert validation|became unstable)' \
+            "${case_log}"; then
+            record_prescreen "${case_tag}" "${task}" "${seed}" not_run \
+              clean_prescreen_strict_seed_rejected
+            continue
+          fi
+          printf '[pair-discovery] fatal clean prescreen error case=%s\n' \
+            "${case_tag}" >&2
+          exit 70
+        fi
+        prescreen_result="$(result_value "${prescreen_run_name}" clean "${task}")"
+        if ! is_success "${prescreen_result}"; then
+          record_prescreen "${case_tag}" "${task}" "${seed}" \
+            "${prescreen_result}" clean_prescreen_failed
+          printf '[pair-discovery] reject case=%s reason=clean_prescreen_failed\n' \
+            "${case_tag}"
+          continue
+        fi
+        record_prescreen "${case_tag}" "${task}" "${seed}" \
+          "${prescreen_result}" clean_prescreen_pass
+        printf '[pair-discovery] clean prescreen pass case=%s\n' "${case_tag}"
+      fi
+
       free_gb="$(df -BG --output=avail "${PROJECT_ROOT}" | tail -n 1 | tr -dc '0-9')"
       if [[ -z "${free_gb}" ]] || (( free_gb < MIN_FREE_GB )); then
         printf '[pair-discovery] storage stop free_gb=%s min_free_gb=%s\n' \
