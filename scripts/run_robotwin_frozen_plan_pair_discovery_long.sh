@@ -19,6 +19,7 @@ JOB_COOLDOWN_SECONDS="${JOB_COOLDOWN_SECONDS:-30}"
 SEGMENT_SCREEN_RUNS="${SEGMENT_SCREEN_RUNS:-4}"
 SEGMENT_COOLDOWN_SECONDS="${SEGMENT_COOLDOWN_SECONDS:-120}"
 GPU_TELEMETRY_INTERVAL_SECONDS="${GPU_TELEMETRY_INTERVAL_SECONDS:-2}"
+STRICT_BRANCH_RETRIES="${STRICT_BRANCH_RETRIES:-1}"
 mkdir -p "${ARTIFACT_DIR}" "${REVIEW_DIR}"
 exec > >(tee -a "${ARTIFACT_DIR}/driver.log") 2>&1
 
@@ -241,6 +242,35 @@ run_branches() {
   return "${rc}"
 }
 
+LAST_BRANCH_STRICT_ERROR=0
+run_branches_with_strict_retry() {
+  local run_name="$1" task="$2" seed="$3" episode_offset="$4"
+  local trial_offset="$5" replan="$6" noise_seed="$7" branches="$8" audit="$9"
+  local retry=0 rc=0 log_start=0
+  local case_log="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${run_name}/driver.log"
+  while true; do
+    log_start=0
+    [[ -f "${case_log}" ]] && log_start="$(wc -l < "${case_log}")"
+    LAST_BRANCH_STRICT_ERROR=0
+    if run_branches "${run_name}" "${task}" "${seed}" "${episode_offset}" \
+      "${trial_offset}" "${replan}" "${noise_seed}" "${branches}" "${audit}"; then
+      return 0
+    else
+      rc=$?
+    fi
+    if [[ -s "${case_log}" ]] && tail -n "+$((log_start + 1))" "${case_log}" | rg -q \
+      'Strict environment seed .* (is not expert-feasible|failed expert validation|became unstable)'; then
+      LAST_BRANCH_STRICT_ERROR=1
+    fi
+    if (( LAST_BRANCH_STRICT_ERROR == 0 || retry >= STRICT_BRANCH_RETRIES )); then
+      return "${rc}"
+    fi
+    retry=$((retry + 1))
+    printf '[pair-discovery] transient strict-seed rejection branch=%s retry=%s/%s combo_run=%s\n' \
+      "${branches}" "${retry}" "${STRICT_BRANCH_RETRIES}" "${run_name}"
+  done
+}
+
 new_screen_runs=0
 last_segment_pause_at=-1
 maybe_segment_cooldown() {
@@ -295,13 +325,10 @@ for noise_seed in "${noise_seeds[@]}"; do
         prescreen_run_name="${BASE_RUN_NAME}_prescreen_${case_tag}"
         printf '[pair-discovery] clean prescreen case=%s task=%s seed=%s\n' \
           "${case_tag}" "${task}" "${seed}"
-        if ! run_branches "${prescreen_run_name}" "${task}" "${seed}" \
+        if ! run_branches_with_strict_retry "${prescreen_run_name}" "${task}" "${seed}" \
           "${episode_offset}" "${trial_offset}" "${replan}" "${noise_seed}" \
           clean false; then
-          case_log="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${prescreen_run_name}/driver.log"
-          if [[ -s "${case_log}" ]] && rg -q \
-            'Strict environment seed .* (is not expert-feasible|failed expert validation|became unstable)' \
-            "${case_log}"; then
+          if (( LAST_BRANCH_STRICT_ERROR == 1 )); then
             record_prescreen "${case_tag}" "${task}" "${seed}" not_run \
               clean_prescreen_strict_seed_rejected
             continue
@@ -336,12 +363,9 @@ for noise_seed in "${noise_seeds[@]}"; do
       run_name="${BASE_RUN_NAME}_${combo_key}"
       printf '[pair-discovery] screen %s/%s combo=%s free_gb=%s\n' \
         "${screen_runs}" "${MAX_SCREEN_RUNS}" "${combo_key}" "${free_gb}"
-      if ! run_branches "${run_name}" "${task}" "${seed}" "${episode_offset}" \
+      if ! run_branches_with_strict_retry "${run_name}" "${task}" "${seed}" "${episode_offset}" \
         "${trial_offset}" "${replan}" "${noise_seed}" corrupted false; then
-        case_log="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${run_name}/driver.log"
-        if [[ -s "${case_log}" ]] && rg -q \
-          'Strict environment seed .* (is not expert-feasible|failed expert validation|became unstable)' \
-          "${case_log}"; then
+        if (( LAST_BRANCH_STRICT_ERROR == 1 )); then
           record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
             "${noise_seed}" not_run not_run not_run strict_seed_rejected ''
           invalid_cases["${case_tag}"]=1
@@ -361,8 +385,20 @@ for noise_seed in "${noise_seeds[@]}"; do
       fi
 
       printf '[pair-discovery] corrupt failed; confirm strict triplet combo=%s\n' "${combo_key}"
-      run_branches "${run_name}" "${task}" "${seed}" "${episode_offset}" \
-        "${trial_offset}" "${replan}" "${noise_seed}" clean false
+      if ! run_branches_with_strict_retry "${run_name}" "${task}" "${seed}" \
+        "${episode_offset}" "${trial_offset}" "${replan}" "${noise_seed}" \
+        clean false; then
+        if (( LAST_BRANCH_STRICT_ERROR == 1 )); then
+          record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
+            "${noise_seed}" not_run "${corrupt_result}" not_run strict_seed_unstable_clean ''
+          invalid_cases["${case_tag}"]=1
+          maybe_segment_cooldown
+          continue
+        fi
+        printf '[pair-discovery] fatal clean confirmation error combo=%s\n' \
+          "${combo_key}" >&2
+        exit 70
+      fi
       clean_result="$(result_value "${run_name}" clean "${task}")"
       if ! is_success "${clean_result}"; then
         record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
@@ -372,8 +408,21 @@ for noise_seed in "${noise_seeds[@]}"; do
         continue
       fi
 
-      run_branches "${run_name}" "${task}" "${seed}" "${episode_offset}" \
-        "${trial_offset}" "${replan}" "${noise_seed}" corrected false
+      if ! run_branches_with_strict_retry "${run_name}" "${task}" "${seed}" \
+        "${episode_offset}" "${trial_offset}" "${replan}" "${noise_seed}" \
+        corrected false; then
+        if (( LAST_BRANCH_STRICT_ERROR == 1 )); then
+          record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
+            "${noise_seed}" "${clean_result}" "${corrupt_result}" not_run \
+            strict_seed_unstable_corrected ''
+          invalid_cases["${case_tag}"]=1
+          maybe_segment_cooldown
+          continue
+        fi
+        printf '[pair-discovery] fatal corrected confirmation error combo=%s\n' \
+          "${combo_key}" >&2
+        exit 70
+      fi
       correct_result="$(result_value "${run_name}" corrected "${task}")"
       if ! is_success "${correct_result}"; then
         record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
@@ -382,8 +431,21 @@ for noise_seed in "${noise_seeds[@]}"; do
         continue
       fi
 
-      run_branches "${run_name}" "${task}" "${seed}" "${episode_offset}" \
-        "${trial_offset}" "${replan}" "${noise_seed}" clean,corrupted,corrected true
+      if ! run_branches_with_strict_retry "${run_name}" "${task}" "${seed}" \
+        "${episode_offset}" "${trial_offset}" "${replan}" "${noise_seed}" \
+        clean,corrupted,corrected true; then
+        if (( LAST_BRANCH_STRICT_ERROR == 1 )); then
+          record_status "${combo_key}" "${task}" "${seed}" "${replan}" \
+            "${noise_seed}" "${clean_result}" "${corrupt_result}" "${correct_result}" \
+            strict_seed_unstable_audit ''
+          invalid_cases["${case_tag}"]=1
+          maybe_segment_cooldown
+          continue
+        fi
+        printf '[pair-discovery] fatal triplet audit error combo=%s\n' \
+          "${combo_key}" >&2
+        exit 70
+      fi
 
       review_name="$(printf 'candidate_%02d_%s' "$((strict_pairs + 1))" "${combo_key}")"
       review_path="${REVIEW_DIR}/${review_name}"
