@@ -1,0 +1,38 @@
+{
+  "_meta": {
+    "description": "Fresh independent seeds for strict clean prescreen and targeted frozen-plan pair discovery.",
+    "task_config": "demo_clean",
+    "num_inference_steps": 10,
+    "replan_steps": 24,
+    "max_abs_action_delta": 0.05,
+    "selection_rule": "Contiguous fresh seeds were registered before clean or reward evaluation. Every seed must reproduce clean success under the current protocol before corruption screening."
+  },
+  "hanging_mug": {
+    "seeds": [
+      4800018,
+      4800019,
+      4800020,
+      4800021,
+      4800022,
+      4800023,
+      4800024,
+      4800025,
+      4800026,
+      4800027
+    ]
+  },
+  "place_can_basket": {
+    "seeds": [
+      4800018,
+      4800019,
+      4800020,
+      4800021,
+      4800022,
+      4800023,
+      4800024,
+      4800025,
+      4800026,
+      4800027
+    ]
+  }
+}

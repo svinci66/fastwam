@@ -1,0 +1,21 @@
+# task seed manifest_offset trial_offset replan_csv case_tag
+hanging_mug 4800018 0 0 2,3,9,10 hanging_fresh_seed4800018
+hanging_mug 4800019 1 1 2,3,9,10 hanging_fresh_seed4800019
+hanging_mug 4800020 2 2 2,3,9,10 hanging_fresh_seed4800020
+hanging_mug 4800021 3 3 2,3,9,10 hanging_fresh_seed4800021
+hanging_mug 4800022 4 4 2,3,9,10 hanging_fresh_seed4800022
+hanging_mug 4800023 5 5 2,3,9,10 hanging_fresh_seed4800023
+hanging_mug 4800024 6 6 2,3,9,10 hanging_fresh_seed4800024
+hanging_mug 4800025 7 7 2,3,9,10 hanging_fresh_seed4800025
+hanging_mug 4800026 8 8 2,3,9,10 hanging_fresh_seed4800026
+hanging_mug 4800027 9 9 2,3,9,10 hanging_fresh_seed4800027
+place_can_basket 4800018 0 0 5,2,8 place_fresh_seed4800018
+place_can_basket 4800019 1 1 5,2,8 place_fresh_seed4800019
+place_can_basket 4800020 2 2 5,2,8 place_fresh_seed4800020
+place_can_basket 4800021 3 3 5,2,8 place_fresh_seed4800021
+place_can_basket 4800022 4 4 5,2,8 place_fresh_seed4800022
+place_can_basket 4800023 5 5 5,2,8 place_fresh_seed4800023
+place_can_basket 4800024 6 6 5,2,8 place_fresh_seed4800024
+place_can_basket 4800025 7 7 5,2,8 place_fresh_seed4800025
+place_can_basket 4800026 8 8 5,2,8 place_fresh_seed4800026
+place_can_basket 4800027 9 9 5,2,8 place_fresh_seed4800027
