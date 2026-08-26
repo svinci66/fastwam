@@ -14,6 +14,7 @@ def eval_policy():
     with open(config_path) as f:
         args = yaml.load(f)
     args['task_name'] = task_name
+                    f"{TASK_ENV.eval_video_path}/episode{TASK_ENV.test_num}.mp4",
     save_dir = Path(f"eval_result/{task_name}/{policy_name}/{task_config}/{ckpt_setting}/{current_time}")
     save_dir.mkdir(parents=True, exist_ok=True)
     expert_check = True
@@ -45,6 +46,7 @@ def eval_policy():
     assert 'usr_args.get("expert_check", True)' in patched
     assert 'usr_args.get("eval_video_log")' in patched
     assert 'args["eval_video_log"] = bool(eval_video_log)' in patched
+    assert 'f"{TASK_ENV.eval_video_path}/episode{now_id}.mp4"' in patched
     assert 'usr_args.get("eval_output_dir")' in patched
     assert 'Path(str(requested_save_dir)).expanduser().resolve()' in patched
     assert "FASTWAM_ACCEPTED_ENV_SEED" in patched

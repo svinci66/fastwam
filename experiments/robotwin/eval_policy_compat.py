@@ -17,6 +17,8 @@ patches narrowly scoped source fragments before executing the evaluator:
   including RoboTwin's internal Python-random shuffling and object aliases.
 * optionally disable upstream per-step video encoding for metric-only runs.
 * redirect evaluator results and rollout videos to the caller-owned run folder.
+* keep rollout video ids aligned with the environment offset across segmented
+  runs, so renderer processes can be restarted without overwriting episodes.
 
 The exact-fragment checks intentionally fail when upstream changes, rather than
 silently applying an incompatible patch.
@@ -55,6 +57,12 @@ def patch_eval_policy_source(source: str) -> str:
         '        args["eval_video_log"] = bool(eval_video_log)\n'
         '    args[\'task_name\'] = task_name\n',
         label="eval-video-override",
+    )
+    source = _replace_once(
+        source,
+        '                    f"{TASK_ENV.eval_video_path}/episode{TASK_ENV.test_num}.mp4",\n',
+        '                    f"{TASK_ENV.eval_video_path}/episode{now_id}.mp4",\n',
+        label="offset-aware-video-name",
     )
     source = _replace_once(
         source,

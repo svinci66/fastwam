@@ -29,7 +29,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_eval_log(path: Path) -> list[dict[str, Any]]:
+def parse_eval_log(
+    path: Path, *, allow_trailing_incomplete: bool = False
+) -> list[dict[str, Any]]:
     accepted: list[tuple[int, int]] = []
     outcomes: list[bool] = []
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -41,6 +43,8 @@ def parse_eval_log(path: Path) -> list[dict[str, Any]]:
         match = OUTCOME_RE.fullmatch(line)
         if match:
             outcomes.append(match.group(1) == "Success")
+    if allow_trailing_incomplete and len(accepted) == len(outcomes) + 1:
+        accepted = accepted[:-1]
     if len(accepted) != len(outcomes):
         raise ValueError(
             f"{path}: accepted seeds={len(accepted)} but outcomes={len(outcomes)}"
@@ -91,13 +95,19 @@ def export_expert_video(hdf5_path: Path, output_path: Path, fps: float) -> None:
     os.replace(temporary, output_path)
 
 
-def latest_complete_log(run_dir: Path, task: str) -> Path:
+def collect_task_results(run_dir: Path, task: str) -> list[dict[str, Any]]:
     logs = sorted(run_dir.glob(f"eval_{task}_*.log"))
-    for path in reversed(logs):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if "Success rate:" in text:
-            return path
-    raise FileNotFoundError(f"no complete evaluation log for {task} under {run_dir}")
+    if not logs:
+        raise FileNotFoundError(f"no evaluation log for {task} under {run_dir}")
+    by_episode: dict[int, dict[str, Any]] = {}
+    for path in logs:
+        for result in parse_eval_log(path, allow_trailing_incomplete=True):
+            episode_id = int(result["evaluation_episode_id"])
+            by_episode[episode_id] = {
+                **result,
+                "eval_log": str(path.resolve()),
+            }
+    return [by_episode[key] for key in sorted(by_episode)]
 
 
 def main() -> None:
@@ -113,8 +123,14 @@ def main() -> None:
     }
     rows: list[dict[str, Any]] = []
     for task in tasks:
-        log_path = latest_complete_log(args.run_dir, task)
-        for result in parse_eval_log(log_path):
+        expected_cases = [case for case in cases if str(case["task"]) == task]
+        results = collect_task_results(args.run_dir, task)
+        if len(results) != len(expected_cases):
+            raise ValueError(
+                f"{task}: expected {len(expected_cases)} completed episodes, "
+                f"found {len(results)}"
+            )
+        for result in results:
             key = (task, int(result["environment_seed"]))
             if key not in case_by_key:
                 raise KeyError(f"evaluation result has no expert source case: {key}")
@@ -126,7 +142,6 @@ def main() -> None:
             row = {
                 **case,
                 **result,
-                "eval_log": str(log_path.resolve()),
                 "fastwam_video": str(policy_video.resolve()),
                 "decision": "fastwam_success" if result["success"] else "natural_failure",
             }
