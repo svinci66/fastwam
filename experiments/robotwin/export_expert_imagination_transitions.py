@@ -49,6 +49,7 @@ DEFAULT_INSTRUCTIONS = {
         "Move the red and green blocks to the center and stack the green block "
         "on the red block."
     ),
+    "turn_switch": "Use one arm to push the switch.",
 }
 
 
