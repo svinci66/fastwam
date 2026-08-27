@@ -17,10 +17,12 @@ import numpy as np
 
 
 GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE = "delta_alignment_global_camera_norm_v1"
+WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE = "wan_vae_head_trajectory_global_norm_v1"
 IMAGINATION_REWARD_TYPES = (
     "progress_v1",
     "delta_alignment_v1",
     GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
+    WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE,
 )
 
 
@@ -201,6 +203,12 @@ def compute_imagination_reward(
         raise ValueError(
             f"unsupported imagination reward type {reward_type!r}; "
             f"expected one of {IMAGINATION_REWARD_TYPES}"
+        )
+    if reward_type == WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE:
+        raise ValueError(
+            f"{WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE} is a precomputed trajectory "
+            "reward label; build it with build_wan_vae_head_awr_replay.py instead "
+            "of recomputing it from three endpoint feature dictionaries"
         )
     if reward_type == "progress_v1":
         if camera_normalization is not None:

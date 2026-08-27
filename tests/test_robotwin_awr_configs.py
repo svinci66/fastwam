@@ -37,3 +37,15 @@ def test_robotwin_awr_has_no_q_or_online_gate_configuration():
     assert scales[6] == scales[13] == 0.0
     assert max(scales) == 0.05
     assert config["model"]["zero_init_output"] is True
+
+
+def test_wan_head_awr_smoke_configs_are_a_strict_imagination_ablation():
+    control = load_config("robotwin_residual_awr_wan_head_no_imagination_smoke.yaml")
+    treatment = load_config("robotwin_residual_awr_wan_head_with_imagination_smoke.yaml")
+    assert differing_paths(control, treatment) == ALLOWED_CONFIG_DIFFERENCES
+    assert control["reward"]["imagination_weight"] == 0.0
+    assert treatment["reward"]["imagination_weight"] == 1.0
+    assert treatment["reward"]["imagination_reward_type"] == (
+        "wan_vae_head_trajectory_global_norm_v1"
+    )
+    assert treatment["awr"]["epochs"] == 3
