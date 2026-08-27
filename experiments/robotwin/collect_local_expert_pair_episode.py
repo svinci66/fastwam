@@ -247,9 +247,11 @@ def main() -> None:
         episode_info = task_env.play_once()
         planning_success = bool(task_env.plan_success and task_env.check_success())
         if not planning_success:
-            raise RuntimeError(
-                f"expert planning failed task={args.task} seed={args.seed}"
+            print(
+                f"EXPERT_PLANNING_INFEASIBLE task={args.task} seed={args.seed}",
+                flush=True,
             )
+            raise SystemExit(20)
         task_env.save_traj_data(args.episode_index)
         trajectory = {
             "left_joint_path": deepcopy(task_env.left_joint_path),
@@ -278,15 +280,22 @@ def main() -> None:
     )
     if not state_comparison["exact"]:
         close_safely(task_env)
-        raise RuntimeError(f"planning/replay scene mismatch: {state_comparison}")
+        print(
+            f"STRICT_SCENE_MISMATCH task={args.task} seed={args.seed} "
+            f"comparison={json.dumps(state_comparison, sort_keys=True)}",
+            flush=True,
+        )
+        raise SystemExit(22)
     task_env.set_path_lst(replay_config)
     try:
         replay_info = task_env.play_once()
         replay_success = bool(task_env.plan_success and task_env.check_success())
         if not replay_success:
-            raise RuntimeError(
-                f"expert replay failed task={args.task} seed={args.seed}"
+            print(
+                f"EXPERT_REPLAY_INFEASIBLE task={args.task} seed={args.seed}",
+                flush=True,
             )
+            raise SystemExit(21)
     finally:
         close_safely(task_env)
     task_env.merge_pkl_to_hdf5_video()

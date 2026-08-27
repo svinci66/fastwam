@@ -9,8 +9,9 @@ DATASET_STATS="${DATASET_STATS:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_rele
 RUN_NAME="${RUN_NAME:-robotwin_local_expert_pair_smoke_2task3ep_20260827}"
 GPU_ID="${GPU_ID:-0}"
 TASKS_CSV="${TASKS:-hanging_mug,place_can_basket}"
-HANGING_MUG_SEEDS="${HANGING_MUG_SEEDS:-0,2,3}"
-PLACE_CAN_BASKET_SEEDS="${PLACE_CAN_BASKET_SEEDS:-0,1,2}"
+EPISODES_PER_TASK="${EPISODES_PER_TASK:-3}"
+START_CANDIDATE_SEED="${START_CANDIDATE_SEED:-0}"
+MAX_CANDIDATE_SEED="${MAX_CANDIDATE_SEED:-50}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-30}"
 
 ARTIFACT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${RUN_NAME}"
@@ -26,6 +27,11 @@ for path in "${CHECKPOINT}" "${DATASET_STATS}"; do
 done
 [[ -d "${ROBOTWIN_ROOT}" ]] || { printf 'Missing RoboTwin root: %s\n' "${ROBOTWIN_ROOT}" >&2; exit 1; }
 [[ "${COOLDOWN_SECONDS}" =~ ^[0-9]+$ ]] || { printf 'COOLDOWN_SECONDS must be non-negative\n' >&2; exit 1; }
+[[ "${EPISODES_PER_TASK}" =~ ^[1-9][0-9]*$ ]] || { printf 'EPISODES_PER_TASK must be positive\n' >&2; exit 1; }
+[[ "${START_CANDIDATE_SEED}" =~ ^[0-9]+$ ]] || { printf 'START_CANDIDATE_SEED must be non-negative\n' >&2; exit 1; }
+[[ "${MAX_CANDIDATE_SEED}" =~ ^[0-9]+$ && "${MAX_CANDIDATE_SEED}" -ge "${START_CANDIDATE_SEED}" ]] || {
+  printf 'MAX_CANDIDATE_SEED must be >= START_CANDIDATE_SEED\n' >&2; exit 1;
+}
 
 mkdir -p "${ARTIFACT_DIR}" "${ONLINE_DIR}"
 exec 9>"${LOCK_FILE}"
@@ -35,14 +41,6 @@ if ! flock -n 9; then
 fi
 exec > >(tee -a "${ARTIFACT_DIR}/driver.log") 2>&1
 
-seed_csv_for_task() {
-  case "$1" in
-    hanging_mug) printf '%s' "${HANGING_MUG_SEEDS}" ;;
-    place_can_basket) printf '%s' "${PLACE_CAN_BASKET_SEEDS}" ;;
-    *) printf 'No seed list configured for task %s\n' "$1" >&2; return 1 ;;
-  esac
-}
-
 valid_video() {
   local video="$1" duration
   [[ -s "${video}" ]] || return 1
@@ -51,66 +49,87 @@ valid_video() {
   awk -v duration="${duration}" 'BEGIN { exit !(duration > 0) }'
 }
 
+metadata_seed() {
+  conda run --no-capture-output -n "${CONDA_ENV}" \
+    python -c 'import json, sys; print(int(json.load(open(sys.argv[1], encoding="utf-8"))["seed"]))' "$1"
+}
+
 IFS=',' read -r -a tasks <<< "${TASKS_CSV}"
-episode_count=""
 for task in "${tasks[@]}"; do
   task="$(printf '%s' "${task}" | xargs)"
   [[ -n "${task}" ]] || continue
   bundle="${LOCAL_SOURCE_ROOT}/${task}/local_current_clean"
   mkdir -p "${bundle}"
-  seed_csv="$(seed_csv_for_task "${task}")"
-  IFS=',' read -r -a seeds <<< "${seed_csv}"
-  if [[ -z "${episode_count}" ]]; then
-    episode_count="${#seeds[@]}"
-  elif [[ "${episode_count}" -ne "${#seeds[@]}" ]]; then
-    printf 'All tasks must use the same episode count\n' >&2
-    exit 1
-  fi
+  selected_seeds=()
+  next_seed="${START_CANDIDATE_SEED}"
   seed_file_text=""
-  for episode in "${!seeds[@]}"; do
-    seed="$(printf '%s' "${seeds[$episode]}" | xargs)"
-    [[ "${seed}" =~ ^[0-9]+$ ]] || { printf 'Invalid seed: %s\n' "${seed}" >&2; exit 1; }
-    seed_file_text+="${seed} "
+  for (( episode=0; episode<EPISODES_PER_TASK; episode++ )); do
     marker="${ARTIFACT_DIR}/.${task}_expert_episode$(printf '%03d' "${episode}")_complete"
     metadata="${bundle}/pair_metadata/episode${episode}.json"
     expert_hdf5="${bundle}/data/episode${episode}.hdf5"
     expert_video="${bundle}/video/episode${episode}.mp4"
     if [[ -f "${marker}" && -s "${metadata}" && -s "${expert_hdf5}" ]] && valid_video "${expert_video}"; then
+      seed="$(metadata_seed "${metadata}")"
       printf '[local-pair] skip expert task=%s episode=%s seed=%s\n' "${task}" "${episode}" "${seed}"
-      continue
+    else
+      seed="${next_seed}"
+      collected=false
+      while (( seed <= MAX_CANDIDATE_SEED )); do
+        printf '[local-pair] collect expert task=%s episode=%s candidate_seed=%s\n' "${task}" "${episode}" "${seed}"
+        if conda run --no-capture-output -n "${CONDA_ENV}" \
+          env CUDA_VISIBLE_DEVICES="${GPU_ID}" PYTHONUNBUFFERED=1 \
+          python -u "${PROJECT_ROOT}/experiments/robotwin/collect_local_expert_pair_episode.py" \
+          --robotwin-root "${ROBOTWIN_ROOT}" --task "${task}" --task-config demo_clean \
+          --seed "${seed}" --episode-index "${episode}" --output-bundle "${bundle}"; then
+          collected=true
+          break
+        else
+          status="$?"
+          if [[ "${status}" -eq 20 || "${status}" -eq 21 ]]; then
+            printf '[local-pair] skip infeasible expert task=%s candidate_seed=%s status=%s\n' \
+              "${task}" "${seed}" "${status}"
+            seed="$(( seed + 1 ))"
+            continue
+          fi
+          printf '[local-pair] fatal expert collection error task=%s seed=%s status=%s\n' \
+            "${task}" "${seed}" "${status}" >&2
+          exit "${status}"
+        fi
+      done
+      if [[ "${collected}" != true ]]; then
+        printf '[local-pair] could not find %s feasible expert episodes for task=%s by seed=%s\n' \
+          "${EPISODES_PER_TASK}" "${task}" "${MAX_CANDIDATE_SEED}" >&2
+        exit 1
+      fi
+      [[ -s "${metadata}" && -s "${expert_hdf5}" ]] || {
+        printf '[local-pair] missing expert artifact task=%s episode=%s\n' "${task}" "${episode}" >&2
+        exit 1
+      }
+      valid_video "${expert_video}" || {
+        printf '[local-pair] invalid expert video task=%s episode=%s\n' "${task}" "${episode}" >&2
+        exit 1
+      }
+      touch "${marker}"
+      sync -d "${marker}" 2>/dev/null || true
+      if (( COOLDOWN_SECONDS > 0 )); then sleep "${COOLDOWN_SECONDS}"; fi
     fi
-    printf '[local-pair] collect expert task=%s episode=%s seed=%s\n' "${task}" "${episode}" "${seed}"
-    conda run --no-capture-output -n "${CONDA_ENV}" \
-      env CUDA_VISIBLE_DEVICES="${GPU_ID}" PYTHONUNBUFFERED=1 \
-      python -u "${PROJECT_ROOT}/experiments/robotwin/collect_local_expert_pair_episode.py" \
-      --robotwin-root "${ROBOTWIN_ROOT}" --task "${task}" --task-config demo_clean \
-      --seed "${seed}" --episode-index "${episode}" --output-bundle "${bundle}"
-    [[ -s "${metadata}" && -s "${expert_hdf5}" ]] || {
-      printf '[local-pair] missing expert artifact task=%s episode=%s\n' "${task}" "${episode}" >&2
-      exit 1
-    }
-    valid_video "${expert_video}" || {
-      printf '[local-pair] invalid expert video task=%s episode=%s\n' "${task}" "${episode}" >&2
-      exit 1
-    }
-    touch "${marker}"
-    sync -d "${marker}" 2>/dev/null || true
-    if (( COOLDOWN_SECONDS > 0 )); then sleep "${COOLDOWN_SECONDS}"; fi
+    selected_seeds+=("${seed}")
+    seed_file_text+="${seed} "
+    next_seed="$(( seed + 1 ))"
   done
   printf '%s\n' "${seed_file_text}" > "${bundle}/seed.txt"
 done
 
-[[ -n "${episode_count}" && "${episode_count}" -gt 0 ]] || { printf 'No episodes configured\n' >&2; exit 1; }
 conda run --no-capture-output -n "${CONDA_ENV}" python -u \
   "${PROJECT_ROOT}/experiments/robotwin/prepare_natural_failure_screen.py" \
   --dataset-root "${LOCAL_SOURCE_ROOT}" --tasks "${TASKS_CSV}" \
-  --episodes-per-task "${episode_count}" --manifest "${MANIFEST}" \
+  --episodes-per-task "${EPISODES_PER_TASK}" --manifest "${MANIFEST}" \
   --cases-jsonl "${CASES_JSONL}"
 
 for task in "${tasks[@]}"; do
   task="$(printf '%s' "${task}" | xargs)"
   [[ -n "${task}" ]] || continue
-  for (( episode=0; episode<episode_count; episode++ )); do
+  for (( episode=0; episode<EPISODES_PER_TASK; episode++ )); do
     marker="${ARTIFACT_DIR}/.${task}_fastwam_episode$(printf '%03d' "${episode}")_complete"
     policy_video="${RUN_DIR}/${task}/episode${episode}.mp4"
     policy_current="${RUN_DIR}/${task}/imagination_transitions/${task}/policy/episode_$(printf '%04d' "${episode}")/replan_0000/current.png"
@@ -118,7 +137,7 @@ for task in "${tasks[@]}"; do
       printf '[local-pair] skip FastWAM task=%s episode=%s\n' "${task}" "${episode}"
       continue
     fi
-    printf '[local-pair] evaluate FastWAM task=%s episode=%s expert_check=true\n' "${task}" "${episode}"
+    printf '[local-pair] evaluate FastWAM task=%s episode=%s local_expert_verified=true\n' "${task}" "${episode}"
     conda run --no-capture-output -n "${CONDA_ENV}" \
       env CUBLAS_WORKSPACE_CONFIG=:4096:8 \
       PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" \
@@ -137,7 +156,7 @@ for task in "${tasks[@]}"; do
       EVALUATION.action_hold_probability=0.0 EVALUATION.gripper_close_delay_steps=0 \
       EVALUATION.environment_start_seed=0 "EVALUATION.environment_episode_offset=${episode}" \
       "EVALUATION.environment_seed_manifest_path=${MANIFEST}" \
-      EVALUATION.deterministic_instruction_by_seed=true EVALUATION.expert_check=true \
+      EVALUATION.deterministic_instruction_by_seed=true EVALUATION.expert_check=false \
       EVALUATION.fixed_instruction=null EVALUATION.paper_aligned=false \
       EVALUATION.strict_paired=false EVALUATION.save_imagination_transitions=true \
       EVALUATION.deterministic_algorithms=true EVALUATION.deterministic_warn_only=false \
