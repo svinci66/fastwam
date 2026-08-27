@@ -2,6 +2,7 @@ import numpy as np
 
 from experiments.robotwin.collect_local_expert_pair_episode import (
     compare_scene_states,
+    is_infeasible_planning_exception,
     task_selectors,
 )
 from experiments.robotwin.validate_local_expert_fastwam_pairs import comparison_metrics
@@ -54,3 +55,12 @@ def test_scene_state_comparison_accepts_tiny_pose_noise() -> None:
 def test_visual_comparison_is_zero_for_identical_images() -> None:
     image = np.zeros((32, 32, 3), dtype=np.uint8)
     assert comparison_metrics(image, image)["blurred_mean_abs"] == 0.0
+
+
+def test_missing_grasp_target_is_a_skippable_planning_failure() -> None:
+    error = AssertionError("target_pose cannot be None for move action.")
+    assert is_infeasible_planning_exception(error)
+
+
+def test_unexpected_assertion_remains_fatal() -> None:
+    assert not is_infeasible_planning_exception(AssertionError("unexpected bug"))

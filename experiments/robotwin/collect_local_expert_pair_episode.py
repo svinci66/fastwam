@@ -18,6 +18,14 @@ import yaml
 
 
 CAMERAS = ("head_camera", "left_camera", "right_camera")
+INFEASIBLE_PLANNING_ASSERTIONS = {
+    "target_pose cannot be None for move action.",
+}
+
+
+def is_infeasible_planning_exception(error: BaseException) -> bool:
+    """Return whether RoboTwin rejected this sampled scene as unplannable."""
+    return isinstance(error, AssertionError) and str(error) in INFEASIBLE_PLANNING_ASSERTIONS
 
 
 def _json_value(value: Any) -> Any | None:
@@ -244,7 +252,17 @@ def main() -> None:
     planning_images = rgb_observations(planning_observation)
     planning_state = scene_state(task_env, planning_observation)
     try:
-        episode_info = task_env.play_once()
+        try:
+            episode_info = task_env.play_once()
+        except AssertionError as error:
+            if not is_infeasible_planning_exception(error):
+                raise
+            print(
+                f"EXPERT_PLANNING_INFEASIBLE task={args.task} seed={args.seed} "
+                f"reason={error}",
+                flush=True,
+            )
+            raise SystemExit(20) from error
         planning_success = bool(task_env.plan_success and task_env.check_success())
         if not planning_success:
             print(
