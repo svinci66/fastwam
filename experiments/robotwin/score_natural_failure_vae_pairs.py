@@ -77,6 +77,11 @@ def score_episode(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases-jsonl", type=Path, required=True)
+    parser.add_argument(
+        "--tasks",
+        default="",
+        help="Optional comma-separated task filter.",
+    )
     parser.add_argument("--expert-root", type=Path, required=True)
     parser.add_argument("--fastwam-run-dir", type=Path, required=True)
     parser.add_argument("--vae-path", type=Path, required=True)
@@ -89,8 +94,11 @@ def main() -> None:
     encoder = WanVaeFrameEncoder(
         vae_path=args.vae_path, device=args.device, dtype=dtype
     )
+    task_filter = {value.strip() for value in args.tasks.split(",") if value.strip()}
     pairs = []
-    for case in load_natural_failure_cases(args.cases_jsonl):
+    for case in load_natural_failure_cases(
+        args.cases_jsonl, tasks=(task_filter if task_filter else None)
+    ):
         task = str(case["task"])
         episode_id = int(case["evaluation_episode_id"])
         expert_root = (
@@ -120,6 +128,20 @@ def main() -> None:
             }
         )
     margins = [float(pair["success_minus_failure"]) for pair in pairs]
+    camera_pairwise = {}
+    for camera in CAMERA_NAMES:
+        camera_margins = [
+            float(
+                pair["expert_success"]["camera_scores"][camera]
+                - pair["fastwam_failure"]["camera_scores"][camera]
+            )
+            for pair in pairs
+        ]
+        camera_pairwise[camera] = {
+            "correctly_ranked_count": sum(margin > 0.0 for margin in camera_margins),
+            "pairwise_accuracy": float(np.mean([margin > 0.0 for margin in camera_margins])),
+            "mean_success_minus_failure": float(np.mean(camera_margins)),
+        }
     result = {
         "schema_version": "robotwin_natural_failure_wan_vae_pair_reward_v1",
         "feature_encoder": "wan2.2_vae_single_frame_spatial_latent",
@@ -132,6 +154,7 @@ def main() -> None:
             np.mean([bool(pair["correctly_ranked"]) for pair in pairs])
         ),
         "mean_success_minus_failure": float(np.mean(margins)),
+        "per_camera_pairwise": camera_pairwise,
         "pairs": pairs,
         "latent_shape": encoder.latent_shape,
         "unique_encoded_frames": len(encoder.cache),

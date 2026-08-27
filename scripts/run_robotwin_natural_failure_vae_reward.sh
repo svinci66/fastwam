@@ -5,6 +5,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONDA_ENV="${CONDA_ENV:-robotwin_fastwam}"
 SOURCE_RUN_NAME="${SOURCE_RUN_NAME:-robotwin_low_success_pair_screen_2task3ep_20260827}"
 OUTPUT_NAME="${OUTPUT_NAME:-${SOURCE_RUN_NAME}_wan_vae_reward}"
+TASKS="${TASKS:-}"
 CHECKPOINT="${CHECKPOINT:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/robotwin_uncond_3cam_384.pt}"
 DATASET_STATS="${DATASET_STATS:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/robotwin_uncond_3cam_384_dataset_stats.json}"
 MODEL_BASE_PATH="${MODEL_BASE_PATH:-/home/ubuntu/sj/fastwam/checkpoints}"
@@ -33,6 +34,7 @@ conda run --no-capture-output -n "${CONDA_ENV}" \
   PYTHONUNBUFFERED=1 \
   python -u "${PROJECT_ROOT}/experiments/robotwin/export_paired_expert_imagination_trajectories.py" \
   --cases-jsonl "${CASES_JSONL}" --output-dir "${EXPERT_ROOT}" \
+  --tasks "${TASKS}" \
   --checkpoint "${CHECKPOINT}" --dataset-stats "${DATASET_STATS}" \
   --model-base-path "${MODEL_BASE_PATH}" --num-inference-steps 10 \
   --replan-steps 24 --seed 47 --device cuda --mixed-precision bf16
@@ -43,6 +45,7 @@ conda run --no-capture-output -n "${CONDA_ENV}" \
   PYTHONUNBUFFERED=1 \
   python -u "${PROJECT_ROOT}/experiments/robotwin/score_natural_failure_vae_pairs.py" \
   --cases-jsonl "${CASES_JSONL}" --expert-root "${EXPERT_ROOT}" \
+  --tasks "${TASKS}" \
   --fastwam-run-dir "${FASTWAM_RUN_DIR}" --vae-path "${VAE_PATH}" \
   --device cuda --dtype bf16 --output-json "${RESULT_JSON}"
 

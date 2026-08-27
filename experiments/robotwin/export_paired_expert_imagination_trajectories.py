@@ -27,13 +27,17 @@ from experiments.robotwin.imagination_reward_utils import (
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
 
 
-def load_natural_failure_cases(path: Path) -> list[dict[str, Any]]:
+def load_natural_failure_cases(
+    path: Path, *, tasks: set[str] | None = None
+) -> list[dict[str, Any]]:
     cases = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
         row = json.loads(line)
         if row.get("decision") != "natural_failure":
+            continue
+        if tasks is not None and str(row.get("task")) not in tasks:
             continue
         for key in ("task", "instruction", "expert_hdf5", "evaluation_episode_id"):
             if key not in row:
@@ -222,6 +226,11 @@ def export_case(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases-jsonl", type=Path, required=True)
+    parser.add_argument(
+        "--tasks",
+        default="",
+        help="Optional comma-separated task filter.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--dataset-stats", type=Path, required=True)
@@ -244,7 +253,10 @@ def main() -> None:
         raise FileNotFoundError(args.model_base_path)
     os.environ["DIFFSYNTH_MODEL_BASE_PATH"] = str(args.model_base_path.resolve())
     os.environ["DIFFSYNTH_SKIP_DOWNLOAD"] = "true"
-    cases = load_natural_failure_cases(args.cases_jsonl)
+    tasks = {value.strip() for value in args.tasks.split(",") if value.strip()}
+    cases = load_natural_failure_cases(
+        args.cases_jsonl, tasks=(tasks if tasks else None)
+    )
     summary: dict[str, Any] = {"cases": [], "total_transitions": 0}
     for task in sorted({str(row["task"]) for row in cases}):
         policy_args = argparse.Namespace(**vars(args))
