@@ -49,3 +49,14 @@ def test_wan_head_awr_smoke_configs_are_a_strict_imagination_ablation():
         "wan_vae_head_trajectory_global_norm_v1"
     )
     assert treatment["awr"]["epochs"] == 3
+
+
+def test_wan_head_weight_candidates_change_only_the_registered_fields():
+    control = load_config("robotwin_residual_awr_wan_head_no_imagination_smoke.yaml")
+    for name, expected_weight in (
+        ("robotwin_residual_awr_wan_head_weight025_smoke.yaml", 0.25),
+        ("robotwin_residual_awr_wan_head_weight010_smoke.yaml", 0.1),
+    ):
+        candidate = load_config(name)
+        assert differing_paths(control, candidate) == ALLOWED_CONFIG_DIFFERENCES
+        assert candidate["reward"]["imagination_weight"] == expected_weight
