@@ -36,6 +36,14 @@ def aggregate_replan_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def select_episode_reward(
+    episode: dict[str, Any], reward_cameras: tuple[str, ...]
+) -> float:
+    return float(
+        np.mean([float(episode["camera_scores"][camera]) for camera in reward_cameras])
+    )
+
+
 def score_episode(
     root: Path, encoder: WanVaeFrameEncoder
 ) -> tuple[dict[str, Any], int]:
@@ -87,8 +95,29 @@ def main() -> None:
     parser.add_argument("--vae-path", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument(
+        "--reward-cameras",
+        default=",".join(CAMERA_NAMES),
+        help=(
+            "Comma-separated camera regions used for the primary pair reward. "
+            "All camera diagnostics are still reported."
+        ),
+    )
     parser.add_argument("--output-json", type=Path, required=True)
     args = parser.parse_args()
+
+    reward_cameras = tuple(
+        value.strip() for value in args.reward_cameras.split(",") if value.strip()
+    )
+    if not reward_cameras:
+        raise ValueError("--reward-cameras must select at least one camera")
+    unknown_cameras = sorted(set(reward_cameras) - set(CAMERA_NAMES))
+    if unknown_cameras:
+        raise ValueError(
+            f"Unknown reward cameras {unknown_cameras}; expected a subset of {CAMERA_NAMES}"
+        )
+    if len(reward_cameras) != len(set(reward_cameras)):
+        raise ValueError("--reward-cameras contains duplicate camera names")
 
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float32
     encoder = WanVaeFrameEncoder(
@@ -114,7 +143,11 @@ def main() -> None:
         )
         expert, _ = score_episode(expert_root, encoder)
         failure, _ = score_episode(failure_root, encoder)
-        margin = float(expert["mean_reward"] - failure["mean_reward"])
+        expert_primary_reward = select_episode_reward(expert, reward_cameras)
+        failure_primary_reward = select_episode_reward(failure, reward_cameras)
+        expert["primary_reward"] = expert_primary_reward
+        failure["primary_reward"] = failure_primary_reward
+        margin = float(expert_primary_reward - failure_primary_reward)
         pairs.append(
             {
                 "task": task,
@@ -147,7 +180,11 @@ def main() -> None:
         "feature_encoder": "wan2.2_vae_single_frame_spatial_latent",
         "trajectory_reference_policy": "frozen_once_per_action_chunk",
         "time_offsets": [0, 4, 8, 12, 16, 20, 24],
-        "camera_weights": {camera: 1.0 / 3.0 for camera in CAMERA_NAMES},
+        "reward_cameras": list(reward_cameras),
+        "camera_weights": {
+            camera: (1.0 / len(reward_cameras) if camera in reward_cameras else 0.0)
+            for camera in CAMERA_NAMES
+        },
         "pair_count": len(pairs),
         "correctly_ranked_count": sum(bool(pair["correctly_ranked"]) for pair in pairs),
         "pairwise_accuracy": float(

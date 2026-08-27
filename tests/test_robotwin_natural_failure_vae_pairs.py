@@ -1,10 +1,13 @@
 import json
 
+import pytest
+
 from experiments.robotwin.export_paired_expert_imagination_trajectories import (
     load_natural_failure_cases,
 )
 from experiments.robotwin.score_natural_failure_vae_pairs import (
     aggregate_replan_scores,
+    select_episode_reward,
 )
 from experiments.robotwin.summarize_natural_failure_vae_rewards import summarize
 
@@ -52,6 +55,18 @@ def test_aggregate_replan_scores_uses_equal_camera_and_time_means():
         "left_wrist": 0.30000000000000004,
         "right_wrist": 0.4,
     }
+
+
+def test_select_episode_reward_uses_only_frozen_camera_subset():
+    episode = {
+        "camera_scores": {
+            "head": 0.9,
+            "left_wrist": -0.3,
+            "right_wrist": -0.6,
+        }
+    }
+    assert select_episode_reward(episode, ("head",)) == 0.9
+    assert select_episode_reward(episode, ("head", "left_wrist")) == pytest.approx(0.3)
 
 
 def test_summary_filters_task_and_recomputes_camera_rankings(tmp_path):

@@ -6,6 +6,7 @@ CONDA_ENV="${CONDA_ENV:-robotwin_fastwam}"
 SOURCE_RUN_NAME="${SOURCE_RUN_NAME:-robotwin_low_success_pair_screen_2task3ep_20260827}"
 OUTPUT_NAME="${OUTPUT_NAME:-${SOURCE_RUN_NAME}_wan_vae_reward}"
 TASKS="${TASKS:-}"
+REWARD_CAMERAS="${REWARD_CAMERAS:-head,left_wrist,right_wrist}"
 CHECKPOINT="${CHECKPOINT:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/robotwin_uncond_3cam_384.pt}"
 DATASET_STATS="${DATASET_STATS:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/robotwin_uncond_3cam_384_dataset_stats.json}"
 MODEL_BASE_PATH="${MODEL_BASE_PATH:-/home/ubuntu/sj/fastwam/checkpoints}"
@@ -47,6 +48,7 @@ conda run --no-capture-output -n "${CONDA_ENV}" \
   --cases-jsonl "${CASES_JSONL}" --expert-root "${EXPERT_ROOT}" \
   --tasks "${TASKS}" \
   --fastwam-run-dir "${FASTWAM_RUN_DIR}" --vae-path "${VAE_PATH}" \
+  --reward-cameras "${REWARD_CAMERAS}" \
   --device cuda --dtype bf16 --output-json "${RESULT_JSON}"
 
 printf '[natural-failure-vae] complete result=%s\n' "${RESULT_JSON}"
