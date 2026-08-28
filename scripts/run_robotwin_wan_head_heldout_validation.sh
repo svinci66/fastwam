@@ -11,9 +11,14 @@ BUNDLE="${ARTIFACT_ROOT}/expert_feasibility/open_microwave"
 MANIFEST="${ARTIFACT_ROOT}/heldout_manifest.json"
 RUN_NAME="${RUN_NAME:-robotwin_open_microwave_wan_head_weight025_heldout10_20260828}"
 SUMMARY="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}/summary.json"
-COUNT=10
-START_SEED=4800100
-END_SEED=4800129
+COUNT="${COUNT:-10}"
+START_SEED="${START_SEED:-4800100}"
+END_SEED="${END_SEED:-4800129}"
+
+[[ "${COUNT}" =~ ^[1-9][0-9]*$ ]] || { printf 'COUNT must be positive\n' >&2; exit 1; }
+[[ "${START_SEED}" =~ ^[0-9]+$ ]] || { printf 'START_SEED must be non-negative\n' >&2; exit 1; }
+[[ "${END_SEED}" =~ ^[0-9]+$ ]] || { printf 'END_SEED must be non-negative\n' >&2; exit 1; }
+(( START_SEED <= END_SEED )) || { printf 'START_SEED must not exceed END_SEED\n' >&2; exit 1; }
 
 mkdir -p "${ARTIFACT_ROOT}" "${BUNDLE}"
 exec > >(tee -a "${ARTIFACT_ROOT}/driver.log") 2>&1
@@ -83,7 +88,8 @@ env \
 
 conda run --no-capture-output -n "${CONDA_ENV}" python -u \
   "${PROJECT_ROOT}/experiments/robotwin/audit_wan_head_heldout_pair.py" \
-  --summary "${SUMMARY}" --output-json "${ARTIFACT_ROOT}/heldout_audit.json"
+  --summary "${SUMMARY}" --expected-pairs "${COUNT}" \
+  --output-json "${ARTIFACT_ROOT}/heldout_audit.json"
 
 touch "${ARTIFACT_ROOT}/COMPLETE"
 printf '[wan-head-heldout] complete: %s\n' "${ARTIFACT_ROOT}/heldout_audit.json"

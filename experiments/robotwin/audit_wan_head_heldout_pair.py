@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -18,10 +19,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
+    parser.add_argument("--expected-pairs", type=int, default=10)
     return parser.parse_args()
 
 
-def audit(payload: dict) -> dict:
+def audit(payload: dict, *, expected_pairs: int = 10) -> dict:
+    if expected_pairs <= 0:
+        raise ValueError("expected_pairs must be positive")
     task = "open_microwave"
     if not payload["initial_state_audit"][task]["exact_match"]:
         raise ValueError("held-out initial observations are not exactly paired")
@@ -36,12 +40,21 @@ def audit(payload: dict) -> dict:
         raise ValueError(f"expected two complete variants, got {sorted(rows)}")
     control = keyed(rows["no_imagination"]["episode_records"])
     candidate = keyed(rows["imagination"]["episode_records"])
-    if set(control) != set(candidate) or len(control) != 10:
-        raise ValueError("held-out comparison must contain exactly ten paired episodes")
+    if set(control) != set(candidate) or len(control) != expected_pairs:
+        raise ValueError(
+            f"held-out comparison must contain exactly {expected_pairs} paired episodes"
+        )
     wins = sum(candidate[key] and not control[key] for key in control)
     losses = sum(control[key] and not candidate[key] for key in control)
     control_successes = sum(control.values())
     candidate_successes = sum(candidate.values())
+    discordant = wins + losses
+    exact_one_sided_p = (
+        1.0
+        if discordant == 0
+        else sum(math.comb(discordant, value) for value in range(wins, discordant + 1))
+        / (2**discordant)
+    )
     if candidate_successes > control_successes and wins > losses:
         decision = "confirmed"
     elif candidate_successes < control_successes or losses > wins:
@@ -55,17 +68,27 @@ def audit(payload: dict) -> dict:
         "candidate_successes": candidate_successes,
         "paired_wins": wins,
         "paired_losses": losses,
+        "paired_discordant": discordant,
+        "paired_exact_one_sided_p": exact_one_sided_p,
         "both_success": sum(control[key] and candidate[key] for key in control),
         "both_failure": sum(not control[key] and not candidate[key] for key in control),
         "decision": decision,
         "strong_confirmation": bool(wins >= 2 and losses == 0),
+        "statistical_confirmation": bool(
+            candidate_successes > control_successes
+            and wins > losses
+            and exact_one_sided_p <= 0.05
+        ),
         "rule": "confirmed iff candidate successes are higher and paired wins exceed losses",
     }
 
 
 def main() -> None:
     args = parse_args()
-    result = audit(json.loads(args.summary.read_text(encoding="utf-8")))
+    result = audit(
+        json.loads(args.summary.read_text(encoding="utf-8")),
+        expected_pairs=args.expected_pairs,
+    )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result, indent=2, sort_keys=True))
