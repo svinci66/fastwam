@@ -55,12 +55,11 @@ for (( episode=0; episode<COUNT; episode++ )); do
   next_seed="$(( seed + 1 ))"
 done
 
-if [[ ! -s "${MANIFEST}" ]]; then
-  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
-    "${PROJECT_ROOT}/experiments/robotwin/build_expert_feasible_seed_manifest.py" \
-    --candidate-pool "${POOL}" --metadata-dir "${BUNDLE}/pair_metadata" \
-    --task open_microwave --count "${COUNT}" --output-json "${MANIFEST}"
-fi
+conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  "${PROJECT_ROOT}/experiments/robotwin/build_expert_feasible_seed_manifest.py" \
+  --candidate-pool "${POOL}" --metadata-dir "${BUNDLE}/pair_metadata" \
+  --instructions-dir "${BUNDLE}/instructions" \
+  --task open_microwave --count "${COUNT}" --output-json "${MANIFEST}"
 
 env \
   RUN_NAME="${RUN_NAME}" VARIANTS=no_imagination,imagination \

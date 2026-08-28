@@ -7,11 +7,14 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-pool", type=Path, required=True)
     parser.add_argument("--metadata-dir", type=Path, required=True)
+    parser.add_argument("--instructions-dir", type=Path, required=True)
     parser.add_argument("--task", required=True)
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
@@ -23,7 +26,13 @@ def sha256(path: Path) -> str:
 
 
 def build_manifest(
-    pool: dict, metadata_paths: list[Path], *, task: str, count: int, pool_path: Path
+    pool: dict,
+    metadata_paths: list[Path],
+    *,
+    instructions_dir: Path,
+    task: str,
+    count: int,
+    pool_path: Path,
 ) -> dict:
     if count <= 0:
         raise ValueError("count must be positive")
@@ -33,6 +42,7 @@ def build_manifest(
     if len(metadata_paths) != count:
         raise ValueError(f"expected {count} expert metadata files, found {len(metadata_paths)}")
     selected: list[int] = []
+    selected_instructions: list[str] = []
     records = []
     for expected_episode, path in enumerate(metadata_paths):
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -50,8 +60,24 @@ def build_manifest(
         seed = int(record["seed"])
         if seed not in candidates or seed in selected:
             raise ValueError(f"invalid or duplicate selected seed {seed}")
+        instruction_path = instructions_dir / f"episode{expected_episode}.json"
+        if not instruction_path.is_file():
+            raise ValueError(f"missing official instruction record {instruction_path}")
+        instruction_payload = json.loads(instruction_path.read_text(encoding="utf-8"))
+        unseen = sorted(str(value) for value in instruction_payload.get("unseen", []))
+        if not unseen:
+            raise ValueError(f"no official unseen instructions in {instruction_path}")
+        instruction = str(np.random.default_rng(seed).choice(unseen))
         selected.append(seed)
-        records.append({"episode_index": expected_episode, "seed": seed, "metadata_sha256": sha256(path)})
+        selected_instructions.append(instruction)
+        records.append(
+            {
+                "episode_index": expected_episode,
+                "seed": seed,
+                "metadata_sha256": sha256(path),
+                "instruction_sha256": sha256(instruction_path),
+            }
+        )
     candidate_positions = [candidates.index(seed) for seed in selected]
     if candidate_positions != sorted(candidate_positions):
         raise ValueError("selected seeds do not preserve pre-registered candidate order")
@@ -61,11 +87,13 @@ def build_manifest(
             "description": "Fresh open_microwave held-out seeds selected only by exact expert feasibility.",
             "task_config": "demo_clean",
             "selection_rule": "first expert-feasible candidates in pre-registered order",
+            "expert_validation_mode": "prevalidated_exact_planning_and_replay",
+            "instruction_selection": "sorted official unseen list with numpy default_rng(environment_seed)",
             "candidate_pool": str(pool_path.resolve()),
             "candidate_pool_sha256": sha256(pool_path),
             "expert_feasibility_records": records,
         },
-        task: {"seeds": selected},
+        task: {"seeds": selected, "instructions": selected_instructions},
     }
 
 
@@ -77,7 +105,12 @@ def main() -> None:
     )
     pool = json.loads(args.candidate_pool.read_text(encoding="utf-8"))
     manifest = build_manifest(
-        pool, paths, task=args.task, count=args.count, pool_path=args.candidate_pool
+        pool,
+        paths,
+        instructions_dir=args.instructions_dir,
+        task=args.task,
+        count=args.count,
+        pool_path=args.candidate_pool,
     )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

@@ -28,7 +28,7 @@ def eval_policy():
                 continue
             except Exception as e:
                 continue
-        if accepted:
+        if (not expert_check) or (TASK_ENV.plan_success and TASK_ENV.check_success()):
             suc_test_seed_list.append(now_seed)
         else:
             now_seed += 1
@@ -58,6 +58,8 @@ def eval_policy():
     assert 'manifest_entry.get("instructions")' in patched
     assert "strict_environment_instructions[manifest_offset:manifest_stop]" in patched
     assert "strict_environment_instructions[succ_seed - 1]" in patched
+    assert "strict_environment_prevalidated" in patched
+    assert "FASTWAM_PREVALIDATED_ENV_SEED" in patched
     assert "np.random.default_rng(int(now_seed))" in patched
     assert 'instruction_random.seed(int(now_seed))' in patched
     assert "instruction_random.setstate(instruction_random_state)" in patched

@@ -82,10 +82,13 @@ def patch_eval_policy_source(source: str) -> str:
         "    suc_test_seed_list = []\n"
         "    strict_environment_seeds = None\n"
         "    strict_environment_instructions = None\n"
+        "    strict_environment_prevalidated = False\n"
         "    seed_manifest_path = usr_args.get(\"environment_seed_manifest_path\")\n"
         "    if seed_manifest_path is not None and str(seed_manifest_path).strip().lower() not in {\"\", \"none\", \"null\"}:\n"
         "        with open(str(seed_manifest_path), \"r\", encoding=\"utf-8\") as manifest_file:\n"
         "            manifest_payload = __import__(\"json\").load(manifest_file)\n"
+        "        manifest_meta = manifest_payload.get(\"_meta\", {})\n"
+        "        manifest_feasibility_records = manifest_meta.get(\"expert_feasibility_records\")\n"
         "        manifest_entry = manifest_payload.get(args[\"task_name\"])\n"
         "        if manifest_entry is None:\n"
         "            raise ValueError(f\"Seed manifest has no task {args['task_name']!r}\")\n"
@@ -93,6 +96,13 @@ def patch_eval_policy_source(source: str) -> str:
         "            strict_environment_instructions = manifest_entry.get(\"instructions\")\n"
         "            manifest_entry = manifest_entry.get(\"seeds\")\n"
         "        strict_environment_seeds = [int(value) for value in manifest_entry]\n"
+        "        if manifest_feasibility_records is not None:\n"
+        "            attested_seeds = [int(value[\"seed\"]) for value in manifest_feasibility_records]\n"
+        "            if attested_seeds != strict_environment_seeds:\n"
+        "                raise ValueError(\"Expert-feasibility attestations do not match manifest seeds\")\n"
+        "            if strict_environment_instructions is None:\n"
+        "                raise ValueError(\"Prevalidated seed manifest must include per-seed instructions\")\n"
+        "            strict_environment_prevalidated = True\n"
         "        manifest_offset = int(usr_args.get(\"environment_episode_offset\", 0))\n"
         "        manifest_stop = manifest_offset + test_num\n"
         "        if manifest_offset < 0 or manifest_stop > len(strict_environment_seeds):\n"
@@ -121,6 +131,18 @@ def patch_eval_policy_source(source: str) -> str:
         "        if strict_environment_seeds is not None:\n"
         "            now_seed = strict_environment_seeds[succ_seed]\n",
         label="strict-seed-selection",
+    )
+    source = _replace_once(
+        source,
+        "        if expert_check:\n",
+        "        if expert_check and not strict_environment_prevalidated:\n",
+        label="reuse-prevalidated-expert-check",
+    )
+    source = _replace_once(
+        source,
+        "        if (not expert_check) or (TASK_ENV.plan_success and TASK_ENV.check_success()):\n",
+        "        if strict_environment_prevalidated or (not expert_check) or (TASK_ENV.plan_success and TASK_ENV.check_success()):\n",
+        label="accept-prevalidated-expert-check",
     )
     source = _replace_once(
         source,
@@ -164,6 +186,8 @@ def patch_eval_policy_source(source: str) -> str:
         source,
         "            suc_test_seed_list.append(now_seed)\n",
         "            suc_test_seed_list.append(now_seed)\n"
+        "            if strict_environment_prevalidated:\n"
+        "                print(f\"FASTWAM_PREVALIDATED_ENV_SEED episode_id={now_id} seed={now_seed}\", flush=True)\n"
         "            os.environ[\"FASTWAM_ENVIRONMENT_SEED\"] = str(now_seed)\n"
         "            print(f\"FASTWAM_ACCEPTED_ENV_SEED episode_id={now_id} seed={now_seed}\", flush=True)\n",
         label="accepted-seed",
