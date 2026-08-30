@@ -80,6 +80,28 @@ def _parse_optional_float(value: Any) -> Optional[float]:
     return float(value)
 
 
+def _task_progress_snapshot(task_env: Any) -> Optional[np.ndarray]:
+    """Return task-object progress without mutating the RoboTwin environment.
+
+    The diagnostic currently targets ``open_microwave``.  The four columns are
+    joint position, lower limit, upper limit, and the exact ratio used by the
+    task's default success check (joint position / upper limit).
+    """
+
+    microwave = getattr(task_env, "microwave", None)
+    if microwave is None:
+        return None
+    qpos = np.asarray(microwave.get_qpos(), dtype=np.float32).reshape(-1)
+    limits = np.asarray(microwave.get_qlimits(), dtype=np.float32)
+    if qpos.size == 0 or limits.ndim != 2 or limits.shape[0] == 0 or limits.shape[1] != 2:
+        raise ValueError("open_microwave progress state has invalid joint data")
+    lower = float(limits[0, 0])
+    upper = float(limits[0, 1])
+    if not np.isfinite([qpos[0], lower, upper]).all() or abs(upper) <= 1e-8:
+        raise ValueError("open_microwave progress state must be finite with non-zero upper limit")
+    return np.asarray([qpos[0], lower, upper, qpos[0] / upper], dtype=np.float32)
+
+
 def _normalize_mixed_precision(mixed_precision: str) -> str:
     key = str(mixed_precision).strip().lower()
     if key not in {"no", "fp16", "bf16"}:
@@ -996,6 +1018,7 @@ class WorldActionRobotWinPolicy:
                 "normalized_noise_direction": epsilon[:n_exec].copy(),
                 "action_corruption_mask": corruption_mask[:n_exec].copy(),
                 "executed_actions": [],
+                "task_progress_trace": [],
                 "initial_observation_sha256": self._episode_initial_hash,
                 "current_observation_sha256": current_observation_sha256,
                 "current_image_sha256": array_sha256(current_image),
@@ -1200,6 +1223,21 @@ class WorldActionRobotWinPolicy:
                 transition["residual_language_instruction"]
             ],
         }
+        task_progress = np.asarray(transition["task_progress_trace"], dtype=np.float32)
+        if task_progress.size:
+            if task_progress.shape != (effective_k + 1, 4):
+                raise ValueError(
+                    "task progress must contain one pre-action state and one state "
+                    f"per executed action, got {task_progress.shape} for k={effective_k}"
+                )
+            rollout_arrays["task_progress"] = task_progress
+            metadata["task_progress_columns"] = [
+                "object_joint_qpos",
+                "object_joint_lower_limit",
+                "object_joint_upper_limit",
+                "official_open_ratio",
+            ]
+            metadata["task_success_ratio_threshold"] = 0.6
         if "candidate_residual_actions" in transition:
             rollout_arrays["candidate_residual_actions"] = transition[
                 "candidate_residual_actions"
@@ -1245,6 +1283,12 @@ class WorldActionRobotWinPolicy:
             return
 
         action = self.pending_actions.popleft()
+        if self._pending_transition is not None:
+            trace = self._pending_transition["task_progress_trace"]
+            if not trace:
+                initial_progress = _task_progress_snapshot(task_env)
+                if initial_progress is not None:
+                    trace.append(initial_progress)
         sim_t0 = time.perf_counter() if self.timing_enabled else 0.0
         task_env.take_action(action, action_type="qpos")
         if self.timing_enabled:
@@ -1252,6 +1296,12 @@ class WorldActionRobotWinPolicy:
         self.step_count += 1
         if self._pending_transition is not None:
             self._pending_transition["executed_actions"].append(action.copy())
+            trace = self._pending_transition["task_progress_trace"]
+            if trace:
+                current_progress = _task_progress_snapshot(task_env)
+                if current_progress is None:
+                    raise RuntimeError("task progress disappeared during a transition")
+                trace.append(current_progress)
         if self._pending_transition is not None:
             effective_k = len(self._pending_transition["executed_actions"])
             capture_intermediate = (

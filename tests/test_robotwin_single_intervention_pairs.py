@@ -12,6 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from experiments.robotwin.build_single_intervention_pairs import build_pairs
 from experiments.robotwin.fastwam_policy.deploy_policy import (
     _residual_diagnostic_metadata,
+    _task_progress_snapshot,
 )
 from experiments.robotwin.select_single_intervention_candidates import (
     select_candidates,
@@ -58,6 +59,19 @@ def _record(
         "record_dir": str(record_dir),
         "metadata_path": str(record_dir / "metadata.json"),
     }
+
+
+def test_open_microwave_task_progress_uses_official_upper_limit_ratio():
+    class Microwave:
+        def get_qpos(self):
+            return np.asarray([0.75], dtype=np.float32)
+
+        def get_qlimits(self):
+            return np.asarray([[0.0, 1.5]], dtype=np.float32)
+
+    task = type("Task", (), {"microwave": Microwave()})()
+    snapshot = _task_progress_snapshot(task)
+    np.testing.assert_allclose(snapshot, [0.75, 0.0, 1.5, 0.5])
 
 
 def test_build_pairs_accepts_exact_single_intervention_rescue(tmp_path):

@@ -1,0 +1,74 @@
+{
+  "_meta": {
+    "schema_version": "robotwin_outcome_selected_diagnostic_manifest_v1",
+    "description": "Outcome-selected seven-pair diagnostic subset from the expanded held-out run. It must not be counted as a new evaluation.",
+    "diagnostic_only": true,
+    "task_config": "demo_clean",
+    "selection_rule": "All five candidate wins and both candidate losses from the completed fresh-30 comparison.",
+    "expert_validation_mode": "reuse_prevalidated_exact_planning_and_replay",
+    "expert_feasibility_records": [
+      {
+        "episode_index": 0,
+        "seed": 4800202,
+        "metadata_sha256": "f2b43dc0d73d76a1f3912c21c64a3ef61cddc6899148d3301d98f83d761dcecc",
+        "instruction_sha256": "906249cfb76814b4fe21c8a1f3d64db77cc43b60503b28b316ac2546cf4226d6"
+      },
+      {
+        "episode_index": 1,
+        "seed": 4800205,
+        "metadata_sha256": "e04cbae6d8fc54ef3cd1fb19305fe1470c85124e5b9c8a542153d576f5107165",
+        "instruction_sha256": "c09ea7fac4301f0fa65b537a036179d7c837b48122bf8912aefdb2a25024a8e0"
+      },
+      {
+        "episode_index": 2,
+        "seed": 4800215,
+        "metadata_sha256": "1de90937b4b6cb918cefcc22608f9374a84f8aad9f9fe0e334f059b390e9d894",
+        "instruction_sha256": "2bd1fbe5e9ec9c081e1e8c0cbcfc175650c5d47e2dede92d9a6c7415a9b56709"
+      },
+      {
+        "episode_index": 3,
+        "seed": 4800216,
+        "metadata_sha256": "af1599ca221aef8df022d201dcd1a1ed77f632250e075de7318b823f9337f9cf",
+        "instruction_sha256": "05c948310f1607fb9a22d8a9775279bf388607fec8c2c5b7f001e0fd4cc11693"
+      },
+      {
+        "episode_index": 4,
+        "seed": 4800220,
+        "metadata_sha256": "44a064fdb7cf2566dcc3b202f9c7d723231042a3202fbd48e21e91f3c539e14e",
+        "instruction_sha256": "3fd3767f72cb593f039ab7c2053b399c4f074578639d333a121a05c3eb757b53"
+      },
+      {
+        "episode_index": 5,
+        "seed": 4800229,
+        "metadata_sha256": "dbbb26f36a9b6e56a399cda42ba8d37a7f3a8305c6f178df70efee3a46e08272",
+        "instruction_sha256": "8d838bd48459b4acb3ebfec5311a02187b6db6a04dc2b1a843372bbed936d9cd"
+      },
+      {
+        "episode_index": 6,
+        "seed": 4800230,
+        "metadata_sha256": "b8bbdbde00f8026dc59ce15d481f121df76e7a8751adb9985bd341ebd50c5d6c",
+        "instruction_sha256": "b87491e21b3956b51ad5b94ad57d0d46cbf76384ff88d803263106905c3267a8"
+      }
+    ]
+  },
+  "open_microwave": {
+    "seeds": [
+      4800202,
+      4800205,
+      4800215,
+      4800216,
+      4800220,
+      4800229,
+      4800230
+    ],
+    "instructions": [
+      "Use the left arm to pull the handle of the kitchen microwave with slanted shape.",
+      "Move the left arm and open the gray and yellow rectangular microwave.",
+      "Use the left arm to pull the handle of the medium gray microwave with top vents.",
+      "Move the left arm and open the medium-sized rectangular microwave with textured top.",
+      "Locate the dark gray microwave and open it using the left arm.",
+      "Open the dark gray microwave by pulling its door handle.",
+      "Use the left arm to pull the handle of the dark gray microwave."
+    ]
+  }
+}
