@@ -90,7 +90,7 @@ def _episode_records(root: Path) -> list[dict]:
 def analyze(result_base: Path, run_name: str, variants: list[str]) -> dict:
     by_variant: dict[str, list[dict]] = {}
     for variant in variants:
-        root = (
+        monolithic_root = (
             result_base
             / f"{run_name}_{variant}"
             / "open_microwave"
@@ -98,9 +98,24 @@ def analyze(result_base: Path, run_name: str, variants: list[str]) -> dict:
             / "open_microwave"
             / "residual"
         )
-        records = _episode_records(root)
+        roots = []
+        if monolithic_root.is_dir():
+            roots.append(monolithic_root)
+        roots.extend(
+            sorted(
+                result_base.glob(
+                    f"{run_name}_segment[0-9][0-9]_{variant}/open_microwave/"
+                    "imagination_transitions/open_microwave/residual"
+                )
+            )
+        )
+        records = [record for root in roots for record in _episode_records(root)]
         if not records:
-            raise ValueError(f"no diagnostic transitions under {root}")
+            raise ValueError(f"no diagnostic transitions found for {run_name=} {variant=}")
+        seeds = [record["seed"] for record in records]
+        if len(seeds) != len(set(seeds)):
+            raise ValueError(f"duplicate diagnostic seed for {variant}: {seeds}")
+        records.sort(key=lambda record: record["episode_id"])
         by_variant[variant] = records
     keyed = {
         variant: {record["seed"]: record for record in records}
