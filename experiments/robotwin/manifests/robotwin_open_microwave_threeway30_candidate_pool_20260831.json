@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "description": "Pre-registered fresh candidate pool for a frozen three-way open_microwave comparison: FastWAM baseline, no-imagination residual, and weight=0.25 imagination residual.",
+    "task_config": "demo_clean",
+    "candidate_count": 90,
+    "required_expert_feasible_count": 30,
+    "selection_rule": "Take the first thirty candidates with exact successful expert planning/replay, preserving candidate order. Selection must not inspect any FastWAM or residual outcome.",
+    "stopping_rule": "Run all three frozen variants on all thirty selected cases without retuning or outcome-based replacement."
+  },
+  "open_microwave": {
+    "seeds": [
+      4800300, 4800301, 4800302, 4800303, 4800304, 4800305, 4800306, 4800307, 4800308, 4800309,
+      4800310, 4800311, 4800312, 4800313, 4800314, 4800315, 4800316, 4800317, 4800318, 4800319,
+      4800320, 4800321, 4800322, 4800323, 4800324, 4800325, 4800326, 4800327, 4800328, 4800329,
+      4800330, 4800331, 4800332, 4800333, 4800334, 4800335, 4800336, 4800337, 4800338, 4800339,
+      4800340, 4800341, 4800342, 4800343, 4800344, 4800345, 4800346, 4800347, 4800348, 4800349,
+      4800350, 4800351, 4800352, 4800353, 4800354, 4800355, 4800356, 4800357, 4800358, 4800359,
+      4800360, 4800361, 4800362, 4800363, 4800364, 4800365, 4800366, 4800367, 4800368, 4800369,
+      4800370, 4800371, 4800372, 4800373, 4800374, 4800375, 4800376, 4800377, 4800378, 4800379,
+      4800380, 4800381, 4800382, 4800383, 4800384, 4800385, 4800386, 4800387, 4800388, 4800389
+    ]
+  }
+}

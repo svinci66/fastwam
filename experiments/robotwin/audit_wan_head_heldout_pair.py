@@ -36,8 +36,13 @@ def audit(payload: dict, *, expected_pairs: int = 10) -> dict:
         for row in payload["rows"]
         if row.get("task") == task and row.get("status") == "complete"
     }
-    if set(rows) != {"no_imagination", "imagination"}:
-        raise ValueError(f"expected two complete variants, got {sorted(rows)}")
+    required = {"no_imagination", "imagination"}
+    allowed = required | {"baseline"}
+    if not required.issubset(rows) or not set(rows).issubset(allowed):
+        raise ValueError(
+            "expected complete no_imagination/imagination variants and an optional "
+            f"baseline, got {sorted(rows)}"
+        )
     control = keyed(rows["no_imagination"]["episode_records"])
     candidate = keyed(rows["imagination"]["episode_records"])
     if set(control) != set(candidate) or len(control) != expected_pairs:
@@ -61,7 +66,7 @@ def audit(payload: dict, *, expected_pairs: int = 10) -> dict:
         decision = "rejected"
     else:
         decision = "inconclusive"
-    return {
+    result = {
         "schema_version": "robotwin_wan_head_heldout_pair_audit_v1",
         "pairs": len(control),
         "control_successes": control_successes,
@@ -81,6 +86,37 @@ def audit(payload: dict, *, expected_pairs: int = 10) -> dict:
         ),
         "rule": "confirmed iff candidate successes are higher and paired wins exceed losses",
     }
+    if "baseline" in rows:
+        baseline = keyed(rows["baseline"]["episode_records"])
+        if set(baseline) != set(control):
+            raise ValueError("baseline episodes do not match the residual pair")
+
+        def compare(reference: dict, contender: dict) -> dict:
+            contender_wins = sum(
+                contender[key] and not reference[key] for key in reference
+            )
+            contender_losses = sum(
+                reference[key] and not contender[key] for key in reference
+            )
+            return {
+                "reference_successes": sum(reference.values()),
+                "contender_successes": sum(contender.values()),
+                "paired_wins": contender_wins,
+                "paired_losses": contender_losses,
+                "both_success": sum(
+                    reference[key] and contender[key] for key in reference
+                ),
+                "both_failure": sum(
+                    not reference[key] and not contender[key] for key in reference
+                ),
+            }
+
+        result["baseline_successes"] = sum(baseline.values())
+        result["comparisons_to_baseline"] = {
+            "no_imagination": compare(baseline, control),
+            "imagination": compare(baseline, candidate),
+        }
+    return result
 
 
 def main() -> None:

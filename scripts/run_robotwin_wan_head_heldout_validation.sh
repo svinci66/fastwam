@@ -14,6 +14,8 @@ SUMMARY="${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${RUN_NAME}/s
 COUNT="${COUNT:-10}"
 START_SEED="${START_SEED:-4800100}"
 END_SEED="${END_SEED:-4800129}"
+VARIANTS="${VARIANTS:-no_imagination,imagination}"
+CAPTURE_DECODE_TILED="${CAPTURE_DECODE_TILED:-false}"
 
 [[ "${COUNT}" =~ ^[1-9][0-9]*$ ]] || { printf 'COUNT must be positive\n' >&2; exit 1; }
 [[ "${START_SEED}" =~ ^[0-9]+$ ]] || { printf 'START_SEED must be non-negative\n' >&2; exit 1; }
@@ -67,7 +69,7 @@ conda run --no-capture-output -n "${CONDA_ENV}" python -u \
   --task open_microwave --count "${COUNT}" --output-json "${MANIFEST}"
 
 env \
-  RUN_NAME="${RUN_NAME}" VARIANTS=no_imagination,imagination \
+  RUN_NAME="${RUN_NAME}" VARIANTS="${VARIANTS}" \
   TASKS=open_microwave EPISODES="${COUNT}" BASE_SEED=47 TRIAL_OFFSET=0 \
   INFERENCE_STEPS=10 REPLAN_STEPS=24 TEXT_CFG_SCALE=1.0 \
   TASK_CONFIG=demo_clean INSTRUCTION_TYPE=unseen INSTRUCTION_MODE=official \
@@ -84,6 +86,7 @@ env \
   RESIDUAL_MAX_INTERVENTIONS_PER_EPISODE=none \
   RESIDUAL_OUTCOME_CONFIRMATION_ENABLED=false RESIDUAL_SOFT_SCALE_ENABLED=false \
   SAVE_BASELINE_TRANSITIONS=false SAVE_RESIDUAL_TRANSITIONS=false EVAL_VIDEO_LOG=true \
+  CAPTURE_DECODE_TILED="${CAPTURE_DECODE_TILED}" \
   bash "${PROJECT_ROOT}/scripts/run_robotwin_residual_iql_online_pair.sh"
 
 conda run --no-capture-output -n "${CONDA_ENV}" python -u \

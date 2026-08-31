@@ -1,22 +1,28 @@
 from experiments.robotwin.audit_wan_head_heldout_pair import audit
 
 
-def payload(control, candidate):
+def payload(control, candidate, baseline=None):
     def records(values):
         return [
             {"seed": 100 + index, "instruction": f"instruction-{index}", "success": value}
             for index, value in enumerate(values)
         ]
 
+    rows = [
+        {"variant": "no_imagination", "task": "open_microwave", "status": "complete", "episode_records": records(control)},
+        {"variant": "imagination", "task": "open_microwave", "status": "complete", "episode_records": records(candidate)},
+    ]
+    if baseline is not None:
+        rows.insert(
+            0,
+            {"variant": "baseline", "task": "open_microwave", "status": "complete", "episode_records": records(baseline)},
+        )
     return {
         "initial_state_audit": {"open_microwave": {"exact_match": True}},
         "protocol_pairing_audit": {
             "open_microwave": {"exact_seed_and_instruction_match": True}
         },
-        "rows": [
-            {"variant": "no_imagination", "task": "open_microwave", "status": "complete", "episode_records": records(control)},
-            {"variant": "imagination", "task": "open_microwave", "status": "complete", "episode_records": records(candidate)},
-        ],
+        "rows": rows,
     }
 
 
@@ -44,3 +50,31 @@ def test_expanded_heldout_requires_requested_pair_count_and_can_confirm_statisti
     assert result["paired_losses"] == 0
     assert result["paired_exact_one_sided_p"] == 0.0078125
     assert result["statistical_confirmation"] is True
+
+
+def test_three_way_audit_reports_both_residual_comparisons_to_baseline():
+    result = audit(
+        payload(
+            [True, True, False, False],
+            [True, True, True, False],
+            baseline=[True, False, False, False],
+        ),
+        expected_pairs=4,
+    )
+    assert result["baseline_successes"] == 1
+    assert result["comparisons_to_baseline"]["no_imagination"] == {
+        "reference_successes": 1,
+        "contender_successes": 2,
+        "paired_wins": 1,
+        "paired_losses": 0,
+        "both_success": 1,
+        "both_failure": 2,
+    }
+    assert result["comparisons_to_baseline"]["imagination"] == {
+        "reference_successes": 1,
+        "contender_successes": 3,
+        "paired_wins": 2,
+        "paired_losses": 0,
+        "both_success": 1,
+        "both_failure": 1,
+    }
