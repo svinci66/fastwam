@@ -398,6 +398,18 @@ def main(cfg: DictConfig):
     )
     _append_override(
         overrides,
+        "residual_actor_override_checkpoint",
+        cfg.EVALUATION.residual_actor_override_checkpoint,
+        skip_none=False,
+    )
+    _append_override(
+        overrides,
+        "residual_actor_override_replans",
+        cfg.EVALUATION.residual_actor_override_replans,
+        skip_none=False,
+    )
+    _append_override(
+        overrides,
         "residual_max_interventions_per_episode",
         cfg.EVALUATION.residual_max_interventions_per_episode,
         skip_none=False,

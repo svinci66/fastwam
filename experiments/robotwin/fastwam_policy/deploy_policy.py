@@ -42,6 +42,7 @@ from experiments.robotwin.imagination_reward_utils import (
 from fastwam.rl.online_policy import (
     ROBOTWIN_RESIDUAL_FEATURE_FUSION,
     OnlineResidualPolicy,
+    load_residual_actor_checkpoint,
 )
 from fastwam.rl.language_routing import resolve_residual_language_instruction
 
@@ -342,6 +343,8 @@ class WorldActionRobotWinPolicy:
         save_imagination_transitions: bool,
         imagination_transition_dir: Optional[Path],
         task_name: str,
+        residual_actor_override_checkpoint: Optional[str] = None,
+        residual_actor_override_replans: Optional[set[int]] = None,
     ) -> None:
         model_cfg_copy = OmegaConf.create(OmegaConf.to_container(model_cfg, resolve=True))
         model_cfg_copy.load_text_encoder = True
@@ -383,6 +386,17 @@ class WorldActionRobotWinPolicy:
                 "'controlled_correct', 'hold', 'gripper_delay', 'residual']."
             )
         self.residual_policy: Optional[OnlineResidualPolicy] = None
+        self.residual_actor_override = None
+        self.residual_actor_override_checkpoint = (
+            None
+            if _is_none_like(residual_actor_override_checkpoint)
+            else str(
+                Path(str(residual_actor_override_checkpoint))
+                .expanduser()
+                .resolve()
+            )
+        )
+        self.residual_actor_override_replans = residual_actor_override_replans
         self.residual_intervention_replans = residual_intervention_replans
         self.residual_language_instruction = (
             None
@@ -454,6 +468,27 @@ class WorldActionRobotWinPolicy:
                     f"got baseline={self.action_horizon}, "
                     f"residual={self.residual_policy.action_horizon}."
                 )
+            if self.residual_actor_override_checkpoint is not None:
+                if not self.residual_actor_override_replans:
+                    raise ValueError(
+                        "residual_actor_override_checkpoint requires non-empty "
+                        "residual_actor_override_replans"
+                    )
+                override_actor, _ = load_residual_actor_checkpoint(
+                    self.residual_actor_override_checkpoint,
+                    device=self.residual_policy.device,
+                )
+                if override_actor.config != self.residual_policy.actor.config:
+                    raise ValueError(
+                        "Residual actor override config must exactly match the "
+                        "prefix actor config"
+                    )
+                override_actor.requires_grad_(False)
+                self.residual_actor_override = override_actor
+        elif self.residual_actor_override_checkpoint is not None:
+            raise ValueError(
+                "residual_actor_override_checkpoint requires action_mode='residual'"
+            )
         self.action_noise_std = float(action_noise_std)
         if not np.isfinite(self.action_noise_std) or self.action_noise_std < 0.0:
             raise ValueError(
@@ -548,6 +583,7 @@ class WorldActionRobotWinPolicy:
         self._residual_rollout_max_abs: list[float] = []
         self._residual_gate_decisions: list[bool] = []
         self._residual_gate_approvals: list[bool] = []
+        self._last_residual_actor_override_applied = False
 
         logger.info(
             "Initialized WorldActionRobotWinPolicy | ckpt=%s | stats=%s | horizon=%d | "
@@ -692,6 +728,7 @@ class WorldActionRobotWinPolicy:
         normalized_executed = normalized_baseline.copy()
         normalized_corrupted = normalized_baseline.copy()
         residual_output = None
+        self._last_residual_actor_override_applied = False
         epsilon = np.zeros_like(normalized_baseline, dtype=np.float32)
         noise_selected = (
             self.action_noise_replans is None
@@ -738,16 +775,30 @@ class WorldActionRobotWinPolicy:
                 raise RuntimeError("residual action mode was initialized without a policy")
             residual_t0 = time.perf_counter() if self.timing_enabled else 0.0
             residual_instruction = self._residual_instruction(instruction)
-            residual_output = self.residual_policy.correct_action_chunk(
-                camera_images=split_robotwin_camera_views(current_image),
-                proprio=state_vector,
-                baseline_actions=baseline_actions,
-                language_feature=self._encode_language_feature(residual_instruction),
-                intervention_allowed=(
-                    self.residual_intervention_replans is None
-                    or self.replan_count in self.residual_intervention_replans
-                ),
+            use_override_actor = bool(
+                self.residual_actor_override is not None
+                and self.residual_actor_override_replans is not None
+                and self.replan_count in self.residual_actor_override_replans
             )
+            original_actor = self.residual_policy.actor
+            if use_override_actor:
+                self.residual_policy.actor = self.residual_actor_override
+            try:
+                residual_output = self.residual_policy.correct_action_chunk(
+                    camera_images=split_robotwin_camera_views(current_image),
+                    proprio=state_vector,
+                    baseline_actions=baseline_actions,
+                    language_feature=self._encode_language_feature(
+                        residual_instruction
+                    ),
+                    intervention_allowed=(
+                        self.residual_intervention_replans is None
+                        or self.replan_count in self.residual_intervention_replans
+                    ),
+                )
+            finally:
+                self.residual_policy.actor = original_actor
+            self._last_residual_actor_override_applied = use_override_actor
             executed_actions = residual_output.corrected_actions
             if self.timing_enabled:
                 self._timing_rollout["residual_s"] += time.perf_counter() - residual_t0
@@ -835,6 +886,8 @@ class WorldActionRobotWinPolicy:
                 f"rms={residual_output.residual_rms:.6f} "
                 f"max_abs={residual_output.residual_max_abs:.6f} "
                 f"gripper_max_abs={gripper_residual_max:.6f}"
+                " actor_override_applied="
+                f"{int(self._last_residual_actor_override_applied)}"
                 f"{q_gate_fields}"
                 f"{support_fields}",
                 flush=True,
@@ -1029,6 +1082,18 @@ class WorldActionRobotWinPolicy:
                 "residual_gate_applied": bool(
                     residual_output is not None and residual_output.gate_applied
                 ),
+                "residual_actor_override_applied": bool(
+                    self._last_residual_actor_override_applied
+                ),
+                "residual_actor_checkpoint": (
+                    self.residual_actor_override_checkpoint
+                    if self._last_residual_actor_override_applied
+                    else (
+                        None
+                        if self.residual_policy is None
+                        else self.residual_policy.checkpoint_path
+                    )
+                ),
                 "residual_diagnostics": _residual_diagnostic_metadata(
                     residual_output
                 ),
@@ -1195,6 +1260,12 @@ class WorldActionRobotWinPolicy:
             "language_prompt_template": DEFAULT_PROMPT,
             "residual_language_instruction": transition[
                 "residual_language_instruction"
+            ],
+            "residual_actor_override_applied": transition[
+                "residual_actor_override_applied"
+            ],
+            "residual_actor_checkpoint": transition[
+                "residual_actor_checkpoint"
             ],
         }
         metadata.update(transition["residual_diagnostics"])
@@ -1628,6 +1699,34 @@ def get_model(usr_args: Dict[str, Any]):
             raise ValueError(
                 "residual_intervention_replans must be 'all' or non-negative CSV indices"
             )
+    residual_actor_override_checkpoint_value = usr_args.get(
+        "residual_actor_override_checkpoint",
+        cfg.EVALUATION.get("residual_actor_override_checkpoint"),
+    )
+    residual_actor_override_checkpoint = (
+        None
+        if _is_none_like(residual_actor_override_checkpoint_value)
+        else str(residual_actor_override_checkpoint_value)
+    )
+    residual_actor_override_replans_value = usr_args.get(
+        "residual_actor_override_replans",
+        cfg.EVALUATION.get("residual_actor_override_replans", "none"),
+    )
+    if _is_none_like(residual_actor_override_replans_value):
+        residual_actor_override_replans = None
+    else:
+        residual_actor_override_replans = {
+            int(item.strip())
+            for item in str(residual_actor_override_replans_value).split(",")
+            if item.strip()
+        }
+        if not residual_actor_override_replans or min(
+            residual_actor_override_replans
+        ) < 0:
+            raise ValueError(
+                "residual_actor_override_replans must be null or non-negative "
+                "CSV indices"
+            )
     residual_max_interventions_value = usr_args.get(
         "residual_max_interventions_per_episode",
         cfg.EVALUATION.get("residual_max_interventions_per_episode"),
@@ -1831,6 +1930,10 @@ def get_model(usr_args: Dict[str, Any]):
         save_imagination_transitions=save_imagination_transitions,
         imagination_transition_dir=imagination_transition_dir,
         task_name=task_name,
+        residual_actor_override_checkpoint=(
+            residual_actor_override_checkpoint
+        ),
+        residual_actor_override_replans=residual_actor_override_replans,
     )
     return policy
 

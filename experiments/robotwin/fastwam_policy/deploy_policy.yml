@@ -48,6 +48,8 @@ residual_support_index_path: null
 residual_support_circuit_breaker_enabled: true
 residual_shadow_mode: false
 residual_intervention_replans: all
+residual_actor_override_checkpoint: null
+residual_actor_override_replans: null
 residual_max_interventions_per_episode: null
 residual_outcome_confirmation_enabled: false
 residual_outcome_confirmation_min_progress: 0.0
