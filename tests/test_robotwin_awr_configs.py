@@ -77,3 +77,15 @@ def test_multitask3_smoke_and_formal_configs_share_the_deployable_model():
     assert formal["reward"]["imagination_reward_type"] == (
         "wan_vae_head_trajectory_global_norm_v1"
     )
+
+
+def test_multitask3_formal_configs_are_a_strict_imagination_ablation():
+    control = load_config(
+        "robotwin_residual_awr_wan_head_multitask3_no_imagination_formal.yaml"
+    )
+    treatment = load_config("robotwin_residual_awr_wan_head_multitask3_formal.yaml")
+    assert differing_paths(control, treatment) == ALLOWED_CONFIG_DIFFERENCES
+    assert control["reward"]["imagination_weight"] == 0.0
+    assert treatment["reward"]["imagination_weight"] == 1.0
+    assert control["awr"]["epochs"] == treatment["awr"]["epochs"] == 20
+    assert control["model"] == treatment["model"]

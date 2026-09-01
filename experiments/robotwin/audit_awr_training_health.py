@@ -28,6 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-tasks", required=True)
     parser.add_argument("--expected-epochs", type=int, required=True)
     parser.add_argument("--expected-max-residual-scale", type=float, default=0.1)
+    parser.add_argument(
+        "--expected-imagination-weight",
+        type=float,
+        default=1.0,
+        help="Expected immutable reward ablation weight stored in the checkpoint.",
+    )
     parser.add_argument("--maximum-critic-loss-ratio", type=float, default=1.25)
     parser.add_argument("--maximum-saturation-fraction", type=float, default=0.25)
     parser.add_argument("--output-json", type=Path, required=True)
@@ -148,10 +154,15 @@ def main() -> None:
         "expected_tasks_only": actual_tasks == expected_tasks,
         "every_task_has_pairs": all(int(task_pair_counts.get(task, 0)) > 0 for task in expected_tasks),
         "task_balancing_enabled": bool(checkpoint["awr_config"].get("balance_tasks", False)),
-        "head_wan_reward": (
+        "expected_reward_ablation": (
             checkpoint["reward_config"].get("imagination_reward_type")
             == "wan_vae_head_trajectory_global_norm_v1"
-            and float(checkpoint["reward_config"].get("imagination_weight", 0.0)) > 0.0
+            and math.isclose(
+                float(checkpoint["reward_config"].get("imagination_weight", -1.0)),
+                args.expected_imagination_weight,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
         ),
     }
     payload = {
@@ -163,6 +174,10 @@ def main() -> None:
         "task_pair_counts": task_pair_counts,
         "num_transitions": len(replay),
         "num_epochs": len(history),
+        "expected_imagination_weight": args.expected_imagination_weight,
+        "actual_imagination_weight": float(
+            checkpoint["reward_config"].get("imagination_weight", -1.0)
+        ),
         "critic_loss_initial": critic_initial,
         "critic_loss_final": critic_final,
         "critic_loss_ratio": critic_final / max(critic_initial, 1e-12),
