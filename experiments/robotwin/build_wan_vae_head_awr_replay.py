@@ -64,6 +64,16 @@ def parse_args() -> argparse.Namespace:
         "--encoder-dtype", default="auto", choices=("auto", "fp32", "bf16", "fp16")
     )
     parser.add_argument("--batch-size", type=int, default=24)
+    parser.add_argument(
+        "--minimum-pairwise-accuracy",
+        type=float,
+        default=1.0,
+        help=(
+            "Fail below this success-vs-failure reward-ranking accuracy. Keep the "
+            "default for the audited single-task pipeline; a pre-registered "
+            "multi-task audit may pass a lower threshold explicitly."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -128,7 +138,11 @@ def normalized_score(raw_score: float, normalization: dict[str, float], clip: fl
     return float(clip * np.tanh((float(raw_score) - normalization["center"]) / normalization["scale"]))
 
 
-def validate_reward_payload(payload: dict[str, Any]) -> None:
+def validate_reward_payload(
+    payload: dict[str, Any], *, minimum_pairwise_accuracy: float = 1.0
+) -> None:
+    if not 0.0 <= minimum_pairwise_accuracy <= 1.0:
+        raise ValueError("minimum_pairwise_accuracy must be in [0, 1]")
     expected = {
         "schema_version": EXPECTED_SCHEMA,
         "feature_encoder": EXPECTED_FEATURE_ENCODER,
@@ -143,13 +157,18 @@ def validate_reward_payload(payload: dict[str, Any]) -> None:
     }
     if mismatches:
         raise ValueError(f"reward payload is not the audited head-only protocol: {mismatches}")
-    if float(payload.get("pairwise_accuracy", -1.0)) < 1.0:
-        raise ValueError("reward payload must pass the held-out pair-ranking audit")
+    actual_accuracy = float(payload.get("pairwise_accuracy", -1.0))
+    if actual_accuracy < minimum_pairwise_accuracy:
+        raise ValueError(
+            "reward payload failed the pair-ranking threshold: "
+            f"actual={actual_accuracy}, minimum={minimum_pairwise_accuracy}"
+        )
 
 
 def load_episode_records(
     *, root: Path, score_rows: list[dict[str, Any]], pair: dict[str, Any], behavior: str
 ) -> list[dict[str, Any]]:
+    task = str(pair["task"])
     score_lookup = {
         int(row["replan_idx"]): float(row["camera_scores"]["head"])
         for row in score_rows
@@ -161,6 +180,11 @@ def load_episode_records(
         record = json.loads(metadata_path.read_text(encoding="utf-8"))
         if record.get("schema_version") != SOURCE_SCHEMA:
             raise ValueError(f"unexpected source schema in {metadata_path}")
+        if str(record.get("task_name")) != task:
+            raise ValueError(
+                f"task mismatch in {metadata_path}: "
+                f"metadata={record.get('task_name')!r}, pair={task!r}"
+            )
         replan_idx = int(record["replan_idx"])
         alignment_valid = bool(record["alignment_valid"])
         trajectory_valid = bool(record.get("trajectory_alignment_valid", False))
@@ -181,9 +205,12 @@ def load_episode_records(
             {
                 "record_dir": str(metadata_path.parent),
                 "behavior": behavior,
+                "task_name": task,
                 "environment_seed": int(pair["environment_seed"]),
                 "pair_episode_id": int(pair["episode_id"]),
-                "episode_key": f"pair{int(pair['episode_id']):04d}-{behavior}",
+                "episode_key": (
+                    f"{task}-pair{int(pair['episode_id']):04d}-{behavior}"
+                ),
                 "wan_head_score": score_lookup.get(replan_idx, 0.0),
             }
         )
@@ -237,13 +264,20 @@ def build_replay(
     if len(records) != len(encoded):
         raise ValueError("record and encoded-feature counts differ")
     replay = ReplayBuffer()
+    task_ids = {
+        task: index
+        for index, task in enumerate(
+            sorted({str(record["task_name"]) for record in records})
+        )
+    }
     budgets: dict[str, EpisodeShapingBudget] = {}
     ordered = sorted(
         zip(records, encoded),
         key=lambda item: (item[0]["episode_key"], int(item[0]["replan_idx"])),
     )
     for record, features in ordered:
-        episode_id = f"robotwin2.0-open_microwave-{record['episode_key']}"
+        task_name = str(record["task_name"])
+        episode_id = f"robotwin2.0-{task_name}-{record['episode_key']}"
         target_k = int(record["target_step"])
         effective_k = int(record["effective_k"])
         arrays_path = Path(record["record_dir"]) / str(record["rollout_arrays_file"])
@@ -277,7 +311,7 @@ def build_replay(
                 episode_id=episode_id,
                 transition_index=int(record["replan_idx"]),
                 task_suite=str(record["task_suite"]),
-                task_id=0,
+                task_id=task_ids[task_name],
                 task_description=str(record["task_description"]),
                 env_seed=int(record["environment_seed"]),
                 goal_seed=0,
@@ -317,7 +351,9 @@ def main() -> None:
     args = parse_args()
     reward_path = args.reward_json.expanduser().resolve()
     payload = json.loads(reward_path.read_text(encoding="utf-8"))
-    validate_reward_payload(payload)
+    validate_reward_payload(
+        payload, minimum_pairwise_accuracy=args.minimum_pairwise_accuracy
+    )
     config_payload = OmegaConf.to_container(OmegaConf.load(args.reward_config), resolve=True)
     if not isinstance(config_payload, dict):
         raise ValueError("top-level reward config must be a mapping")
@@ -346,6 +382,8 @@ def main() -> None:
         imitation_dimension_scales=imitation_scales_array,
     )
     behavior_counts = Counter(str(record["behavior"]) for record in records)
+    task_transition_counts = Counter(str(record["task_name"]) for record in records)
+    task_pair_counts = Counter(str(pair["task"]) for pair in payload["pairs"])
     valid_counts = Counter(
         f"{record['behavior']}/{'valid' if record['alignment_valid'] else 'partial_terminal'}"
         for record in records
@@ -377,6 +415,11 @@ def main() -> None:
             "alignment_transition_counts": dict(sorted(valid_counts.items())),
             "environment_seeds": sorted({int(record["environment_seed"]) for record in records}),
             "pair_episode_ids": sorted({int(record["pair_episode_id"]) for record in records}),
+            "task_transition_counts": dict(sorted(task_transition_counts.items())),
+            "task_pair_counts": dict(sorted(task_pair_counts.items())),
+            "task_id_map": {
+                task: index for index, task in enumerate(sorted(task_transition_counts))
+            },
         },
     )
     raw_shaping = np.asarray([transition.reward.imagination_raw for transition in replay.transitions])
@@ -386,6 +429,8 @@ def main() -> None:
         "num_episodes": len({transition.episode_id for transition in replay.transitions}),
         "behavior_transition_counts": dict(sorted(behavior_counts.items())),
         "alignment_transition_counts": dict(sorted(valid_counts.items())),
+        "task_transition_counts": dict(sorted(task_transition_counts.items())),
+        "task_pair_counts": dict(sorted(task_pair_counts.items())),
         "normalization": normalization,
         "normalized_shaping_min": float(raw_shaping.min()),
         "normalized_shaping_mean": float(raw_shaping.mean()),

@@ -161,6 +161,17 @@ def main() -> None:
             }
         )
     margins = [float(pair["success_minus_failure"]) for pair in pairs]
+    task_names = sorted({str(pair["task"]) for pair in pairs})
+    per_task = {}
+    for task in task_names:
+        task_pairs = [pair for pair in pairs if str(pair["task"]) == task]
+        task_margins = [float(pair["success_minus_failure"]) for pair in task_pairs]
+        per_task[task] = {
+            "pair_count": len(task_pairs),
+            "correctly_ranked_count": sum(margin > 0.0 for margin in task_margins),
+            "pairwise_accuracy": float(np.mean([margin > 0.0 for margin in task_margins])),
+            "mean_success_minus_failure": float(np.mean(task_margins)),
+        }
     camera_pairwise = {}
     for camera in CAMERA_NAMES:
         camera_margins = [
@@ -191,6 +202,7 @@ def main() -> None:
             np.mean([bool(pair["correctly_ranked"]) for pair in pairs])
         ),
         "mean_success_minus_failure": float(np.mean(margins)),
+        "per_task": per_task,
         "per_camera_pairwise": camera_pairwise,
         "pairs": pairs,
         "latent_shape": encoder.latent_shape,

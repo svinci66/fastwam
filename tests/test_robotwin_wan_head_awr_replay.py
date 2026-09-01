@@ -37,6 +37,20 @@ def test_head_reward_protocol_and_episode_balanced_normalization():
     assert -0.1 <= low < high <= 0.1
 
 
+def test_multitask_audit_can_use_a_preregistered_ranking_threshold():
+    payload = {
+        "schema_version": "robotwin_natural_failure_wan_vae_pair_reward_v1",
+        "feature_encoder": "wan2.2_vae_single_frame_spatial_latent",
+        "trajectory_reference_policy": "frozen_once_per_action_chunk",
+        "time_offsets": [0, 4, 8, 12, 16, 20, 24],
+        "reward_cameras": ["head"],
+        "pairwise_accuracy": 0.75,
+    }
+    validate_reward_payload(payload, minimum_pairwise_accuracy=0.60)
+    with pytest.raises(ValueError, match="pair-ranking threshold"):
+        validate_reward_payload(payload)
+
+
 def test_head_trajectory_reward_cannot_silently_fall_back_to_endpoint_reward():
     features = {"head": np.asarray([1.0, 0.0], dtype=np.float32)}
     with pytest.raises(ValueError, match="precomputed trajectory reward label"):

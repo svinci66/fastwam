@@ -1,0 +1,59 @@
+{
+  "schema_version": "robotwin_wan_head_multitask_collection_plan_v1",
+  "frozen_at": "2026-09-01",
+  "research_question": "Does the frozen head-camera Wan-VAE imagination reward improve a shared residual policy beyond open_microwave?",
+  "tasks": [
+    {
+      "name": "open_microwave",
+      "candidate_screen_successes": 1,
+      "candidate_screen_episodes": 5,
+      "skill": "articulated pull"
+    },
+    {
+      "name": "hanging_mug",
+      "candidate_screen_successes": 2,
+      "candidate_screen_episodes": 5,
+      "skill": "precision hanging"
+    },
+    {
+      "name": "place_can_basket",
+      "candidate_screen_successes": 2,
+      "candidate_screen_episodes": 5,
+      "skill": "grasp and place"
+    },
+    {
+      "name": "blocks_ranking_size",
+      "candidate_screen_successes": 3,
+      "candidate_screen_episodes": 5,
+      "skill": "multi-object ordering"
+    }
+  ],
+  "excluded_first_round": {
+    "turn_switch": "Existing 5-episode screens were 80-100% successful, leaving too few natural failures.",
+    "adjust_bottle": "Existing baseline screens were 100% successful; reserve for later retention evaluation."
+  },
+  "collection": {
+    "episodes_per_task": 20,
+    "minimum_natural_failures_per_task": 8,
+    "pairing": "same current RoboTwin task, environment seed, scene selectors, initial observation, and instruction",
+    "trajectory_selection_uses_reward": false,
+    "reward_cameras": [
+      "head"
+    ],
+    "reward_time_offsets": [
+      0,
+      4,
+      8,
+      12,
+      16,
+      20,
+      24
+    ]
+  },
+  "stop_rules": {
+    "minimum_macro_pairwise_accuracy": 0.6,
+    "minimum_tasks_with_positive_mean_success_minus_failure": 3,
+    "failure_action": "Do not start multi-task residual training; inspect reward failures before collecting more data."
+  },
+  "evidence": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin/robotwin_uncond_3cam_384/robotwin_10step_candidate_screen_8task5ep_20260730/candidate_screen_summary.json"
+}
