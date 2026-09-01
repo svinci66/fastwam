@@ -9,6 +9,7 @@ remain separate episodes so Monte-Carlo returns never cross behavior boundaries.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import sys
@@ -72,6 +73,15 @@ def parse_args() -> argparse.Namespace:
             "Fail below this success-vs-failure reward-ranking accuracy. Keep the "
             "default for the audited single-task pipeline; a pre-registered "
             "multi-task audit may pass a lower threshold explicitly."
+        ),
+    )
+    parser.add_argument(
+        "--tasks",
+        default="",
+        help=(
+            "Optional comma-separated task allowlist. Filtering happens before "
+            "the pairwise-accuracy gate and replay normalization so excluded tasks "
+            "cannot affect training labels or task balancing."
         ),
     )
     return parser.parse_args()
@@ -163,6 +173,51 @@ def validate_reward_payload(
             "reward payload failed the pair-ranking threshold: "
             f"actual={actual_accuracy}, minimum={minimum_pairwise_accuracy}"
         )
+
+
+def select_reward_tasks(
+    payload: dict[str, Any], tasks: list[str] | tuple[str, ...]
+) -> dict[str, Any]:
+    """Return a reward payload restricted to an explicit task set.
+
+    Aggregate ranking fields are recomputed from the selected pairs.  This keeps
+    the replay builder's quality gate honest when a high-success retention task
+    is intentionally excluded from the residual learner.
+    """
+
+    requested = [str(task).strip() for task in tasks if str(task).strip()]
+    if not requested:
+        return payload
+    if len(set(requested)) != len(requested):
+        raise ValueError(f"duplicate task in --tasks: {requested}")
+    available = {str(pair["task"]) for pair in payload.get("pairs", [])}
+    missing = sorted(set(requested) - available)
+    if missing:
+        raise ValueError(f"requested tasks are absent from reward payload: {missing}")
+    selected_pairs = [
+        pair for pair in payload["pairs"] if str(pair["task"]) in set(requested)
+    ]
+    if not selected_pairs:
+        raise ValueError("task selection produced no reward pairs")
+    correctly_ranked = sum(bool(pair["correctly_ranked"]) for pair in selected_pairs)
+    margins = np.asarray(
+        [float(pair["success_minus_failure"]) for pair in selected_pairs],
+        dtype=np.float64,
+    )
+    selected = copy.deepcopy(payload)
+    selected["pairs"] = selected_pairs
+    selected["pair_count"] = len(selected_pairs)
+    selected["correctly_ranked_count"] = correctly_ranked
+    selected["pairwise_accuracy"] = correctly_ranked / len(selected_pairs)
+    selected["mean_success_minus_failure"] = float(np.mean(margins))
+    if isinstance(payload.get("per_task"), dict):
+        selected["per_task"] = {
+            task: copy.deepcopy(payload["per_task"][task])
+            for task in requested
+            if task in payload["per_task"]
+        }
+    selected["selected_tasks"] = requested
+    return selected
 
 
 def load_episode_records(
@@ -350,7 +405,9 @@ def build_replay(
 def main() -> None:
     args = parse_args()
     reward_path = args.reward_json.expanduser().resolve()
-    payload = json.loads(reward_path.read_text(encoding="utf-8"))
+    source_payload = json.loads(reward_path.read_text(encoding="utf-8"))
+    selected_tasks = [value.strip() for value in args.tasks.split(",") if value.strip()]
+    payload = select_reward_tasks(source_payload, selected_tasks)
     validate_reward_payload(
         payload, minimum_pairwise_accuracy=args.minimum_pairwise_accuracy
     )
@@ -420,6 +477,7 @@ def main() -> None:
             "task_id_map": {
                 task: index for index, task in enumerate(sorted(task_transition_counts))
             },
+            "selected_tasks": sorted(task_transition_counts),
         },
     )
     raw_shaping = np.asarray([transition.reward.imagination_raw for transition in replay.transitions])
@@ -431,6 +489,8 @@ def main() -> None:
         "alignment_transition_counts": dict(sorted(valid_counts.items())),
         "task_transition_counts": dict(sorted(task_transition_counts.items())),
         "task_pair_counts": dict(sorted(task_pair_counts.items())),
+        "selected_tasks": sorted(task_transition_counts),
+        "selected_pairwise_accuracy": float(payload["pairwise_accuracy"]),
         "normalization": normalization,
         "normalized_shaping_min": float(raw_shaping.min()),
         "normalized_shaping_mean": float(raw_shaping.mean()),

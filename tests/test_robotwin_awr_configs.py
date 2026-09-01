@@ -60,3 +60,20 @@ def test_wan_head_weight_candidates_change_only_the_registered_fields():
         candidate = load_config(name)
         assert differing_paths(control, candidate) == ALLOWED_CONFIG_DIFFERENCES
         assert candidate["reward"]["imagination_weight"] == expected_weight
+
+
+def test_multitask3_smoke_and_formal_configs_share_the_deployable_model():
+    smoke = load_config("robotwin_residual_awr_wan_head_multitask3_smoke.yaml")
+    formal = load_config("robotwin_residual_awr_wan_head_multitask3_formal.yaml")
+    differences = differing_paths(smoke, formal)
+    assert differences == {("experiment_name",), ("awr", "epochs")}
+    assert smoke["awr"]["epochs"] == 3
+    assert formal["awr"]["epochs"] == 20
+    assert formal["awr"]["balance_tasks"] is True
+    assert formal["model"]["zero_init_output"] is True
+    assert max(formal["model"]["residual_scale"]) == 0.1
+    assert formal["model"]["residual_scale"][6] == 0.0
+    assert formal["model"]["residual_scale"][13] == 0.0
+    assert formal["reward"]["imagination_reward_type"] == (
+        "wan_vae_head_trajectory_global_norm_v1"
+    )
