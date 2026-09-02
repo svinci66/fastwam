@@ -517,6 +517,7 @@ def main(cfg: DictConfig):
     protocol = {
         "paper_aligned": bool(cfg.EVALUATION.paper_aligned),
         "strict_paired": bool(cfg.EVALUATION.strict_paired),
+        "expert_check": bool(cfg.EVALUATION.expert_check),
         "task": str(cfg.EVALUATION.task_name),
         "task_config": str(cfg.EVALUATION.task_config),
         "episodes": int(cfg.EVALUATION.eval_num_episodes),

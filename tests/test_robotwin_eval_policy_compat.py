@@ -56,6 +56,7 @@ def eval_policy():
     assert "strict_environment_seeds[manifest_offset:manifest_stop]" in patched
     assert "strict_environment_seeds[succ_seed]" in patched
     assert 'manifest_entry.get("instructions")' in patched
+    assert 'manifest_entry.get("expert_feasibility_records")' in patched
     assert "strict_environment_instructions[manifest_offset:manifest_stop]" in patched
     assert "strict_environment_instructions[succ_seed - 1]" in patched
     assert "strict_environment_prevalidated" in patched
