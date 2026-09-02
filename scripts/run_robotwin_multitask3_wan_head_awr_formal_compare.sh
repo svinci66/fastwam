@@ -85,17 +85,13 @@ conda run --no-capture-output -n "${CONDA_ENV}" python -u \
   --tasks "${TASKS}" --episodes "${EPISODES}" \
   --output-json "${PREVALIDATED_SEED_MANIFEST_PATH}"
 
-printf '[formal-compare] stage=online_residuals variants=no_imagination,imagination tasks=%s episodes=%s\n' \
+printf '[formal-compare] stage=online_residuals_segmented variants=no_imagination,imagination tasks=%s episodes=%s\n' \
   "${TASKS}" "${EPISODES}"
-env "${COMMON_ENV[@]}" VARIANTS=no_imagination,imagination \
+env RUN_NAME="${RUN_NAME}" TASKS="${TASKS}" EPISODES="${EPISODES}" \
+  VARIANTS=no_imagination,imagination MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}" \
   SEED_MANIFEST_PATH="${PREVALIDATED_SEED_MANIFEST_PATH}" \
-  bash "${PROJECT_ROOT}/scripts/run_robotwin_residual_iql_online_pair.sh"
-
-conda run --no-capture-output -n "${CONDA_ENV}" python \
-  "${PROJECT_ROOT}/experiments/robotwin/summarize_residual_iql_online_pair.py" \
-  --result-base "${RESULT_BASE}" --run-name "${RUN_NAME}" \
-  --variants baseline,no_imagination,imagination --tasks "${TASKS}" \
-  --output-json "${AUDIT_ROOT}/summary.json"
+  CONTROL_DIR="${CONTROL_DIR}" TREATMENT_DIR="${TREATMENT_DIR}" \
+  bash "${PROJECT_ROOT}/scripts/run_robotwin_multitask3_wan_head_awr_segmented_residuals.sh"
 
 touch "${AUDIT_ROOT}/COMPLETE"
 printf '[formal-compare] complete summary=%s\n' "${AUDIT_ROOT}/summary.json"
