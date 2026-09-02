@@ -1,0 +1,11 @@
+[Unit]
+Description=Check FastWAM RoboTwin comparison every 30 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=fastwam-robotwin-monitor.service
+
+[Install]
+WantedBy=timers.target

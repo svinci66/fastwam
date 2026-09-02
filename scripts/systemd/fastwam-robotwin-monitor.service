@@ -1,0 +1,10 @@
+[Unit]
+Description=Audit and recover the FastWAM RoboTwin comparison
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/sj/fastwam/FastWAM-git
+Environment=PATH=/home/ubuntu/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/bash /home/ubuntu/sj/fastwam/FastWAM-git/scripts/monitor_robotwin_multitask3_compare.sh
+
