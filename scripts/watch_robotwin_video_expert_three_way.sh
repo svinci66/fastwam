@@ -3,6 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_SCRIPT="${RUN_SCRIPT:-${PROJECT_ROOT}/scripts/run_robotwin_video_expert_multitask3_three_way.sh}"
+RUNNER_PATTERN="${RUNNER_PATTERN:-$(basename "${RUN_SCRIPT}")}"
 RUN_ROOT="${RUN_ROOT:-${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/robotwin_video_expert_multitask3_no_imagination_epochs3_seed42_20260903}"
 ONLINE_RUN_NAME="${ONLINE_RUN_NAME:-robotwin_video_expert_multitask3_three_way_epoch003_5ep_20260903}"
 DRIVER_LOG="${DRIVER_LOG:-${RUN_ROOT}/three_way_driver.log}"
@@ -22,7 +23,7 @@ log() {
 }
 
 runner_alive() {
-  pgrep -f 'bash .*run_robotwin_video_expert_multitask3_three_way.sh' >/dev/null
+  pgrep -f "bash .*${RUNNER_PATTERN}" >/dev/null
 }
 
 evaluation_alive() {
