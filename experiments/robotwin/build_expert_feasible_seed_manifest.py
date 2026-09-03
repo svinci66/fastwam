@@ -84,7 +84,10 @@ def build_manifest(
     return {
         "_meta": {
             "schema_version": "robotwin_expert_feasible_heldout_manifest_v1",
-            "description": "Fresh open_microwave held-out seeds selected only by exact expert feasibility.",
+            "description": (
+                f"Fresh {task} held-out seeds selected only by exact expert "
+                "feasibility."
+            ),
             "task_config": "demo_clean",
             "selection_rule": "first expert-feasible candidates in pre-registered order",
             "expert_validation_mode": "prevalidated_exact_planning_and_replay",

@@ -1,4 +1,4 @@
-"""Audit the pre-registered no-imagination versus Wan-head held-out comparison."""
+"""Audit a pre-registered no-imagination versus imagination held-out pair."""
 
 from __future__ import annotations
 
@@ -20,13 +20,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--summary", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--expected-pairs", type=int, default=10)
+    parser.add_argument("--task", default="open_microwave")
     return parser.parse_args()
 
 
-def audit(payload: dict, *, expected_pairs: int = 10) -> dict:
+def audit(
+    payload: dict, *, expected_pairs: int = 10, task: str = "open_microwave"
+) -> dict:
     if expected_pairs <= 0:
         raise ValueError("expected_pairs must be positive")
-    task = "open_microwave"
+    if not task:
+        raise ValueError("task must be non-empty")
     if not payload["initial_state_audit"][task]["exact_match"]:
         raise ValueError("held-out initial observations are not exactly paired")
     if not payload["protocol_pairing_audit"][task]["exact_seed_and_instruction_match"]:
@@ -67,7 +71,8 @@ def audit(payload: dict, *, expected_pairs: int = 10) -> dict:
     else:
         decision = "inconclusive"
     result = {
-        "schema_version": "robotwin_wan_head_heldout_pair_audit_v1",
+        "schema_version": "robotwin_imagination_heldout_pair_audit_v1",
+        "task": task,
         "pairs": len(control),
         "control_successes": control_successes,
         "candidate_successes": candidate_successes,
@@ -124,6 +129,7 @@ def main() -> None:
     result = audit(
         json.loads(args.summary.read_text(encoding="utf-8")),
         expected_pairs=args.expected_pairs,
+        task=args.task,
     )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

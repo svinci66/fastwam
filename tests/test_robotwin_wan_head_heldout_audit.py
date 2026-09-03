@@ -1,7 +1,7 @@
 from experiments.robotwin.audit_wan_head_heldout_pair import audit
 
 
-def payload(control, candidate, baseline=None):
+def payload(control, candidate, baseline=None, task="open_microwave"):
     def records(values):
         return [
             {"seed": 100 + index, "instruction": f"instruction-{index}", "success": value}
@@ -9,18 +9,18 @@ def payload(control, candidate, baseline=None):
         ]
 
     rows = [
-        {"variant": "no_imagination", "task": "open_microwave", "status": "complete", "episode_records": records(control)},
-        {"variant": "imagination", "task": "open_microwave", "status": "complete", "episode_records": records(candidate)},
+        {"variant": "no_imagination", "task": task, "status": "complete", "episode_records": records(control)},
+        {"variant": "imagination", "task": task, "status": "complete", "episode_records": records(candidate)},
     ]
     if baseline is not None:
         rows.insert(
             0,
-            {"variant": "baseline", "task": "open_microwave", "status": "complete", "episode_records": records(baseline)},
+            {"variant": "baseline", "task": task, "status": "complete", "episode_records": records(baseline)},
         )
     return {
-        "initial_state_audit": {"open_microwave": {"exact_match": True}},
+        "initial_state_audit": {task: {"exact_match": True}},
         "protocol_pairing_audit": {
-            "open_microwave": {"exact_seed_and_instruction_match": True}
+            task: {"exact_seed_and_instruction_match": True}
         },
         "rows": rows,
     }
@@ -78,3 +78,14 @@ def test_three_way_audit_reports_both_residual_comparisons_to_baseline():
         "both_success": 1,
         "both_failure": 1,
     }
+
+
+def test_audit_supports_place_can_basket():
+    result = audit(
+        payload([False, True], [True, True], task="place_can_basket"),
+        expected_pairs=2,
+        task="place_can_basket",
+    )
+    assert result["task"] == "place_can_basket"
+    assert result["candidate_successes"] == 2
+    assert result["paired_wins"] == 1
