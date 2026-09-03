@@ -12,17 +12,17 @@ MODEL_BASE_PATH="${MODEL_BASE_PATH:-/home/ubuntu/sj/fastwam/checkpoints}"
 REWARD_JSON="${REWARD_JSON:-${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/robotwin_wan_head_multitask4_smoke2_20260901_wan_vae_head_reward/wan_vae_pair_rewards.json}"
 BASELINE_RUN_NAME="${BASELINE_RUN_NAME:-robotwin_wan_head_multitask3_awr_formal_block1_5ep_20260901}"
 SEED_MANIFEST_PATH="${SEED_MANIFEST_PATH:-${PROJECT_ROOT}/evaluate_results/robotwin_residual_online/${BASELINE_RUN_NAME}/prevalidated_seed_manifest.json}"
-CONFIG="${PROJECT_ROOT}/configs/rl/robotwin_residual_awr_video_expert_multitask3_imagination_smoke.yaml"
+CONFIG="${CONFIG:-${PROJECT_ROOT}/configs/rl/robotwin_residual_awr_video_expert_multitask3_imagination_smoke.yaml}"
 FEATURE_VERSION="fastwam_video_expert_final_token_mean_l2_v1"
 RUN_ROOT="${RUN_ROOT:-${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/robotwin_video_expert_multitask3_weight025_epochs3_seed${SEED}_20260903}"
-BACKFILL_DIR="${RUN_ROOT}/feature_backfill"
-REPLAY_DIR="${RUN_ROOT}/replay"
-TRAIN_DIR="${RUN_ROOT}/training/seed${SEED}/with_imagination"
+BACKFILL_DIR="${BACKFILL_DIR:-${RUN_ROOT}/feature_backfill}"
+REPLAY_DIR="${REPLAY_DIR:-${RUN_ROOT}/replay}"
+TRAIN_DIR="${TRAIN_DIR:-${RUN_ROOT}/training/seed${SEED}/with_imagination}"
 ONLINE_RUN_NAME="${ONLINE_RUN_NAME:-robotwin_video_expert_multitask3_weight025_epoch003_5ep_20260903}"
 
 case "${PHASE}" in
-  all|backfill|train|eval) ;;
-  *) printf 'PHASE must be all, backfill, train, or eval; got %s\n' "${PHASE}" >&2; exit 2 ;;
+  all|backfill|train|eval|train-eval) ;;
+  *) printf 'PHASE must be all, backfill, train, eval, or train-eval; got %s\n' "${PHASE}" >&2; exit 2 ;;
 esac
 
 for path in "${CHECKPOINT}" "${DATASET_STATS}" "${MODEL_BASE_PATH}" \
@@ -103,6 +103,10 @@ case "${PHASE}" in
   backfill) run_backfill_and_replay ;;
   train) run_train ;;
   eval) run_eval ;;
+  train-eval)
+    run_train
+    run_eval
+    ;;
 esac
 
 touch "${RUN_ROOT}/${PHASE^^}_COMPLETE"
