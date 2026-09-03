@@ -7,6 +7,7 @@ CHECKPOINT="${CHECKPOINT:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/ro
 DATASET_STATS="${DATASET_STATS:-/home/ubuntu/sj/fastwam/checkpoints/fastwam_release/robotwin_uncond_3cam_384_dataset_stats.json}"
 ROBOTWIN_ROOT="${ROBOTWIN_ROOT:-/home/ubuntu/sj/fastwam/RoboTwin-upstream}"
 SIGLIP_PATH="${SIGLIP_PATH:-/home/ubuntu/sj/fastwam/checkpoints/siglip-so400m-patch14-384-modelscope}"
+RESIDUAL_ENCODER_PATH="${RESIDUAL_ENCODER_PATH:-${SIGLIP_PATH}}"
 RESIDUAL_ROOT="${RESIDUAL_ROOT:-${PROJECT_ROOT}/evaluate_results/robotwin_residual_rl/robotwin_expert10_residual_iql_20260729}"
 NO_IMAGINATION_CHECKPOINT="${NO_IMAGINATION_CHECKPOINT:-${RESIDUAL_ROOT}/iql_balanced_no_imagination/checkpoint.pt}"
 IMAGINATION_CHECKPOINT="${IMAGINATION_CHECKPOINT:-${RESIDUAL_ROOT}/iql_balanced_imagination/checkpoint.pt}"
@@ -68,9 +69,15 @@ for path in "${CHECKPOINT}" "${DATASET_STATS}" \
   "${NO_IMAGINATION_CHECKPOINT}" "${IMAGINATION_CHECKPOINT}"; do
   [[ -f "${path}" ]] || { printf 'Missing file: %s\n' "${path}" >&2; exit 1; }
 done
-for path in "${ROBOTWIN_ROOT}" "${SIGLIP_PATH}"; do
+for path in "${ROBOTWIN_ROOT}"; do
   [[ -d "${path}" ]] || { printf 'Missing directory: %s\n' "${path}" >&2; exit 1; }
 done
+if [[ "${RESIDUAL_ENCODER_PATH}" != "none" && "${RESIDUAL_ENCODER_PATH}" != "null" ]]; then
+  [[ -d "${RESIDUAL_ENCODER_PATH}" ]] || {
+    printf 'Missing residual encoder directory: %s\n' "${RESIDUAL_ENCODER_PATH}" >&2
+    exit 1
+  }
+fi
 [[ "${EPISODES}" =~ ^[1-9][0-9]*$ ]] || { printf 'EPISODES must be positive\n' >&2; exit 1; }
 [[ "${INFERENCE_STEPS}" =~ ^[1-9][0-9]*$ ]] || { printf 'INFERENCE_STEPS must be positive\n' >&2; exit 1; }
 [[ "${REPLAN_STEPS}" =~ ^[1-9][0-9]*$ ]] || { printf 'REPLAN_STEPS must be positive\n' >&2; exit 1; }
@@ -182,7 +189,7 @@ for variant in "${variants[@]}"; do
       fi
       residual_args=(
         "EVALUATION.residual_checkpoint=${residual_checkpoint}"
-        "EVALUATION.residual_encoder_path=${SIGLIP_PATH}"
+        "EVALUATION.residual_encoder_path=${RESIDUAL_ENCODER_PATH}"
         "EVALUATION.residual_encoder_version=${RESIDUAL_ENCODER_VERSION}"
         "EVALUATION.residual_encoder_dtype=bf16"
         "EVALUATION.residual_device=${RESIDUAL_DEVICE}"
