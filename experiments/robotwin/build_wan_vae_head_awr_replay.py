@@ -1,9 +1,11 @@
 """Build a residual-AWR replay from audited head-camera Wan-VAE pair rewards.
 
-The residual actor keeps the deployable three-camera SigLIP observation input.
-Only the immutable reward label comes from the head-camera Wan-VAE trajectory
-agreement score.  Successful expert and natural FastWAM-failure trajectories
-remain separate episodes so Monte-Carlo returns never cross behavior boundaries.
+The preferred actor observation is the frozen FastWAM Video Expert feature
+captured by the same inference call that produced the baseline action.  Legacy
+SigLIP observations remain available only for reproducing prior ablations.
+Only the immutable reward label comes from head-camera Wan-VAE trajectory
+agreement.  Successful expert and natural FastWAM-failure trajectories remain
+separate episodes so Monte-Carlo returns never cross behavior boundaries.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ from fastwam.rl.rewards import (
     WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE,
     compute_composite_reward,
 )
+from fastwam.models.wan22.fastwam import FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
 
 EXPECTED_SCHEMA = "robotwin_natural_failure_wan_vae_pair_reward_v1"
 EXPECTED_FEATURE_ENCODER = "wan2.2_vae_single_frame_spatial_latent"
@@ -51,14 +54,24 @@ EXPECTED_REFERENCE_POLICY = "frozen_once_per_action_chunk"
 EXPECTED_TIME_OFFSETS = [0, 4, 8, 12, 16, 20, 24]
 SOURCE_SCHEMA = "robotwin_imagination_trajectory_v2"
 FEATURE_FUSION = "per_camera_l2_then_head_left_right_concat_l2_v1"
+VIDEO_EXPERT_FUSION = "final_layer_token_mean_l2_v1"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reward-json", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--encoder-path", type=Path, required=True)
+    parser.add_argument("--encoder-path", type=Path)
     parser.add_argument("--observation-encoder-version", required=True)
+    parser.add_argument(
+        "--actor-observation-source",
+        choices=("fastwam_video_expert", "siglip"),
+        default="fastwam_video_expert",
+        help=(
+            "Use native features saved by FastWAM inference (default), or the "
+            "legacy independently encoded three-camera SigLIP observation."
+        ),
+    )
     parser.add_argument("--reward-config", type=Path, required=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
@@ -307,12 +320,87 @@ def discover_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return records
 
 
+def load_video_expert_record_features(
+    records: list[dict[str, Any]],
+    *,
+    expected_version: str = FASTWAM_VIDEO_EXPERT_FEATURE_VERSION,
+) -> list[dict[str, dict[str, np.ndarray]]]:
+    """Load native FastWAM observations captured with each baseline action.
+
+    AWR is intentionally configured with ``use_goal_conditioning=false``.  The
+    replay schema still requires next/goal feature slots, so both are explicit
+    copies of the current native feature and provenance records that they are
+    placeholders.  They must not be used by a goal-conditioned learner.
+    """
+
+    encoded: list[dict[str, dict[str, np.ndarray]]] = []
+    feature_dim: int | None = None
+    for record in records:
+        version = str(record.get("video_expert_feature_version", "")).strip()
+        if version != expected_version:
+            raise ValueError(
+                "Missing or incompatible FastWAM Video Expert feature in "
+                f"{record['record_dir']}: actual={version!r}, expected={expected_version!r}. "
+                "Re-export/backfill the transition with the current FastWAM checkpoint."
+            )
+        checkpoint_sha256 = str(
+            record.get("video_expert_checkpoint_sha256", "")
+        ).strip()
+        if len(checkpoint_sha256) != 64:
+            raise ValueError(
+                f"Missing FastWAM checkpoint SHA-256 in {record['record_dir']}"
+            )
+        arrays_path = Path(record["record_dir"]) / str(record["rollout_arrays_file"])
+        with np.load(arrays_path, allow_pickle=False) as payload:
+            if "video_expert_feature" not in payload.files:
+                raise ValueError(
+                    f"{arrays_path} lacks video_expert_feature; re-export/backfill it"
+                )
+            feature = np.asarray(
+                payload["video_expert_feature"], dtype=np.float32
+            ).reshape(-1)
+        if feature.size == 0 or not np.all(np.isfinite(feature)):
+            raise ValueError(f"Invalid Video Expert feature in {arrays_path}")
+        declared_dim = int(record.get("video_expert_feature_dim", -1))
+        if declared_dim != feature.size:
+            raise ValueError(
+                f"Video Expert feature dimension mismatch in {arrays_path}: "
+                f"metadata={declared_dim}, array={feature.size}"
+            )
+        if feature_dim is None:
+            feature_dim = int(feature.size)
+        elif feature.size != feature_dim:
+            raise ValueError(
+                f"Mixed Video Expert feature dimensions: {feature_dim} and {feature.size}"
+            )
+        encoded.append(
+            {
+                "current": {"native": feature},
+                "actual": {"native": feature.copy()},
+                "predicted_goal": {"native": feature.copy()},
+            }
+        )
+    return encoded
+
+
+def collapse_record_feature(
+    features: dict[str, np.ndarray], *, observation_source: str
+) -> np.ndarray:
+    if observation_source == "fastwam_video_expert":
+        if set(features) != {"native"}:
+            raise ValueError(f"Expected one native Video Expert feature, got {sorted(features)}")
+        return np.asarray(features["native"], dtype=np.float32).reshape(-1)
+    if observation_source == "siglip":
+        return combine_camera_features(features)
+    raise ValueError(f"Unsupported actor observation source: {observation_source!r}")
+
+
 def build_replay(
     records: list[dict[str, Any]],
     encoded: list[dict[str, dict[str, np.ndarray]]],
     *,
     reward_config: CompositeRewardConfig,
-    observation_encoder_version: str,
+    observation_source: str,
     normalization: dict[str, float],
     imitation_dimension_scales: np.ndarray | None,
 ) -> ReplayBuffer:
@@ -373,8 +461,7 @@ def build_replay(
                 action_seed=int(record.get("action_corruption_seed", 0)),
                 policy_version=str(record["policy_version"]),
                 predictor_version=str(record["predictor_version"]),
-                # Kept as the actor observation encoder for online compatibility.
-                reward_encoder_version=observation_encoder_version,
+                reward_encoder_version=EXPECTED_FEATURE_ENCODER,
                 behavior_mode=str(record["action_mode"]),
                 action_noise_std=float(record.get("action_noise_std", 0.0)),
                 target_k=target_k,
@@ -385,9 +472,15 @@ def build_replay(
                 truncated=bool(record["truncated"]),
                 success=bool(record["transition_success"]),
                 alignment_valid=alignment_valid,
-                observation_feature=combine_camera_features(features["current"]),
-                next_observation_feature=combine_camera_features(features["actual"]),
-                goal_feature=combine_camera_features(features["predicted_goal"]),
+                observation_feature=collapse_record_feature(
+                    features["current"], observation_source=observation_source
+                ),
+                next_observation_feature=collapse_record_feature(
+                    features["actual"], observation_source=observation_source
+                ),
+                goal_feature=collapse_record_feature(
+                    features["predicted_goal"], observation_source=observation_source
+                ),
                 proprio=np.asarray(arrays["proprio"], dtype=np.float32),
                 next_proprio=np.asarray(arrays["next_proprio"], dtype=np.float32),
                 baseline_actions=baseline_actions,
@@ -418,23 +511,45 @@ def main() -> None:
     reward_config.validate()
     if reward_config.imagination_reward_type != WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE:
         raise ValueError("reward config must select the head-camera Wan-VAE reward type")
+    if args.actor_observation_source == "fastwam_video_expert" and bool(
+        config_payload.get("awr", {}).get("use_goal_conditioning", False)
+    ):
+        raise ValueError(
+            "FastWAM-native replay currently captures the current Video Expert "
+            "feature only and requires awr.use_goal_conditioning=false"
+        )
     imitation_scales = config_payload.get("imitation_dimension_scales")
     imitation_scales_array = None if imitation_scales is None else np.asarray(imitation_scales, dtype=np.float32)
     records = discover_records(payload)
     normalization = fit_episode_balanced_normalization(records)
-    encoder_dtype = resolve_encoder_dtype(args.encoder_dtype, device=args.device)
-    encoded = encode_record_images(
-        records,
-        encoder_path=args.encoder_path,
-        device=args.device,
-        batch_size=args.batch_size,
-        encoder_dtype=encoder_dtype,
-    )
+    if args.actor_observation_source == "fastwam_video_expert":
+        if args.encoder_path is not None:
+            raise ValueError(
+                "--encoder-path must be omitted for FastWAM-native observations"
+            )
+        if args.observation_encoder_version != FASTWAM_VIDEO_EXPERT_FEATURE_VERSION:
+            raise ValueError(
+                "FastWAM-native observations require --observation-encoder-version="
+                f"{FASTWAM_VIDEO_EXPERT_FEATURE_VERSION}"
+            )
+        encoder_dtype = None
+        encoded = load_video_expert_record_features(records)
+    else:
+        if args.encoder_path is None:
+            raise ValueError("legacy SigLIP observations require --encoder-path")
+        encoder_dtype = resolve_encoder_dtype(args.encoder_dtype, device=args.device)
+        encoded = encode_record_images(
+            records,
+            encoder_path=args.encoder_path,
+            device=args.device,
+            batch_size=args.batch_size,
+            encoder_dtype=encoder_dtype,
+        )
     replay = build_replay(
         records,
         encoded,
         reward_config=reward_config,
-        observation_encoder_version=args.observation_encoder_version,
+        observation_source=args.actor_observation_source,
         normalization=normalization,
         imitation_dimension_scales=imitation_scales_array,
     )
@@ -448,12 +563,37 @@ def main() -> None:
     language_versions = {str(record["language_encoder_version"]) for record in records}
     if len(language_versions) != 1:
         raise ValueError(f"mixed language encoder versions: {sorted(language_versions)}")
+    video_expert_checkpoint_hashes = {
+        str(record.get("video_expert_checkpoint_sha256", "")).strip()
+        for record in records
+        if args.actor_observation_source == "fastwam_video_expert"
+    }
+    if args.actor_observation_source == "fastwam_video_expert" and len(
+        video_expert_checkpoint_hashes
+    ) != 1:
+        raise ValueError(
+            "FastWAM-native replay must use exactly one base checkpoint, got "
+            f"{sorted(video_expert_checkpoint_hashes)}"
+        )
     output = replay.save(
         args.output_dir,
         provenance={
-            "reward_encoder_version": args.observation_encoder_version,
+            "reward_encoder_version": EXPECTED_FEATURE_ENCODER,
             "observation_encoder_version": args.observation_encoder_version,
-            "observation_encoder_path": str(args.encoder_path.expanduser().resolve()),
+            "observation_encoder_path": (
+                None
+                if args.encoder_path is None
+                else str(args.encoder_path.expanduser().resolve())
+            ),
+            "observation_feature_dim": int(
+                replay.transitions[0].observation_feature.size
+            ),
+            "actor_observation_source": args.actor_observation_source,
+            "fastwam_checkpoint_sha256": (
+                next(iter(video_expert_checkpoint_hashes))
+                if video_expert_checkpoint_hashes
+                else None
+            ),
             "wan_reward_encoder": EXPECTED_FEATURE_ENCODER,
             "wan_reward_source_json": str(reward_path),
             "wan_reward_source_sha256": sha256(reward_path),
@@ -461,10 +601,29 @@ def main() -> None:
             "reward_time_offsets": EXPECTED_TIME_OFFSETS,
             "trajectory_reference_policy": EXPECTED_REFERENCE_POLICY,
             "reward_normalization": normalization,
-            "camera_names": list(ROBOTWIN_CAMERA_NAMES),
-            "camera_image_size": 224,
-            "encoder_dtype": str(encoder_dtype).removeprefix("torch."),
-            "feature_fusion": FEATURE_FUSION,
+            "camera_names": (
+                list(ROBOTWIN_CAMERA_NAMES)
+                if args.actor_observation_source == "siglip"
+                else ["robotwin_composite_head_left_right"]
+            ),
+            "camera_image_size": (
+                224 if args.actor_observation_source == "siglip" else [384, 320]
+            ),
+            "encoder_dtype": (
+                None
+                if encoder_dtype is None
+                else str(encoder_dtype).removeprefix("torch.")
+            ),
+            "feature_fusion": (
+                FEATURE_FUSION
+                if args.actor_observation_source == "siglip"
+                else VIDEO_EXPERT_FUSION
+            ),
+            "unused_feature_fields": (
+                None
+                if args.actor_observation_source == "siglip"
+                else "next_and_goal_copy_current_use_goal_conditioning_false"
+            ),
             "language_encoder_version": next(iter(language_versions)),
             "language_pooling": "fastwam_umt5_masked_mean_v1",
             "source_schema": SOURCE_SCHEMA,

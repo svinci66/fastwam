@@ -121,6 +121,12 @@ def export_case(
             ) = policy._infer_action_chunk(current, instruction)
             if predicted_frames is None:
                 raise RuntimeError("FastWAM did not return a frozen imagined trajectory")
+            video_expert_feature = policy._last_video_expert_feature
+            video_expert_feature_version = policy._last_video_expert_feature_version
+            if video_expert_feature is None or not video_expert_feature_version:
+                raise RuntimeError(
+                    "FastWAM did not expose the native Video Expert feature"
+                )
 
             frame_stride = int(policy.action_video_freq_ratio)
             predicted_offsets = list(range(0, replan_steps + 1, frame_stride))
@@ -199,6 +205,11 @@ def export_case(
                     "predictor_version": "fastwam_infer_joint_frozen",
                     "language_encoder_version": "fastwam_umt5_masked_mean_v1",
                     "language_prompt_template": DEFAULT_PROMPT,
+                    "video_expert_feature_version": video_expert_feature_version,
+                    "video_expert_feature_dim": int(video_expert_feature.size),
+                    "video_expert_checkpoint_sha256": (
+                        policy._fastwam_checkpoint_sha256
+                    ),
                     "expert_source": str(expert_hdf5.resolve()),
                     "expert_action_alignment": "next_qpos_t_plus_1_v1",
                 },
@@ -214,6 +225,7 @@ def export_case(
                     "executed_actions": expert_actions,
                     "environment_rewards": environment_rewards,
                     "language_feature": language_feature,
+                    "video_expert_feature": video_expert_feature,
                 },
                 predicted_trajectory_frames=predicted_frames,
                 predicted_trajectory_action_offsets=predicted_offsets,

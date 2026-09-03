@@ -32,6 +32,7 @@ if [[ ! -s "${REPLAY_DIR}/manifest.json" ]]; then
   conda run --no-capture-output -n "${CONDA_ENV}" python -u \
     "${PROJECT_ROOT}/experiments/robotwin/build_wan_vae_head_awr_replay.py" \
     --reward-json "${REWARD_JSON}" --output-dir "${REPLAY_DIR}" \
+    --actor-observation-source siglip \
     --encoder-path "${ENCODER_PATH}" \
     --observation-encoder-version "${ENCODER_VERSION}" \
     --reward-config "${FORMAL_CONFIG}" --tasks "${TASKS}" \

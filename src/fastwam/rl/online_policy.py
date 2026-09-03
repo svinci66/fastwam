@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from fastwam.models.wan22.fastwam import FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
+
 from .models import (
     ActionValueCritic,
     ActionValueCriticConfig,
@@ -275,19 +277,20 @@ class ResidualPolicyOutput:
 
 
 class OnlineResidualPolicy:
-    """Frozen SigLIP observation encoder plus a trained residual actor."""
+    """A trained residual actor with either internal or FastWAM-native vision."""
 
     def __init__(
         self,
         *,
         actor: ResidualActor,
-        image_processor: Any,
-        vision_encoder: torch.nn.Module,
+        image_processor: Any | None,
+        vision_encoder: torch.nn.Module | None,
         device: torch.device | str,
         encoder_dtype: torch.dtype,
         checkpoint_path: str | Path,
-        encoder_path: str | Path,
+        encoder_path: str | Path | None,
         encoder_version: str,
+        fastwam_checkpoint_sha256: str | None = None,
         language_encoder_version: str | None = None,
         camera_image_size: int = 224,
         camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
@@ -318,8 +321,17 @@ class OnlineResidualPolicy:
         self.device = torch.device(device)
         self.encoder_dtype = encoder_dtype
         self.checkpoint_path = str(Path(checkpoint_path).expanduser().resolve())
-        self.encoder_path = str(Path(encoder_path).expanduser().resolve())
+        self.encoder_path = (
+            None
+            if encoder_path is None
+            else str(Path(encoder_path).expanduser().resolve())
+        )
         self.encoder_version = str(encoder_version)
+        self.fastwam_checkpoint_sha256 = (
+            None
+            if fastwam_checkpoint_sha256 is None
+            else str(fastwam_checkpoint_sha256).strip()
+        )
         self.language_encoder_version = (
             None
             if language_encoder_version is None
@@ -412,10 +424,10 @@ class OnlineResidualPolicy:
         cls,
         *,
         checkpoint_path: str | Path,
-        encoder_path: str | Path,
+        encoder_path: str | Path | None,
         device: torch.device | str,
         encoder_dtype: torch.dtype,
-        encoder_version: str,
+        encoder_version: str | None,
         language_encoder_version: str | None = None,
         camera_image_size: int = 224,
         camera_names: tuple[str, ...] = LIBERO_RESIDUAL_CAMERA_NAMES,
@@ -441,16 +453,11 @@ class OnlineResidualPolicy:
         outcome_confirmation_min_progress: float = 0.0,
         outcome_confirmation_reanchor_replans: int = 1,
     ) -> "OnlineResidualPolicy":
-        from transformers import SiglipImageProcessor, SiglipVisionModel
-
         device = torch.device(device)
         # Encoder precision is part of replay provenance and can affect a
         # near-threshold Q/OOD decision.  CPU bf16 is supported by the local
         # SigLIP runtime, so preserve it instead of silently switching to fp32.
         encoder_dtype = _encoder_dtype_for_device(device, encoder_dtype)
-        encoder_path = Path(encoder_path).expanduser().resolve()
-        if not encoder_path.is_dir():
-            raise FileNotFoundError(encoder_path)
         actor, payload = load_residual_actor_checkpoint(checkpoint_path, device=device)
         summary = payload.get("summary")
         if not isinstance(summary, dict):
@@ -458,9 +465,6 @@ class OnlineResidualPolicy:
         _validate_paired_gate_deployment(
             payload, enabled=paired_advantage_gate_enabled
         )
-        encoder_version = str(encoder_version).strip()
-        if not encoder_version:
-            raise ValueError("encoder_version must be a non-empty immutable identifier.")
         provenance = payload.get("replay_provenance")
         if not provenance:
             if not allow_legacy_provenance:
@@ -470,17 +474,46 @@ class OnlineResidualPolicy:
                 )
         elif not isinstance(provenance, dict):
             raise ValueError("Residual checkpoint replay_provenance must be a mapping.")
-        else:
-            expected = {
-                "reward_encoder_version": encoder_version,
-                "camera_names": list(camera_names),
-                "camera_image_size": int(camera_image_size),
-                "feature_fusion": str(feature_fusion),
-            }
+        checkpoint_encoder_version = ""
+        if isinstance(provenance, dict):
+            checkpoint_encoder_version = str(
+                provenance.get("observation_encoder_version")
+                or provenance.get("reward_encoder_version")
+                or ""
+            ).strip()
+        requested_encoder_version = str(encoder_version or "").strip()
+        if not requested_encoder_version:
+            requested_encoder_version = checkpoint_encoder_version
+        if not requested_encoder_version:
+            raise ValueError("encoder_version must be a non-empty immutable identifier.")
+        uses_fastwam_video_expert = (
+            requested_encoder_version == FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
+        )
+        if checkpoint_encoder_version and (
+            checkpoint_encoder_version != requested_encoder_version
+        ):
+            raise ValueError(
+                "Residual observation encoder provenance mismatch: "
+                f"checkpoint={checkpoint_encoder_version!r} "
+                f"requested={requested_encoder_version!r}."
+            )
+        if isinstance(provenance, dict):
+            expected = {"observation_encoder_version": requested_encoder_version}
+            if "observation_encoder_version" not in provenance:
+                # Legacy SigLIP replays stored this under reward_encoder_version.
+                expected = {"reward_encoder_version": requested_encoder_version}
+            if not uses_fastwam_video_expert:
+                expected.update(
+                    {
+                        "camera_names": list(camera_names),
+                        "camera_image_size": int(camera_image_size),
+                        "feature_fusion": str(feature_fusion),
+                    }
+                )
             # New replay manifests record the SigLIP precision because bf16
             # versus fp32 can move a high-confidence gate near its threshold.
             # Keep legacy checkpoints loadable when this field is absent.
-            if "encoder_dtype" in provenance:
+            if not uses_fastwam_video_expert and "encoder_dtype" in provenance:
                 expected["encoder_dtype"] = str(encoder_dtype).removeprefix("torch.")
             mismatches = {
                 key: {"checkpoint": provenance.get(key), "requested": value}
@@ -490,20 +523,59 @@ class OnlineResidualPolicy:
             if mismatches:
                 raise ValueError(f"Residual encoder provenance mismatch: {mismatches}")
 
-        image_processor = SiglipImageProcessor.from_pretrained(
-            encoder_path, local_files_only=True
-        )
-        vision_encoder = SiglipVisionModel.from_pretrained(
-            encoder_path,
-            local_files_only=True,
-            low_cpu_mem_usage=True,
-            torch_dtype=encoder_dtype,
-        ).to(device).eval()
-        hidden_size = int(vision_encoder.config.hidden_size)
-        expected_feature_dim = len(camera_names) * hidden_size
+        resolved_encoder_path: Path | None = None
+        image_processor = None
+        vision_encoder = None
+        if uses_fastwam_video_expert:
+            expected_feature_dim = int(summary.get("feature_dim", -1))
+            provenance_feature_dim = (
+                None
+                if not isinstance(provenance, dict)
+                else provenance.get("observation_feature_dim")
+            )
+            if provenance_feature_dim is not None and int(provenance_feature_dim) != expected_feature_dim:
+                raise ValueError(
+                    "Residual checkpoint feature_dim does not match native Video Expert provenance: "
+                    f"checkpoint={expected_feature_dim} provenance={provenance_feature_dim}."
+                )
+            if encoder_path is not None:
+                raise ValueError(
+                    "FastWAM-native residual checkpoints reuse the loaded Video Expert and "
+                    "must not configure a separate residual_encoder_path."
+                )
+            expected_fastwam_hash = (
+                None
+                if not isinstance(provenance, dict)
+                else str(provenance.get("fastwam_checkpoint_sha256", "")).strip()
+            )
+            if expected_fastwam_hash is None or len(expected_fastwam_hash) != 64:
+                raise ValueError(
+                    "FastWAM-native residual checkpoint lacks an immutable "
+                    "fastwam_checkpoint_sha256 provenance value."
+                )
+        else:
+            expected_fastwam_hash = None
+            from transformers import SiglipImageProcessor, SiglipVisionModel
+
+            if encoder_path is None:
+                raise ValueError("SigLIP residual checkpoints require encoder_path")
+            resolved_encoder_path = Path(encoder_path).expanduser().resolve()
+            if not resolved_encoder_path.is_dir():
+                raise FileNotFoundError(resolved_encoder_path)
+            image_processor = SiglipImageProcessor.from_pretrained(
+                resolved_encoder_path, local_files_only=True
+            )
+            vision_encoder = SiglipVisionModel.from_pretrained(
+                resolved_encoder_path,
+                local_files_only=True,
+                low_cpu_mem_usage=True,
+                torch_dtype=encoder_dtype,
+            ).to(device).eval()
+            hidden_size = int(vision_encoder.config.hidden_size)
+            expected_feature_dim = len(camera_names) * hidden_size
         if int(summary.get("feature_dim", -1)) != expected_feature_dim:
             raise ValueError(
-                "Residual checkpoint feature_dim does not match the SigLIP encoder: "
+                "Residual checkpoint feature_dim does not match the observation encoder: "
                 f"checkpoint={summary.get('feature_dim')} encoder={expected_feature_dim}."
             )
         expected_context_dim = expected_feature_dim + int(summary.get("proprio_dim", -1))
@@ -579,8 +651,9 @@ class OnlineResidualPolicy:
             device=device,
             encoder_dtype=encoder_dtype,
             checkpoint_path=checkpoint_path,
-            encoder_path=encoder_path,
-            encoder_version=encoder_version,
+            encoder_path=resolved_encoder_path,
+            encoder_version=requested_encoder_version,
+            fastwam_checkpoint_sha256=expected_fastwam_hash,
             language_encoder_version=language_encoder_version,
             camera_image_size=camera_image_size,
             camera_names=camera_names,
@@ -618,7 +691,20 @@ class OnlineResidualPolicy:
     def requires_language_conditioning(self) -> bool:
         return self.actor.config.language_feature_dim > 0
 
+    @property
+    def requires_external_observation_feature(self) -> bool:
+        """Whether FastWAM must supply its native feature from baseline inference."""
+
+        return self.encoder_version == FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
+
     def encode_observation(self, camera_images: Mapping[str, Any]) -> np.ndarray:
+        if self.requires_external_observation_feature:
+            raise RuntimeError(
+                "FastWAM-native residuals require video_expert_feature from the "
+                "same FastWAM inference call; independent image encoding is disabled."
+            )
+        if self.image_processor is None or self.vision_encoder is None:
+            raise RuntimeError("Residual image encoder is not initialized")
         if set(camera_images) != set(self.camera_names):
             raise ValueError(
                 f"Expected camera images {self.camera_names}, "

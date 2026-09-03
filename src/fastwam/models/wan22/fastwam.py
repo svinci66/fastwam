@@ -14,6 +14,35 @@ from .schedulers.scheduler_continuous import WanContinuousFlowMatchScheduler
 
 logger = get_logger(__name__)
 
+FASTWAM_VIDEO_EXPERT_FEATURE_VERSION = (
+    "fastwam_video_expert_final_token_mean_l2_v1"
+)
+
+
+def pool_video_expert_tokens(tokens: torch.Tensor) -> torch.Tensor:
+    """Pool frozen final-layer Video Expert tokens into one stable feature.
+
+    The Video Expert preserves a spatial token sequence for the composite
+    RoboTwin camera image.  Residual AWR expects a fixed-width observation
+    vector, so we mean-pool the contextualized final-layer tokens and L2
+    normalize the result.  Pooling is deliberately parameter-free: the frozen
+    FastWAM representation remains the sole visual encoder and train/online
+    extraction cannot drift through a separately learned adapter.
+    """
+
+    if tokens.ndim != 3:
+        raise ValueError(
+            "Video Expert tokens must have shape [B, S, D], "
+            f"got {tuple(tokens.shape)}"
+        )
+    if tokens.shape[1] <= 0 or tokens.shape[2] <= 0:
+        raise ValueError(f"Video Expert token shape must be non-empty, got {tuple(tokens.shape)}")
+    pooled = tokens.float().mean(dim=1)
+    norms = torch.linalg.vector_norm(pooled, dim=-1, keepdim=True)
+    if torch.any(~torch.isfinite(pooled)) or torch.any(norms <= 1e-12):
+        raise ValueError("Video Expert pooled features must be finite and non-zero")
+    return pooled / norms
+
 
 class FastWAM(torch.nn.Module):
     """MoT world model with video/action experts."""
@@ -920,6 +949,130 @@ class FastWAM(torch.nn.Module):
         }
 
     @torch.no_grad()
+    def encode_video_expert_feature(
+        self,
+        prompt: Optional[str],
+        input_image: torch.Tensor,
+        proprio: Optional[torch.Tensor] = None,
+        context: Optional[torch.Tensor] = None,
+        context_mask: Optional[torch.Tensor] = None,
+        tiled: bool = False,
+    ) -> dict[str, Any]:
+        """Encode one policy observation with FastWAM's frozen Video Expert.
+
+        This is the offline/backfill counterpart of
+        ``infer_action(return_video_expert_feature=True)``.  It executes only
+        the first-frame VAE and Video Expert prefill, not action denoising.
+        """
+
+        self.eval()
+        if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
+            raise ValueError(
+                "Video Expert residual features require "
+                "video_attention_mask_mode='first_frame_causal'."
+            )
+        if input_image.ndim == 3:
+            input_image = input_image.unsqueeze(0)
+        if input_image.ndim != 4 or input_image.shape[0] != 1 or input_image.shape[1] != 3:
+            raise ValueError(
+                "`input_image` must have shape [1,3,H,W] or [3,H,W], "
+                f"got {tuple(input_image.shape)}"
+            )
+        _, _, height, width = input_image.shape
+        if height % 16 != 0 or width % 16 != 0:
+            raise ValueError(
+                "`input_image` spatial dimensions must be multiples of 16, "
+                f"got HxW=({height},{width})"
+            )
+        if proprio is not None:
+            if self.proprio_dim is None:
+                raise ValueError(
+                    "`proprio` was provided but FastWAM proprio encoding is disabled."
+                )
+            if proprio.ndim == 1:
+                proprio = proprio.unsqueeze(0)
+            if proprio.ndim != 2 or proprio.shape != (1, self.proprio_dim):
+                raise ValueError(
+                    f"`proprio` must have shape {(1, self.proprio_dim)}, "
+                    f"got {tuple(proprio.shape)}"
+                )
+            proprio = proprio.to(device=self.device, dtype=self.torch_dtype)
+
+        use_prompt = prompt is not None
+        use_context = context is not None or context_mask is not None
+        if use_prompt == use_context:
+            raise ValueError(
+                "Provide exactly one of `prompt` or both `context/context_mask`."
+            )
+        if use_prompt:
+            context, context_mask = self.encode_prompt(prompt)
+        else:
+            if context is None or context_mask is None:
+                raise ValueError("`context` and `context_mask` must be provided together.")
+            if context.ndim == 2:
+                context = context.unsqueeze(0)
+            if context_mask.ndim == 1:
+                context_mask = context_mask.unsqueeze(0)
+            if context.ndim != 3 or context_mask.ndim != 2:
+                raise ValueError(
+                    "`context/context_mask` must be [B,L,D]/[B,L], got "
+                    f"{tuple(context.shape)} and {tuple(context_mask.shape)}"
+                )
+            context = context.to(device=self.device, dtype=self.torch_dtype)
+            context_mask = context_mask.to(device=self.device, dtype=torch.bool)
+        if proprio is not None:
+            context, context_mask = self._append_proprio_to_context(
+                context=context,
+                context_mask=context_mask,
+                proprio=proprio,
+            )
+
+        input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
+        first_frame_latents = self._encode_input_image_latents_tensor(
+            input_image=input_image, tiled=tiled
+        )
+        timestep_video = torch.zeros(
+            (first_frame_latents.shape[0],),
+            dtype=first_frame_latents.dtype,
+            device=self.device,
+        )
+        video_pre = self.video_expert.pre_dit(
+            x=first_frame_latents,
+            timestep=timestep_video,
+            context=context,
+            context_mask=context_mask,
+            action=None,
+            fuse_vae_embedding_in_latents=bool(
+                getattr(self.video_expert, "fuse_vae_embedding_in_latents", False)
+            ),
+        )
+        video_seq_len = int(video_pre["tokens"].shape[1])
+        attention_mask = self._build_mot_attention_mask(
+            video_seq_len=video_seq_len,
+            action_seq_len=1,
+            video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
+            device=video_pre["tokens"].device,
+        )
+        _, final_video_tokens = self.mot.prefill_video_cache(
+            video_tokens=video_pre["tokens"],
+            video_freqs=video_pre["freqs"],
+            video_t_mod=video_pre["t_mod"],
+            video_context_payload={
+                "context": video_pre["context"],
+                "mask": video_pre["context_mask"],
+            },
+            video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
+            return_final_tokens=True,
+        )
+        feature = pool_video_expert_tokens(final_video_tokens)
+        return {
+            "video_expert_feature": feature[0].detach().to(
+                device="cpu", dtype=torch.float32
+            ),
+            "video_expert_feature_version": FASTWAM_VIDEO_EXPERT_FEATURE_VERSION,
+        }
+
+    @torch.no_grad()
     def infer_action(
         self,
         prompt: Optional[str],
@@ -935,6 +1088,7 @@ class FastWAM(torch.nn.Module):
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
+        return_video_expert_feature: bool = False,
     ) -> dict[str, Any]:
         self.eval()
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
@@ -1027,7 +1181,7 @@ class FastWAM(torch.nn.Module):
             video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
             device=video_pre["tokens"].device,
         )
-        video_kv_cache = self.mot.prefill_video_cache(
+        video_prefill = self.mot.prefill_video_cache(
             video_tokens=video_pre["tokens"],
             video_freqs=video_pre["freqs"],
             video_t_mod=video_pre["t_mod"],
@@ -1036,7 +1190,14 @@ class FastWAM(torch.nn.Module):
                 "mask": video_pre["context_mask"],
             },
             video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
+            return_final_tokens=return_video_expert_feature,
         )
+        video_expert_feature = None
+        if return_video_expert_feature:
+            video_kv_cache, final_video_tokens = video_prefill
+            video_expert_feature = pool_video_expert_tokens(final_video_tokens)
+        else:
+            video_kv_cache = video_prefill
 
         infer_timesteps_action, infer_deltas_action = self.infer_action_scheduler.build_inference_schedule(
             num_inference_steps=num_inference_steps,
@@ -1060,9 +1221,17 @@ class FastWAM(torch.nn.Module):
 
             latents_action = self.infer_action_scheduler.step(pred_action, step_delta_action, latents_action)
 
-        return {
+        result = {
             "action": latents_action[0].detach().to(device="cpu", dtype=torch.float32),
         }
+        if video_expert_feature is not None:
+            result["video_expert_feature"] = video_expert_feature[0].detach().to(
+                device="cpu", dtype=torch.float32
+            )
+            result["video_expert_feature_version"] = (
+                FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
+            )
+        return result
 
     @torch.no_grad()
     def infer(

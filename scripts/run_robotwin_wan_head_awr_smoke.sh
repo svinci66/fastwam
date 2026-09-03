@@ -27,6 +27,7 @@ if [[ ! -s "${REPLAY_DIR}/manifest.json" ]]; then
     "${PROJECT_ROOT}/experiments/robotwin/build_wan_vae_head_awr_replay.py" \
     --reward-json "${REWARD_JSON}" \
     --output-dir "${REPLAY_DIR}" \
+    --actor-observation-source siglip \
     --encoder-path "${ENCODER_PATH}" \
     --observation-encoder-version "${ENCODER_VERSION}" \
     --reward-config "${treatment}" \

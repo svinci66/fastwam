@@ -49,6 +49,14 @@ from fastwam.rl.language_routing import resolve_residual_language_instruction
 logger = logging.getLogger(__name__)
 
 
+def _file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).expanduser().resolve().open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _is_none_like(value: Any) -> bool:
     if value is None:
         return True
@@ -406,16 +414,20 @@ class WorldActionRobotWinPolicy:
         if self.action_mode == "residual":
             if _is_none_like(residual_checkpoint):
                 raise ValueError("action_mode='residual' requires residual_checkpoint")
-            if _is_none_like(residual_encoder_path):
-                raise ValueError("action_mode='residual' requires residual_encoder_path")
-            if _is_none_like(residual_encoder_version):
-                raise ValueError("action_mode='residual' requires residual_encoder_version")
             self.residual_policy = OnlineResidualPolicy.from_checkpoint(
                 checkpoint_path=str(residual_checkpoint),
-                encoder_path=str(residual_encoder_path),
+                encoder_path=(
+                    None
+                    if _is_none_like(residual_encoder_path)
+                    else str(residual_encoder_path)
+                ),
                 device=residual_device,
                 encoder_dtype=residual_encoder_dtype,
-                encoder_version=str(residual_encoder_version),
+                encoder_version=(
+                    None
+                    if _is_none_like(residual_encoder_version)
+                    else str(residual_encoder_version)
+                ),
                 language_encoder_version="fastwam_umt5_masked_mean_v1",
                 camera_names=ROBOTWIN_CAMERA_NAMES,
                 feature_fusion=ROBOTWIN_RESIDUAL_FEATURE_FUSION,
@@ -457,6 +469,14 @@ class WorldActionRobotWinPolicy:
                     residual_outcome_confirmation_reanchor_replans
                 ),
             )
+            if (
+                self.residual_policy.requires_external_observation_feature
+                and residual_outcome_confirmation_enabled
+            ):
+                raise ValueError(
+                    "FastWAM Video Expert residuals do not support the legacy "
+                    "outcome-confirmation gate; disable it for the ungated AWR comparison."
+                )
             if self.residual_policy.action_dim != 14:
                 raise ValueError(
                     "RoboTwin residual checkpoint must use 14 action dimensions, "
@@ -584,6 +604,25 @@ class WorldActionRobotWinPolicy:
         self._residual_gate_decisions: list[bool] = []
         self._residual_gate_approvals: list[bool] = []
         self._last_residual_actor_override_applied = False
+        self._last_video_expert_feature: Optional[np.ndarray] = None
+        self._last_video_expert_feature_version: Optional[str] = None
+        self._fastwam_checkpoint_sha256: Optional[str] = None
+        if self.save_imagination_transitions or (
+            self.residual_policy is not None
+            and self.residual_policy.requires_external_observation_feature
+        ):
+            self._fastwam_checkpoint_sha256 = _file_sha256(checkpoint_path)
+        if (
+            self.residual_policy is not None
+            and self.residual_policy.requires_external_observation_feature
+            and self.residual_policy.fastwam_checkpoint_sha256
+            != self._fastwam_checkpoint_sha256
+        ):
+            raise ValueError(
+                "Residual replay was encoded by a different FastWAM checkpoint: "
+                f"residual={self.residual_policy.fastwam_checkpoint_sha256} "
+                f"loaded={self._fastwam_checkpoint_sha256}."
+            )
 
         logger.info(
             "Initialized WorldActionRobotWinPolicy | ckpt=%s | stats=%s | horizon=%d | "
@@ -710,6 +749,20 @@ class WorldActionRobotWinPolicy:
         action_parameters = inspect.signature(self.model.infer_action).parameters
         if "num_video_frames" in action_parameters:
             infer_kwargs["num_video_frames"] = int(self._num_video_frames)
+        needs_video_expert_feature = bool(
+            self.save_imagination_transitions
+            or (
+                self.residual_policy is not None
+                and self.residual_policy.requires_external_observation_feature
+            )
+        )
+        if needs_video_expert_feature:
+            if "return_video_expert_feature" not in action_parameters:
+                raise RuntimeError(
+                    "Loaded FastWAM implementation cannot expose Video Expert "
+                    "features required by collection/residual inference."
+                )
+            infer_kwargs["return_video_expert_feature"] = True
         infer_t0 = time.perf_counter() if self.timing_enabled else 0.0
         with torch.no_grad():
             predicted_frames = None
@@ -717,6 +770,22 @@ class WorldActionRobotWinPolicy:
                 key: value for key, value in infer_kwargs.items() if key in action_parameters
             }
             pred = self.model.infer_action(**action_kwargs)
+
+        self._last_video_expert_feature = None
+        self._last_video_expert_feature_version = None
+        if needs_video_expert_feature:
+            feature = np.asarray(
+                pred.get("video_expert_feature"), dtype=np.float32
+            ).reshape(-1)
+            feature_version = str(
+                pred.get("video_expert_feature_version", "")
+            ).strip()
+            if feature.size == 0 or not np.all(np.isfinite(feature)):
+                raise RuntimeError("FastWAM returned an invalid Video Expert feature")
+            if not feature_version:
+                raise RuntimeError("FastWAM omitted Video Expert feature provenance")
+            self._last_video_expert_feature = feature.copy()
+            self._last_video_expert_feature_version = feature_version
 
         normalized_baseline = pred["action"].detach().float().cpu().numpy()
         if normalized_baseline.ndim == 3:
@@ -784,18 +853,31 @@ class WorldActionRobotWinPolicy:
             if use_override_actor:
                 self.residual_policy.actor = self.residual_actor_override
             try:
-                residual_output = self.residual_policy.correct_action_chunk(
-                    camera_images=split_robotwin_camera_views(current_image),
-                    proprio=state_vector,
-                    baseline_actions=baseline_actions,
-                    language_feature=self._encode_language_feature(
+                residual_kwargs = {
+                    "proprio": state_vector,
+                    "baseline_actions": baseline_actions,
+                    "language_feature": self._encode_language_feature(
                         residual_instruction
                     ),
-                    intervention_allowed=(
+                    "intervention_allowed": (
                         self.residual_intervention_replans is None
                         or self.replan_count in self.residual_intervention_replans
                     ),
-                )
+                }
+                if self.residual_policy.requires_external_observation_feature:
+                    if self._last_video_expert_feature is None:
+                        raise RuntimeError(
+                            "FastWAM-native residual lacks the baseline Video Expert feature"
+                        )
+                    residual_output = self.residual_policy.correct_from_feature(
+                        observation_feature=self._last_video_expert_feature,
+                        **residual_kwargs,
+                    )
+                else:
+                    residual_output = self.residual_policy.correct_action_chunk(
+                        camera_images=split_robotwin_camera_views(current_image),
+                        **residual_kwargs,
+                    )
             finally:
                 self.residual_policy.actor = original_actor
             self._last_residual_actor_override_applied = use_override_actor
@@ -1098,6 +1180,16 @@ class WorldActionRobotWinPolicy:
                     residual_output
                 ),
             }
+            if self._last_video_expert_feature is not None:
+                self._pending_transition["video_expert_feature"] = (
+                    self._last_video_expert_feature.copy()
+                )
+                self._pending_transition["video_expert_feature_version"] = (
+                    self._last_video_expert_feature_version
+                )
+                self._pending_transition["video_expert_checkpoint_sha256"] = (
+                    self._fastwam_checkpoint_sha256
+                )
             if residual_output is not None:
                 candidate_residual = np.asarray(
                     residual_output.candidate_residual_actions,
@@ -1268,6 +1360,16 @@ class WorldActionRobotWinPolicy:
                 "residual_actor_checkpoint"
             ],
         }
+        if "video_expert_feature" in transition:
+            metadata["video_expert_feature_version"] = transition[
+                "video_expert_feature_version"
+            ]
+            metadata["video_expert_feature_dim"] = int(
+                np.asarray(transition["video_expert_feature"]).size
+            )
+            metadata["video_expert_checkpoint_sha256"] = transition[
+                "video_expert_checkpoint_sha256"
+            ]
         metadata.update(transition["residual_diagnostics"])
         if "candidate_residual_actions_sha256" in transition:
             metadata["candidate_residual_actions_sha256"] = transition[
@@ -1294,6 +1396,10 @@ class WorldActionRobotWinPolicy:
                 transition["residual_language_instruction"]
             ],
         }
+        if "video_expert_feature" in transition:
+            rollout_arrays["video_expert_feature"] = transition[
+                "video_expert_feature"
+            ]
         task_progress = np.asarray(transition["task_progress_trace"], dtype=np.float32)
         if task_progress.size:
             if task_progress.shape != (effective_k + 1, 4):
