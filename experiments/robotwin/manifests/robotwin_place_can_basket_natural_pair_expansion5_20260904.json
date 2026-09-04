@@ -1,0 +1,32 @@
+{
+  "schema_version": "robotwin_natural_pair_expansion_plan_v1",
+  "frozen_at": "2026-09-04",
+  "task": "place_can_basket",
+  "existing_pair_count": 10,
+  "target_new_pair_count": 5,
+  "target_total_pair_count": 15,
+  "candidate_seed_start": 700,
+  "candidate_seed_end": 749,
+  "initial_expert_feasible_candidates": 10,
+  "candidate_increment": 2,
+  "maximum_expert_feasible_candidates": 20,
+  "selection_rule": "Select the first five strict-pair-valid natural FastWAM failures in expert-feasible candidate order; do not inspect imagination rewards during selection.",
+  "task_config": "demo_clean",
+  "instruction_split": "seen",
+  "fastwam_protocol": {
+    "num_inference_steps": 10,
+    "replan_steps": 24,
+    "text_cfg_scale": 1.0,
+    "action_noise_std": 0.0,
+    "action_hold_probability": 0.0,
+    "gripper_close_delay_steps": 0,
+    "artificial_corruption": false
+  },
+  "required_artifacts": [
+    "expert trajectory",
+    "expert video",
+    "FastWAM failure transitions",
+    "FastWAM failure video",
+    "same-seed initial-observation audit"
+  ]
+}
