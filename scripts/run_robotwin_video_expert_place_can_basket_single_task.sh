@@ -5,6 +5,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONDA_ENV="${CONDA_ENV:-robotwin_fastwam}"
 SEED="${SEED:-42}"
 EPISODES="${EPISODES:-5}"
+VARIANTS="${VARIANTS:-baseline,no_imagination,imagination}"
 MAX_ONLINE_ATTEMPTS="${MAX_ONLINE_ATTEMPTS:-5}"
 TASK="place_can_basket"
 FEATURE_VERSION="fastwam_video_expert_final_token_mean_l2_v1"
@@ -62,10 +63,15 @@ train_if_missing() {
 train_if_missing "${NO_IMAGINATION_CONFIG}" "${NO_IMAGINATION_TRAIN_DIR}"
 train_if_missing "${IMAGINATION_CONFIG}" "${IMAGINATION_TRAIN_DIR}"
 
+conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  "${PROJECT_ROOT}/experiments/robotwin/audit_awr_training_pair.py" \
+  --output-root "${RUN_ROOT}/training" --seeds "${SEED}" \
+  --output-json "${RUN_ROOT}/training/paired_training_audit.json"
+
 run_online_pair() {
   env \
     RUN_NAME="${ONLINE_RUN_NAME}" \
-    VARIANTS=baseline,no_imagination,imagination \
+    VARIANTS="${VARIANTS}" \
     TASKS="${TASK}" EPISODES="${EPISODES}" BASE_SEED=47 TRIAL_OFFSET=0 \
     INFERENCE_STEPS=10 REPLAN_STEPS=24 TEXT_CFG_SCALE=1.0 \
     TASK_CONFIG=demo_clean INSTRUCTION_TYPE=unseen INSTRUCTION_MODE=official \
