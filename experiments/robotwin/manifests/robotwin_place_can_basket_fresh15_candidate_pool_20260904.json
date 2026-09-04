@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "description": "Pre-registered fresh candidate pool for a 15-episode, seed-42 place_can_basket Video Expert imagination-reward comparison. Selection may use expert feasibility only and must not inspect FastWAM or residual outcomes.",
+    "task_config": "demo_clean",
+    "candidate_count": 30,
+    "required_expert_feasible_count": 15,
+    "selection_rule": "Take the first fifteen candidates with exact successful expert planning/replay, preserving candidate order."
+  },
+  "place_can_basket": {
+    "seeds": [
+      4800140,
+      4800141,
+      4800142,
+      4800143,
+      4800144,
+      4800145,
+      4800146,
+      4800147,
+      4800148,
+      4800149,
+      4800150,
+      4800151,
+      4800152,
+      4800153,
+      4800154,
+      4800155,
+      4800156,
+      4800157,
+      4800158,
+      4800159,
+      4800160,
+      4800161,
+      4800162,
+      4800163,
+      4800164,
+      4800165,
+      4800166,
+      4800167,
+      4800168,
+      4800169
+    ]
+  }
+}
