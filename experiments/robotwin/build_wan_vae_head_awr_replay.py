@@ -271,6 +271,15 @@ def load_episode_records(
         enriched = dict(record)
         enriched.update(
             {
+                # Source metadata indexes episodes only within one collection
+                # run.  A merged reward file can therefore contain the same
+                # source trial index more than once.  Validate and build the
+                # replay with the merger's canonical pair id while retaining
+                # the source-local values for provenance.
+                "source_record_id": str(record.get("source_id", "default")),
+                "source_trial_idx": int(record["trial_idx"]),
+                "source_id": "wan_vae_reward_pair",
+                "trial_idx": int(pair["episode_id"]),
                 "record_dir": str(metadata_path.parent),
                 "behavior": behavior,
                 "task_name": task,
