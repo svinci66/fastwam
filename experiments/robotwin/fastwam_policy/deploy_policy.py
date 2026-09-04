@@ -49,6 +49,24 @@ from fastwam.rl.language_routing import resolve_residual_language_instruction
 logger = logging.getLogger(__name__)
 
 
+def _supported_keyword_arguments(callable_obj: Any, values: Dict[str, Any]) -> Dict[str, Any]:
+    """Return only keywords accepted by a model inference entrypoint."""
+
+    parameters = inspect.signature(callable_obj).parameters
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return dict(values)
+    return {
+        key: value
+        for key, value in values.items()
+        if key in parameters
+        and parameters[key].kind
+        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+
+
 def _file_sha256(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).expanduser().resolve().open("rb") as stream:
@@ -766,9 +784,9 @@ class WorldActionRobotWinPolicy:
         infer_t0 = time.perf_counter() if self.timing_enabled else 0.0
         with torch.no_grad():
             predicted_frames = None
-            action_kwargs = {
-                key: value for key, value in infer_kwargs.items() if key in action_parameters
-            }
+            action_kwargs = _supported_keyword_arguments(
+                self.model.infer_action, infer_kwargs
+            )
             pred = self.model.infer_action(**action_kwargs)
 
         self._last_video_expert_feature = None
@@ -1014,14 +1032,16 @@ class WorldActionRobotWinPolicy:
             and residual_output.gate_applied
         )
         if self.save_imagination_transitions or needs_outcome_goal:
-            joint_kwargs = dict(infer_kwargs)
-            joint_kwargs["num_video_frames"] = int(self._num_video_frames)
-            if "decode_tiled" in inspect.signature(self.model.infer_joint).parameters:
+            joint_parameters = inspect.signature(self.model.infer_joint).parameters
+            joint_kwargs = _supported_keyword_arguments(
+                self.model.infer_joint, infer_kwargs
+            )
+            if "num_video_frames" in joint_parameters:
+                joint_kwargs["num_video_frames"] = int(self._num_video_frames)
+            if "decode_tiled" in joint_parameters:
                 joint_kwargs["tiled"] = False
                 joint_kwargs["decode_tiled"] = self.capture_decode_tiled
-            if "test_action_with_infer_action" in inspect.signature(
-                self.model.infer_joint
-            ).parameters:
+            if "test_action_with_infer_action" in joint_parameters:
                 joint_kwargs["test_action_with_infer_action"] = False
             with torch.no_grad():
                 joint_pred = self.model.infer_joint(**joint_kwargs)
