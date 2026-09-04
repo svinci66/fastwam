@@ -81,6 +81,9 @@ EVALUATION:
   fixed_instruction: null
   environment_seed_manifest_path: null
   deterministic_instruction_by_seed: false
+  physics_audit_enabled: false
+  physics_audit_actor_attr: can
+  physics_audit_output_dir: null
   paper_aligned: false
   strict_paired: false
   save_imagination_transitions: false

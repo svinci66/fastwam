@@ -30,6 +30,9 @@ STRICT_PAIRED="${STRICT_PAIRED:-false}"
 DETERMINISTIC_INSTRUCTION_BY_SEED="${DETERMINISTIC_INSTRUCTION_BY_SEED:-${STRICT_PAIRED}}"
 EXPERT_CHECK="${EXPERT_CHECK:-true}"
 SEED_MANIFEST_PATH="${SEED_MANIFEST_PATH:-none}"
+PHYSICS_AUDIT_ENABLED="${PHYSICS_AUDIT_ENABLED:-false}"
+PHYSICS_AUDIT_ACTOR_ATTR="${PHYSICS_AUDIT_ACTOR_ATTR:-can}"
+PHYSICS_AUDIT_OUTPUT_ROOT="${PHYSICS_AUDIT_OUTPUT_ROOT:-none}"
 GPU_ID="${GPU_ID:-0}"
 TILED="${TILED:-false}"
 CAPTURE_DECODE_TILED="${CAPTURE_DECODE_TILED:-false}"
@@ -180,6 +183,10 @@ for variant in "${variants[@]}"; do
     action_mode=policy
     save_transitions="${SAVE_BASELINE_TRANSITIONS}"
     residual_args=()
+    physics_audit_output_dir="${PHYSICS_AUDIT_OUTPUT_ROOT}"
+    if [[ "${PHYSICS_AUDIT_ENABLED}" == "true" && "${PHYSICS_AUDIT_OUTPUT_ROOT}" != "none" ]]; then
+      physics_audit_output_dir="${PHYSICS_AUDIT_OUTPUT_ROOT}/${variant}/${task_name}"
+    fi
     if [[ "${variant}" != "baseline" ]]; then
       action_mode=residual
       save_transitions="${SAVE_RESIDUAL_TRANSITIONS}"
@@ -253,6 +260,9 @@ for variant in "${variants[@]}"; do
       "${instruction_args[@]}" \
       "EVALUATION.environment_seed_manifest_path=${SEED_MANIFEST_PATH}" \
       "EVALUATION.deterministic_instruction_by_seed=${DETERMINISTIC_INSTRUCTION_BY_SEED}" \
+      "EVALUATION.physics_audit_enabled=${PHYSICS_AUDIT_ENABLED}" \
+      "EVALUATION.physics_audit_actor_attr=${PHYSICS_AUDIT_ACTOR_ATTR}" \
+      "EVALUATION.physics_audit_output_dir=${physics_audit_output_dir}" \
       "EVALUATION.expert_check=${EXPERT_CHECK}" \
       "EVALUATION.paper_aligned=${PAPER_ALIGNED}" \
       "EVALUATION.strict_paired=${STRICT_PAIRED}" \

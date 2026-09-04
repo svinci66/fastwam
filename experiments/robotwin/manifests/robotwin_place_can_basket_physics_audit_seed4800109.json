@@ -1,0 +1,26 @@
+{
+  "_meta": {
+    "description": "Exact expert-feasible held-out scene selected for the place_can_basket physics audit.",
+    "expert_feasibility_records": [
+      {
+        "episode_index": 7,
+        "instruction_sha256": "4b3b5bf62cbe3dd30aca724ca0b5a4e3929dd09104e106274d4b373fc67cf21a",
+        "metadata_sha256": "5abf1fe0ec42d5d820c98e74548e48cf8f7921925b0d7b2ff1638dae99f1068e",
+        "seed": 4800109
+      }
+    ],
+    "expert_validation_mode": "prevalidated_exact_planning_and_replay",
+    "instruction_selection": "frozen_from_heldout20_manifest",
+    "schema_version": "robotwin_physics_audit_manifest_v1",
+    "source_manifest": "evaluate_results/robotwin_imagination_restart/robotwin_video_expert_place_can_basket_heldout20_20260903/heldout_manifest.json",
+    "task_config": "demo_clean"
+  },
+  "place_can_basket": {
+    "instructions": [
+      "Use the right arm to pick up the light brown cylindrical can, put it into the medium-sized basket with perforated texture, the other arm lifts the medium-sized basket with perforated texture."
+    ],
+    "seeds": [
+      4800109
+    ]
+  }
+}

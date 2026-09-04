@@ -39,6 +39,8 @@ def eval_policy():
         episode_info_list = [episode_info["info"]]
         results = generate_episode_descriptions(args["task_name"], episode_info_list, test_num)
         instruction = np.random.choice(results[0][instruction_type])
+        TASK_ENV.set_instruction(instruction=instruction)  # set language instruction
+        # task_total_reward += TASK_ENV.episode_score
 '''
 
     patched = patch_eval_policy_source(source)
@@ -67,6 +69,10 @@ def eval_policy():
     assert "np.random.set_state(instruction_numpy_state)" in patched
     assert "sorted(results[0][instruction_type])" in patched
     assert "FASTWAM_EVAL_INSTRUCTION" in patched
+    assert 'usr_args.get("physics_audit_enabled", False)' in patched
+    assert "EpisodePhysicsAudit" in patched
+    assert "physics_audit.install(TASK_ENV)" in patched
+    assert "physics_audit.finish(success=succ)" in patched
 
 
 def test_patch_eval_policy_source_fails_closed_on_upstream_change():

@@ -483,6 +483,21 @@ def main(cfg: DictConfig):
     )
     _append_override(
         overrides,
+        "physics_audit_enabled",
+        cfg.EVALUATION.physics_audit_enabled,
+    )
+    _append_override(
+        overrides,
+        "physics_audit_actor_attr",
+        cfg.EVALUATION.physics_audit_actor_attr,
+    )
+    _append_override(
+        overrides,
+        "physics_audit_output_dir",
+        cfg.EVALUATION.physics_audit_output_dir,
+    )
+    _append_override(
+        overrides,
         "save_imagination_transitions",
         cfg.EVALUATION.save_imagination_transitions,
     )
@@ -533,6 +548,15 @@ def main(cfg: DictConfig):
             None
             if _is_none_like(cfg.EVALUATION.environment_seed_manifest_path)
             else str(cfg.EVALUATION.environment_seed_manifest_path)
+        ),
+        "physics_audit_enabled": bool(cfg.EVALUATION.physics_audit_enabled),
+        "physics_audit_actor_attr": str(
+            cfg.EVALUATION.physics_audit_actor_attr
+        ),
+        "physics_audit_output_dir": (
+            None
+            if _is_none_like(cfg.EVALUATION.physics_audit_output_dir)
+            else str(cfg.EVALUATION.physics_audit_output_dir)
         ),
         "action_mode": str(cfg.EVALUATION.action_mode),
         "action_noise_std": float(cfg.EVALUATION.action_noise_std),

@@ -19,6 +19,8 @@ patches narrowly scoped source fragments before executing the evaluator:
 * redirect evaluator results and rollout videos to the caller-owned run folder.
 * keep rollout video ids aligned with the environment offset across segmented
   runs, so renderer processes can be restarted without overwriting episodes.
+* optionally attach a read-only per-action physics audit without modifying the
+  RoboTwin checkout or simulator parameters.
 
 The exact-fragment checks intentionally fail when upstream changes, rather than
 silently applying an incompatible patch.
@@ -241,6 +243,40 @@ def patch_eval_policy_source(source: str) -> str:
         "            flush=True,\n"
         "        )\n",
         label="instruction-selection",
+    )
+    source = _replace_once(
+        source,
+        "        TASK_ENV.set_instruction(instruction=instruction)  # set language instruction\n",
+        "        TASK_ENV.set_instruction(instruction=instruction)  # set language instruction\n"
+        "        physics_audit = None\n"
+        "        if bool(usr_args.get(\"physics_audit_enabled\", False)):\n"
+        "            from experiments.robotwin.physics_audit import EpisodePhysicsAudit\n"
+        "            physics_audit_root = usr_args.get(\"physics_audit_output_dir\")\n"
+        "            if physics_audit_root is None or str(physics_audit_root).strip().lower() in {\"\", \"none\", \"null\"}:\n"
+        "                physics_audit_root = Path(str(usr_args[\"eval_output_dir\"])) / \"physics_audit\"\n"
+        "            physics_audit_path = Path(str(physics_audit_root)).expanduser().resolve() / f\"episode{now_id}_seed{now_seed}.jsonl\"\n"
+        "            physics_audit = EpisodePhysicsAudit(\n"
+        "                output_path=physics_audit_path,\n"
+        "                task_name=args[\"task_name\"],\n"
+        "                episode_id=now_id,\n"
+        "                seed=now_seed,\n"
+        "                actor_attr=str(usr_args.get(\"physics_audit_actor_attr\", \"can\")),\n"
+        "                policy_metadata={\n"
+        "                    \"action_mode\": usr_args.get(\"action_mode\", \"policy\"),\n"
+        "                    \"residual_checkpoint\": usr_args.get(\"residual_checkpoint\"),\n"
+        "                },\n"
+        "            )\n"
+        "            physics_audit.install(TASK_ENV)\n"
+        "            print(f\"FASTWAM_PHYSICS_AUDIT path={physics_audit_path}\", flush=True)\n",
+        label="physics-audit-install",
+    )
+    source = _replace_once(
+        source,
+        "        # task_total_reward += TASK_ENV.episode_score\n",
+        "        if physics_audit is not None:\n"
+        "            physics_audit.finish(success=succ)\n"
+        "        # task_total_reward += TASK_ENV.episode_score\n",
+        label="physics-audit-finish",
     )
     return source
 
