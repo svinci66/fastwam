@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "description": "Five held-out place_can_basket seeds whose no-imagination and imagination residual outcomes differed in the 2026-09-03 20-episode evaluation.",
+    "expert_feasibility_records": [
+      {
+        "episode_index": 3,
+        "instruction_sha256": "4163d2cf30626186cce26b22fe3cd893d51f29cffea3faceda10308be34e42f2",
+        "metadata_sha256": "743e9593b9fdb906db1043b4d67df0a9b1d1e004d66b1073a44318cbb13c4716",
+        "seed": 4800104
+      },
+      {
+        "episode_index": 5,
+        "instruction_sha256": "2f438679a8c6181c43b3edbdcdb5423cd6a8b4c32931e280d195a1a582289c91",
+        "metadata_sha256": "5e456b8ec985907381bbc9be758a5e4bdd11da9f811b730cc21872ff3c0f62e8",
+        "seed": 4800107
+      },
+      {
+        "episode_index": 6,
+        "instruction_sha256": "55c52084b5959002c15c5297b4463efec86a2b4040e5751295fbf9d80d649ef7",
+        "metadata_sha256": "81c701b248ee4daa24db5521e7862d22f1cd16672a82dd3c5adffb043b4cb66c",
+        "seed": 4800108
+      },
+      {
+        "episode_index": 12,
+        "instruction_sha256": "015ed96ce8a663a06f050060def5ea0395542629da7430329bef9feef536e813",
+        "metadata_sha256": "7308de531e6bedc677fe982d1c73acc5e885f8b15b08a3e432388dbe6f95cb41",
+        "seed": 4800117
+      },
+      {
+        "episode_index": 17,
+        "instruction_sha256": "ec580b932ccb2f592f259e6233b3736687905a75d46a39941050451395e2abdf",
+        "metadata_sha256": "d35138789e283d00b2574f7d7bb5fd20fde4739d612625e4ff539a877e70cfe0",
+        "seed": 4800124
+      }
+    ],
+    "expert_validation_mode": "prevalidated_exact_planning_and_replay",
+    "instruction_selection": "frozen_from_heldout20_manifest",
+    "schema_version": "robotwin_physics_audit_manifest_v1",
+    "source_manifest": "evaluate_results/robotwin_imagination_restart/robotwin_video_expert_place_can_basket_heldout20_20260903/heldout_manifest.json",
+    "source_run": "robotwin_video_expert_place_can_basket_heldout20_20260903",
+    "task_config": "demo_clean"
+  },
+  "place_can_basket": {
+    "instructions": [
+      "Grab the light brown cylindrical can, drop it into the yellow basket with open slots, lift the yellow basket with open slots with another arm.",
+      "Use the left arm to pick the small red soda can, drop it into the yellow rectangular basket with dual grips, then lift the yellow rectangular basket with dual grips.",
+      "Grab the small red soda can, put it in the basket with rounded edges, lift the basket with rounded edges.",
+      "Pick up the cylindrical can with smooth surface, place it in the medium-sized basket with perforated texture, then lift the medium-sized basket with perforated texture.",
+      "Pick up the lightweight cylindrical metal can, place it in the oval basket with medium storage space, then lift the oval basket with medium storage space."
+    ],
+    "seeds": [
+      4800104,
+      4800107,
+      4800108,
+      4800117,
+      4800124
+    ]
+  }
+}
