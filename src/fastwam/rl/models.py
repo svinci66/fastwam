@@ -194,6 +194,207 @@ class ResidualActor(nn.Module):
 
 
 @dataclass(frozen=True)
+class ResidualAdapterConfig:
+    """Small bounded correction on top of a frozen residual actor."""
+
+    context_dim: int
+    action_horizon: int
+    action_dim: int
+    hidden_dims: tuple[int, ...] = (512, 256)
+    language_feature_dim: int = 0
+    language_embedding_dim: int = 0
+    baseline_action_embedding_dim: int = 0
+    ordinary_residual_embedding_dim: int = 0
+    zero_init_output: bool = True
+    adapter_scale: tuple[float, ...] = (
+        0.02,
+        0.02,
+        0.02,
+        0.02,
+        0.02,
+        0.02,
+        0.0,
+    )
+
+    def validate(self) -> None:
+        if self.context_dim <= 0 or self.action_horizon <= 0 or self.action_dim <= 0:
+            raise ValueError("context_dim, action_horizon, and action_dim must be positive")
+        if not self.hidden_dims or any(int(width) <= 0 for width in self.hidden_dims):
+            raise ValueError("hidden_dims must contain positive widths")
+        if len(self.adapter_scale) != self.action_dim:
+            raise ValueError(
+                f"adapter_scale must have action_dim={self.action_dim} entries"
+            )
+        if any(not torch.isfinite(torch.tensor(value)) or value < 0.0 for value in self.adapter_scale):
+            raise ValueError("adapter_scale must contain finite non-negative values")
+        _validate_optional_projection(
+            input_dim=self.language_feature_dim,
+            output_dim=self.language_embedding_dim,
+            name="language",
+        )
+        for name, value in (
+            ("baseline_action_embedding_dim", self.baseline_action_embedding_dim),
+            ("ordinary_residual_embedding_dim", self.ordinary_residual_embedding_dim),
+        ):
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if not isinstance(self.zero_init_output, bool):
+            raise ValueError("zero_init_output must be a boolean")
+
+
+class ResidualAdapter(nn.Module):
+    """Predict a trust-region correction to an existing residual action chunk."""
+
+    def __init__(self, config: ResidualAdapterConfig):
+        super().__init__()
+        config.validate()
+        self.config = config
+        self.language_projector = (
+            _projector(config.language_feature_dim, config.language_embedding_dim)
+            if config.language_feature_dim > 0
+            else None
+        )
+        self.baseline_action_projector = (
+            _projector(
+                config.action_horizon * config.action_dim,
+                config.baseline_action_embedding_dim,
+            )
+            if config.baseline_action_embedding_dim > 0
+            else None
+        )
+        self.ordinary_residual_projector = (
+            _projector(
+                config.action_horizon * config.action_dim,
+                config.ordinary_residual_embedding_dim,
+            )
+            if config.ordinary_residual_embedding_dim > 0
+            else None
+        )
+        self.network = _mlp(
+            config.context_dim
+            + config.language_embedding_dim
+            + config.baseline_action_embedding_dim
+            + config.ordinary_residual_embedding_dim,
+            config.hidden_dims,
+            config.action_horizon * config.action_dim,
+        )
+        if config.zero_init_output:
+            output_layer = self.network[-1]
+            if not isinstance(output_layer, nn.Linear):
+                raise TypeError("Residual adapter output layer must be linear")
+            nn.init.zeros_(output_layer.weight)
+            nn.init.zeros_(output_layer.bias)
+        self.register_buffer(
+            "adapter_scale",
+            torch.tensor(config.adapter_scale, dtype=torch.float32).view(1, 1, -1),
+        )
+
+    def forward(
+        self,
+        context: torch.Tensor,
+        baseline_actions: torch.Tensor,
+        ordinary_residual: torch.Tensor,
+        language_feature: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if context.ndim != 2 or context.shape[-1] != self.config.context_dim:
+            raise ValueError(
+                f"context must have shape [B, {self.config.context_dim}], "
+                f"got {tuple(context.shape)}"
+            )
+        expected = (context.shape[0], self.config.action_horizon, self.config.action_dim)
+        if tuple(baseline_actions.shape) != expected:
+            raise ValueError(f"baseline_actions must have shape {expected}")
+        if tuple(ordinary_residual.shape) != expected:
+            raise ValueError(f"ordinary_residual must have shape {expected}")
+        inputs = [context]
+        if self.baseline_action_projector is not None:
+            inputs.append(
+                self.baseline_action_projector(baseline_actions.flatten(start_dim=1))
+            )
+        if self.ordinary_residual_projector is not None:
+            inputs.append(
+                self.ordinary_residual_projector(
+                    ordinary_residual.flatten(start_dim=1)
+                )
+            )
+        if self.language_projector is not None:
+            expected_language = (context.shape[0], self.config.language_feature_dim)
+            if language_feature is None or tuple(language_feature.shape) != expected_language:
+                shape = None if language_feature is None else tuple(language_feature.shape)
+                raise ValueError(
+                    f"language_feature must have shape {expected_language}, got {shape}"
+                )
+            inputs.append(self.language_projector(language_feature))
+        prediction = self.network(torch.cat(inputs, dim=-1)).view(expected)
+        return torch.tanh(prediction) * self.adapter_scale
+
+    def export_config(self) -> dict:
+        return asdict(self.config)
+
+
+class FrozenResidualAdapterActor(nn.Module):
+    """Compose a frozen ordinary residual actor with a trainable adapter."""
+
+    def __init__(self, base_actor: ResidualActor, adapter: ResidualAdapter):
+        super().__init__()
+        if base_actor.config.context_dim != adapter.config.context_dim:
+            raise ValueError("base actor and adapter context dimensions differ")
+        if base_actor.config.action_horizon != adapter.config.action_horizon:
+            raise ValueError("base actor and adapter action horizons differ")
+        if base_actor.config.action_dim != adapter.config.action_dim:
+            raise ValueError("base actor and adapter action dimensions differ")
+        if base_actor.config.language_feature_dim != adapter.config.language_feature_dim:
+            raise ValueError("base actor and adapter language feature dimensions differ")
+        self.base_actor = base_actor.eval().requires_grad_(False)
+        self.adapter = adapter
+        # OnlineResidualPolicy consumes the standard actor config surface.
+        self.config = base_actor.config
+
+    def components(
+        self,
+        context: torch.Tensor,
+        baseline_actions: torch.Tensor,
+        language_feature: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        with torch.no_grad():
+            base_corrected = self.base_actor(
+                context,
+                baseline_actions,
+                language_feature=language_feature,
+            )
+        ordinary_residual = base_corrected - baseline_actions
+        adapter_residual = self.adapter(
+            context,
+            baseline_actions,
+            ordinary_residual,
+            language_feature=language_feature,
+        )
+        return base_corrected, ordinary_residual, adapter_residual
+
+    def forward(
+        self,
+        context: torch.Tensor,
+        baseline_actions: torch.Tensor,
+        language_feature: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        base_corrected, _, adapter_residual = self.components(
+            context,
+            baseline_actions,
+            language_feature=language_feature,
+        )
+        corrected = base_corrected + adapter_residual
+        bounded = torch.maximum(
+            torch.minimum(corrected, self.base_actor.action_high),
+            self.base_actor.action_low,
+        )
+        frozen_dimensions = self.adapter.adapter_scale == 0
+        return torch.where(frozen_dimensions, base_corrected, bounded)
+
+    def export_config(self) -> dict:
+        return asdict(self.config)
+
+
+@dataclass(frozen=True)
 class ValueCriticConfig:
     context_dim: int
     hidden_dims: tuple[int, ...] = (512, 512)

@@ -15,8 +15,11 @@ from fastwam.models.wan22.fastwam import FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
 from .models import (
     ActionValueCritic,
     ActionValueCriticConfig,
+    FrozenResidualAdapterActor,
     ResidualActor,
     ResidualActorConfig,
+    ResidualAdapter,
+    ResidualAdapterConfig,
 )
 from .support_gate import ResidualSupportIndex, SupportGateDecision
 
@@ -24,10 +27,12 @@ from .support_gate import ResidualSupportIndex, SupportGateDecision
 LIBERO_RESIDUAL_CAMERA_NAMES = ("agent", "wrist")
 ROBOTWIN_RESIDUAL_CAMERA_NAMES = ("head", "left_wrist", "right_wrist")
 RESIDUAL_CHECKPOINT_FORMAT = "fastwam_residual_awr_v2"
+RESIDUAL_ADAPTER_CHECKPOINT_FORMAT = "fastwam_residual_adapter_awr_v1"
 _SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS = {
     "fastwam_residual_awr_v1",
     RESIDUAL_CHECKPOINT_FORMAT,
     "fastwam_residual_iql_v1",
+    RESIDUAL_ADAPTER_CHECKPOINT_FORMAT,
 }
 RESIDUAL_FEATURE_FUSION = "per_camera_l2_then_agent_wrist_concat_l2_v1"
 ROBOTWIN_RESIDUAL_FEATURE_FUSION = (
@@ -59,6 +64,14 @@ def _tuple_q_critic_config(payload: Mapping[str, Any]) -> ActionValueCriticConfi
     if "hidden_dims" in config:
         config["hidden_dims"] = tuple(config["hidden_dims"])
     return ActionValueCriticConfig(**config)
+
+
+def _tuple_adapter_config(payload: Mapping[str, Any]) -> ResidualAdapterConfig:
+    config = dict(payload)
+    for key in ("hidden_dims", "adapter_scale"):
+        if key in config:
+            config[key] = tuple(config[key])
+    return ResidualAdapterConfig(**config)
 
 
 def load_iql_q_critics(
@@ -128,7 +141,7 @@ def load_residual_actor_checkpoint(
     checkpoint_path: str | Path,
     *,
     device: torch.device | str,
-) -> tuple[ResidualActor, dict[str, Any]]:
+) -> tuple[torch.nn.Module, dict[str, Any]]:
     """Load and strictly validate a residual-AWR actor checkpoint."""
 
     path = Path(checkpoint_path).expanduser().resolve()
@@ -158,8 +171,21 @@ def load_residual_actor_checkpoint(
             "Online residual evaluation currently requires use_goal_conditioning=false."
         )
 
-    actor = ResidualActor(_tuple_actor_config(payload["actor_config"]))
-    actor.load_state_dict(payload["actor"], strict=True)
+    base_actor = ResidualActor(_tuple_actor_config(payload["actor_config"]))
+    base_actor.load_state_dict(payload["actor"], strict=True)
+    if payload.get("format") == RESIDUAL_ADAPTER_CHECKPOINT_FORMAT:
+        if not isinstance(payload.get("adapter"), dict) or not isinstance(
+            payload.get("adapter_config"), dict
+        ):
+            raise ValueError(
+                "Residual adapter checkpoint must contain adapter and "
+                "adapter_config mappings."
+            )
+        adapter = ResidualAdapter(_tuple_adapter_config(payload["adapter_config"]))
+        adapter.load_state_dict(payload["adapter"], strict=True)
+        actor = FrozenResidualAdapterActor(base_actor, adapter)
+    else:
+        actor = base_actor
     actor.to(device=device, dtype=torch.float32).eval()
     return actor, payload
 
