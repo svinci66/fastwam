@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from experiments.robotwin.build_wan_vae_head_awr_replay import (
+    fit_paired_rank_discount_normalization,
     fit_episode_balanced_normalization,
     normalized_score,
     select_reward_tasks,
@@ -107,3 +108,76 @@ def test_task_filter_rejects_missing_or_duplicate_tasks():
         select_reward_tasks(payload, ["missing"])
     with pytest.raises(ValueError, match="duplicate"):
         select_reward_tasks(payload, ["medium", "medium"])
+
+
+def test_paired_rank_discount_normalization_preserves_signed_initial_return(tmp_path):
+    payload = {
+        "pairs": [
+            {
+                "task": "place_can_basket",
+                "episode_id": 0,
+                "success_minus_failure": 0.1,
+            }
+        ]
+    }
+    records = []
+    for behavior, length in (("expert", 2), ("policy", 4)):
+        for replan in range(length):
+            records.append(
+                {
+                    "episode_key": f"place-pair0000-{behavior}",
+                    "task_name": "place_can_basket",
+                    "pair_episode_id": 0,
+                    "behavior": behavior,
+                    "replan_idx": replan,
+                    "effective_k": 24,
+                    "alignment_valid": True,
+                    "record_dir": tmp_path / behavior / str(replan),
+                }
+            )
+    shaping, summary = fit_paired_rank_discount_normalization(
+        records, payload, gamma=0.99, clip=0.1
+    )
+
+    realized = {}
+    for behavior, length in (("expert", 2), ("policy", 4)):
+        discount = 1.0
+        value = 0.0
+        for replan in range(length):
+            value += discount * shaping[str((tmp_path / behavior / str(replan)).resolve())]
+            discount *= 0.99**24
+        realized[behavior] = value
+    assert realized["expert"] == pytest.approx(0.1 * np.tanh(1.0))
+    assert realized["policy"] == pytest.approx(-realized["expert"])
+    assert summary["num_episodes"] == 2
+    assert summary["positive_pair_count"] == 1
+
+
+def test_paired_rank_discount_normalization_zeroes_nonpositive_pair(tmp_path):
+    payload = {
+        "pairs": [
+            {"task": "task", "episode_id": 0, "success_minus_failure": 0.2},
+            {"task": "task", "episode_id": 1, "success_minus_failure": -0.1},
+        ]
+    }
+    records = []
+    for pair in range(2):
+        for behavior in ("expert", "policy"):
+            records.append(
+                {
+                    "episode_key": f"task-pair{pair:04d}-{behavior}",
+                    "task_name": "task",
+                    "pair_episode_id": pair,
+                    "behavior": behavior,
+                    "replan_idx": 0,
+                    "effective_k": 24,
+                    "alignment_valid": True,
+                    "record_dir": tmp_path / str(pair) / behavior,
+                }
+            )
+    shaping, summary = fit_paired_rank_discount_normalization(
+        records, payload, gamma=0.99, clip=0.1
+    )
+    assert shaping[str((tmp_path / "1" / "expert").resolve())] == 0.0
+    assert shaping[str((tmp_path / "1" / "policy").resolve())] == 0.0
+    assert summary["zeroed_nonpositive_pair_count"] == 1

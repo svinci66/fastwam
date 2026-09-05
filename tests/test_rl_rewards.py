@@ -4,6 +4,7 @@ from fastwam.rl.rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
     GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
+    WAN_VAE_HEAD_PAIRED_RANK_REWARD_TYPE,
     compute_composite_reward,
     compute_imagination_reward,
     compute_imagination_progress,
@@ -94,6 +95,17 @@ def test_global_camera_normalization_requires_frozen_statistics():
             goals,
             goals,
             reward_type=GLOBAL_CAMERA_NORMALIZED_REWARD_TYPE,
+        )
+
+
+def test_paired_rank_trajectory_reward_cannot_be_recomputed_from_endpoints():
+    features = {"head": np.asarray([1.0, 0.0], dtype=np.float32)}
+    with np.testing.assert_raises_regex(ValueError, "precomputed trajectory"):
+        compute_imagination_reward(
+            features,
+            features,
+            features,
+            reward_type=WAN_VAE_HEAD_PAIRED_RANK_REWARD_TYPE,
         )
 
 

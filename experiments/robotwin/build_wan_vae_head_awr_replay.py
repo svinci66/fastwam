@@ -43,6 +43,7 @@ from fastwam.rl.replay_buffer import ReplayBuffer, ReplayTransition
 from fastwam.rl.rewards import (
     CompositeRewardConfig,
     EpisodeShapingBudget,
+    WAN_VAE_HEAD_PAIRED_RANK_REWARD_TYPE,
     WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE,
     compute_composite_reward,
 )
@@ -55,6 +56,8 @@ EXPECTED_TIME_OFFSETS = [0, 4, 8, 12, 16, 20, 24]
 SOURCE_SCHEMA = "robotwin_imagination_trajectory_v2"
 FEATURE_FUSION = "per_camera_l2_then_head_left_right_concat_l2_v1"
 VIDEO_EXPERT_FUSION = "final_layer_token_mean_l2_v1"
+GLOBAL_NORMALIZATION = "global_episode_balanced_median_iqr_tanh_v1"
+PAIRED_RANK_NORMALIZATION = "paired_rank_discount_normalized_v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,6 +76,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--reward-config", type=Path, required=True)
+    parser.add_argument(
+        "--reward-calibration",
+        choices=(GLOBAL_NORMALIZATION, PAIRED_RANK_NORMALIZATION),
+        default=GLOBAL_NORMALIZATION,
+        help=(
+            "Map audited per-replan Wan-VAE scores either through the legacy "
+            "global normalization or through a pair-rank-preserving, "
+            "discount-normalized episode budget."
+        ),
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--encoder-dtype", default="auto", choices=("auto", "fp32", "bf16", "fp16")
@@ -159,6 +172,130 @@ def fit_episode_balanced_normalization(records: list[dict[str, Any]]) -> dict[st
 
 def normalized_score(raw_score: float, normalization: dict[str, float], clip: float) -> float:
     return float(clip * np.tanh((float(raw_score) - normalization["center"]) / normalization["scale"]))
+
+
+def fit_paired_rank_discount_normalization(
+    records: list[dict[str, Any]],
+    payload: dict[str, Any],
+    *,
+    gamma: float,
+    clip: float,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Give each paired episode a length-independent signed return budget.
+
+    The world-model margin controls confidence.  Correctly ranked expert and
+    policy episodes receive equal-magnitude, opposite-sign imagination return
+    at their initial transition.  Per-transition values are constant within an
+    episode and divided by the exact action-step discount mass, so different
+    episode lengths cannot reward a long failure more than a short success.
+
+    Returns are keyed by the immutable record directory because each source
+    transition has exactly one such directory.
+    """
+
+    if not 0.0 < gamma <= 1.0:
+        raise ValueError("gamma must be in (0, 1]")
+    if not np.isfinite(clip) or clip <= 0.0:
+        raise ValueError("clip must be finite and positive")
+    margins = {
+        (str(pair["task"]), int(pair["episode_id"])): float(
+            pair["success_minus_failure"]
+        )
+        for pair in payload["pairs"]
+    }
+    if len(margins) != len(payload["pairs"]):
+        raise ValueError("duplicate task/pair id in reward payload")
+    positive_margins = np.asarray(
+        [margin for margin in margins.values() if margin > 0.0], dtype=np.float64
+    )
+    if positive_margins.size == 0:
+        raise ValueError("paired-rank calibration requires a positive reward margin")
+    margin_scale = float(np.median(positive_margins))
+    if not np.isfinite(margin_scale) or margin_scale <= 0.0:
+        raise ValueError("paired-rank margin scale must be finite and positive")
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        grouped[str(record["episode_key"])].append(record)
+    shaping: dict[str, float] = {}
+    targets: list[float] = []
+    zeroed_pairs: set[tuple[str, int]] = set()
+    for episode_key, episode_records in grouped.items():
+        episode_records.sort(key=lambda record: int(record["replan_idx"]))
+        indices = [int(record["replan_idx"]) for record in episode_records]
+        if indices != list(range(len(indices))):
+            raise ValueError(
+                f"episode {episode_key!r} has non-contiguous replans: {indices}"
+            )
+        first = episode_records[0]
+        identity = (str(first["task_name"]), int(first["pair_episode_id"]))
+        if identity not in margins:
+            raise ValueError(f"missing pair margin for {identity}")
+        behavior = str(first["behavior"])
+        if behavior not in {"expert", "policy"}:
+            raise ValueError(f"unsupported paired behavior: {behavior!r}")
+        margin = margins[identity]
+        confidence = float(clip * np.tanh(max(margin, 0.0) / margin_scale))
+        if margin <= 0.0:
+            zeroed_pairs.add(identity)
+        target = confidence if behavior == "expert" else -confidence
+        discounts: list[float] = []
+        discount = 1.0
+        for record in episode_records:
+            discounts.append(discount)
+            discount *= gamma ** int(record["effective_k"])
+        valid_positions = [
+            index
+            for index, record in enumerate(episode_records)
+            if bool(record["alignment_valid"])
+        ]
+        if not valid_positions:
+            raise ValueError(f"episode {episode_key!r} has no aligned reward records")
+        discount_mass = float(sum(discounts[index] for index in valid_positions))
+        if not np.isfinite(discount_mass) or discount_mass <= 0.0:
+            raise ValueError(f"invalid discount mass for episode {episode_key!r}")
+        per_transition = target / discount_mass
+        if abs(per_transition) > clip + 1e-12:
+            raise ValueError(
+                "discount-normalized per-transition shaping exceeds clip: "
+                f"episode={episode_key!r}, value={per_transition}, clip={clip}"
+            )
+        for index, record in enumerate(episode_records):
+            record_key = str(Path(record["record_dir"]).resolve())
+            if record_key in shaping:
+                raise ValueError(f"duplicate reward record directory: {record_key}")
+            shaping[record_key] = (
+                per_transition if index in valid_positions else 0.0
+            )
+        realized = float(
+            sum(
+                discounts[index]
+                * shaping[str(Path(record["record_dir"]).resolve())]
+                for index, record in enumerate(episode_records)
+            )
+        )
+        if not np.isclose(realized, target, atol=1e-10, rtol=1e-8):
+            raise RuntimeError(
+                f"paired-rank target mismatch for {episode_key!r}: {realized} != {target}"
+            )
+        targets.append(target)
+    if set(shaping) != {
+        str(Path(record["record_dir"]).resolve()) for record in records
+    }:
+        raise RuntimeError("paired-rank shaping does not cover every source record")
+    summary = {
+        "method": PAIRED_RANK_NORMALIZATION,
+        "gamma": float(gamma),
+        "margin_scale": margin_scale,
+        "confidence_transform": "clip*tanh(max(pair_margin,0)/global_positive_margin_median)",
+        "episode_allocation": "constant_sign_divided_by_action_step_discount_mass",
+        "positive_pair_count": int(positive_margins.size),
+        "zeroed_nonpositive_pair_count": len(zeroed_pairs),
+        "num_episodes": len(grouped),
+        "target_return_min": float(np.min(targets)),
+        "target_return_max": float(np.max(targets)),
+    }
+    return shaping, summary
 
 
 def validate_reward_payload(
@@ -412,6 +549,7 @@ def build_replay(
     observation_source: str,
     normalization: dict[str, float],
     imitation_dimension_scales: np.ndarray | None,
+    shaping_by_record: dict[str, float] | None = None,
 ) -> ReplayBuffer:
     if len(records) != len(encoded):
         raise ValueError("record and encoded-feature counts differ")
@@ -439,11 +577,21 @@ def build_replay(
         executed_actions = pad_action_chunk(arrays["executed_actions"], target_k, name="executed_actions")
         environment_rewards = pad_environment_rewards(arrays["environment_rewards"], target_k)
         alignment_valid = bool(record["alignment_valid"])
-        shaping = (
-            normalized_score(record["wan_head_score"], normalization, reward_config.imagination_clip)
-            if alignment_valid
-            else 0.0
-        )
+        if shaping_by_record is None:
+            shaping = (
+                normalized_score(
+                    record["wan_head_score"],
+                    normalization,
+                    reward_config.imagination_clip,
+                )
+                if alignment_valid
+                else 0.0
+            )
+        else:
+            record_key = str(Path(record["record_dir"]).resolve())
+            if record_key not in shaping_by_record:
+                raise ValueError(f"missing calibrated shaping for {record_key}")
+            shaping = float(shaping_by_record[record_key])
         reward = compute_composite_reward(
             environment_rewards=environment_rewards,
             success=bool(record["transition_success"]),
@@ -496,7 +644,7 @@ def build_replay(
                 executed_actions=executed_actions,
                 environment_rewards=environment_rewards,
                 reward=reward,
-                imagination_reward_type=WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE,
+                imagination_reward_type=reward_config.imagination_reward_type,
                 language_feature=np.asarray(arrays["language_feature"], dtype=np.float32),
                 language_encoder_version=str(record["language_encoder_version"]),
             )
@@ -518,8 +666,16 @@ def main() -> None:
         raise ValueError("top-level reward config must be a mapping")
     reward_config = CompositeRewardConfig(**config_payload["reward"])
     reward_config.validate()
-    if reward_config.imagination_reward_type != WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE:
-        raise ValueError("reward config must select the head-camera Wan-VAE reward type")
+    expected_reward_type = {
+        GLOBAL_NORMALIZATION: WAN_VAE_HEAD_TRAJECTORY_REWARD_TYPE,
+        PAIRED_RANK_NORMALIZATION: WAN_VAE_HEAD_PAIRED_RANK_REWARD_TYPE,
+    }[args.reward_calibration]
+    if reward_config.imagination_reward_type != expected_reward_type:
+        raise ValueError(
+            "reward config/calibration mismatch: "
+            f"calibration={args.reward_calibration!r} requires "
+            f"{expected_reward_type!r}, got {reward_config.imagination_reward_type!r}"
+        )
     if args.actor_observation_source == "fastwam_video_expert" and bool(
         config_payload.get("awr", {}).get("use_goal_conditioning", False)
     ):
@@ -530,7 +686,16 @@ def main() -> None:
     imitation_scales = config_payload.get("imitation_dimension_scales")
     imitation_scales_array = None if imitation_scales is None else np.asarray(imitation_scales, dtype=np.float32)
     records = discover_records(payload)
-    normalization = fit_episode_balanced_normalization(records)
+    shaping_by_record = None
+    if args.reward_calibration == GLOBAL_NORMALIZATION:
+        normalization = fit_episode_balanced_normalization(records)
+    else:
+        shaping_by_record, normalization = fit_paired_rank_discount_normalization(
+            records,
+            payload,
+            gamma=float(config_payload["awr"]["gamma"]),
+            clip=reward_config.imagination_clip,
+        )
     if args.actor_observation_source == "fastwam_video_expert":
         if args.encoder_path is not None:
             raise ValueError(
@@ -561,6 +726,7 @@ def main() -> None:
         observation_source=args.actor_observation_source,
         normalization=normalization,
         imitation_dimension_scales=imitation_scales_array,
+        shaping_by_record=shaping_by_record,
     )
     behavior_counts = Counter(str(record["behavior"]) for record in records)
     task_transition_counts = Counter(str(record["task_name"]) for record in records)
@@ -610,6 +776,7 @@ def main() -> None:
             "reward_time_offsets": EXPECTED_TIME_OFFSETS,
             "trajectory_reference_policy": EXPECTED_REFERENCE_POLICY,
             "reward_normalization": normalization,
+            "reward_calibration": args.reward_calibration,
             "camera_names": (
                 list(ROBOTWIN_CAMERA_NAMES)
                 if args.actor_observation_source == "siglip"

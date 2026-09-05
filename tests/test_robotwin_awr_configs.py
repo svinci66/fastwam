@@ -89,3 +89,48 @@ def test_multitask3_formal_configs_are_a_strict_imagination_ablation():
     assert treatment["reward"]["imagination_weight"] == 1.0
     assert control["awr"]["epochs"] == treatment["awr"]["epochs"] == 20
     assert control["model"] == treatment["model"]
+
+
+def test_multitask3_weight025_epoch_configs_only_change_training_horizon():
+    epoch3 = load_config(
+        "robotwin_residual_awr_wan_head_multitask3_weight025_epochs3.yaml"
+    )
+    epoch20 = load_config(
+        "robotwin_residual_awr_wan_head_multitask3_weight025_epochs20.yaml"
+    )
+    assert differing_paths(epoch3, epoch20) == {
+        ("experiment_name",),
+        ("awr", "epochs"),
+    }
+    assert epoch3["awr"]["epochs"] == 3
+    assert epoch20["awr"]["epochs"] == 20
+    assert epoch3["reward"]["imagination_weight"] == 0.25
+
+
+def test_multitask3_epoch5_configs_are_a_strict_weight025_ablation():
+    control = load_config(
+        "robotwin_residual_awr_wan_head_multitask3_no_imagination_epochs5.yaml"
+    )
+    treatment = load_config(
+        "robotwin_residual_awr_wan_head_multitask3_weight025_epochs5.yaml"
+    )
+    assert differing_paths(control, treatment) == ALLOWED_CONFIG_DIFFERENCES
+    assert control["reward"]["imagination_weight"] == 0.0
+    assert treatment["reward"]["imagination_weight"] == 0.25
+    assert control["awr"]["epochs"] == treatment["awr"]["epochs"] == 5
+
+
+def test_video_expert_paired_rank_configs_are_a_strict_imagination_ablation():
+    control = load_config(
+        "robotwin_residual_awr_video_expert_multitask3_paired_rank_no_imagination.yaml"
+    )
+    treatment = load_config(
+        "robotwin_residual_awr_video_expert_multitask3_paired_rank_imagination025.yaml"
+    )
+    assert differing_paths(control, treatment) == ALLOWED_CONFIG_DIFFERENCES
+    assert control["reward"]["imagination_weight"] == 0.0
+    assert treatment["reward"]["imagination_weight"] == 0.25
+    assert treatment["reward"]["imagination_reward_type"] == (
+        "wan_vae_head_trajectory_paired_rank_discount_norm_v1"
+    )
+    assert treatment["awr"]["epochs"] == 3
