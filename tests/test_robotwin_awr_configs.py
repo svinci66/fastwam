@@ -134,3 +134,15 @@ def test_video_expert_paired_rank_configs_are_a_strict_imagination_ablation():
         "wan_vae_head_trajectory_paired_rank_discount_norm_v1"
     )
     assert treatment["awr"]["epochs"] == 3
+
+
+def test_video_expert_paired_rank_weight010_only_changes_registered_fields():
+    control = load_config(
+        "robotwin_residual_awr_video_expert_multitask3_paired_rank_no_imagination.yaml"
+    )
+    treatment = load_config(
+        "robotwin_residual_awr_video_expert_multitask3_paired_rank_imagination010.yaml"
+    )
+    assert differing_paths(control, treatment) == ALLOWED_CONFIG_DIFFERENCES
+    assert treatment["reward"]["imagination_weight"] == 0.10
+    assert treatment["awr"]["epochs"] == 3

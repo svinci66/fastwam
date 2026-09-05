@@ -1,0 +1,40 @@
+device: cuda
+experiment_name: robotwin_residual_awr_video_expert_multitask3_paired_rank_imagination010
+
+reward:
+  success_bonus: 10.0
+  environment_weight: 0.0
+  success_weight: 1.0
+  imitation_weight: 0.1
+  imagination_weight: 0.10
+  imagination_reward_type: wan_vae_head_trajectory_paired_rank_discount_norm_v1
+  step_penalty: 0.0
+  imagination_clip: 0.1
+  max_imagination_to_success_ratio: 0.1
+
+awr:
+  gamma: 0.99
+  beta: 1.0
+  max_advantage_weight: 20.0
+  normalize_advantage_weights: true
+  actor_learning_rate: 0.0003
+  critic_learning_rate: 0.0003
+  weight_decay: 0.0001
+  batch_size: 64
+  epochs: 3
+  max_grad_norm: 1.0
+  use_goal_conditioning: false
+  balance_tasks: true
+  seed: 42
+
+model:
+  hidden_dims: [256, 256]
+  language_embedding_dim: 128
+  baseline_action_embedding_dim: 128
+  zero_init_output: true
+  residual_scale: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.0, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.0]
+  action_low: [-7.5523, -0.3636, -0.1846, -1.9563, -1.6802, -7.6789, 0.0, -8.5400, -0.6295, -0.0771, -2.1329, -2.1216, -8.2285, 0.0]
+  action_high: [6.4566, 4.1792, 5.3466, 1.7943, 1.8581, 5.4382, 1.0, 7.1430, 4.1571, 5.6725, 1.9565, 1.5664, 5.2784, 1.0]
+
+critic_hidden_dims: [256, 256]
+imitation_dimension_scales: [0.3853, 1.0094, 0.7780, 0.6713, 0.2760, 0.6599, 1.0, 0.3501, 1.0224, 0.7955, 0.6887, 0.2551, 0.6744, 1.0]
