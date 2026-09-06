@@ -29,7 +29,7 @@
       "spatial residual adapter without imagination reward",
       "spatial residual adapter with paired-rank imagination reward weight 0.25"
     ],
-    "development_gate": "Run the four predeclared diagnostic states before any broad evaluation.",
+    "development_gate": "Run the three predeclared diagnostic states before any broad evaluation: oval basket seeds 4800282 and 4800283 plus perforated basket seed 4800286.",
     "final_test_rule": "Use fresh expert-feasible seeds that are never inspected or used during collection, training, or development gating."
   },
   "stop_criteria": {

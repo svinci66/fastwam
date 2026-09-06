@@ -54,6 +54,9 @@ of the following occurs:
 - it does not improve over the no-imagination adapter on the complete frozen
   development gate.
 
+The frozen development gate contains exactly three states: oval-basket seeds
+`4800282` and `4800283`, plus the perforated-basket trade-off seed `4800286`.
+
 After rejection, the next research action is to revise chunk-level temporal
 credit assignment or the learning objective, not to select more favorable
 samples from the same stratum.

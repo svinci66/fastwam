@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "schema_version": "robotwin_development_diagnostic_manifest_v1",
+    "description": "Predeclared adapter development gate: two protected oval-basket regressions plus the perforated-basket reward-weight trade-off state.",
+    "diagnostic_only": true,
+    "not_a_final_evaluation": true,
+    "source_manifest": "evaluate_results/robotwin_imagination_restart/robotwin_video_expert_multitask3_balanced_heldout10_20260904/place_can_basket_heldout_manifest.json"
+  },
+  "place_can_basket": {
+    "seeds": [4800282, 4800283, 4800286],
+    "instructions": [
+      "Pick the can with red body, put it in the oval basket with medium storage space, then lift the oval basket with medium storage space.",
+      "Grab the hand-sized can with metallic finish and put it in the oval basket with medium storage space, then lift the oval basket with medium storage space.",
+      "Use the right arm to grab the metal can fits easily in hand, put it in the medium-sized basket with perforated texture, and lift the medium-sized basket with perforated texture."
+    ]
+  }
+}
