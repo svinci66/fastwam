@@ -395,6 +395,151 @@ class FrozenResidualAdapterActor(nn.Module):
 
 
 @dataclass(frozen=True)
+class SpatialResidualAdapterConfig(ResidualAdapterConfig):
+    spatial_token_count: int = 3
+    spatial_token_dim: int = 3072
+    spatial_embedding_dim: int = 64
+
+    def validate(self) -> None:
+        super().validate()
+        if (
+            self.spatial_token_count <= 0
+            or self.spatial_token_dim <= 0
+            or self.spatial_embedding_dim <= 0
+        ):
+            raise ValueError("spatial token and embedding dimensions must be positive")
+
+
+class SpatialResidualAdapter(ResidualAdapter):
+    """Residual adapter augmented with fixed-layout Video Expert descriptors."""
+
+    def __init__(self, config: SpatialResidualAdapterConfig):
+        super().__init__(config)
+        config.validate()
+        self.config = config
+        self.spatial_projector = _projector(
+            config.spatial_token_dim, config.spatial_embedding_dim
+        )
+        self.network = _mlp(
+            config.context_dim
+            + config.language_embedding_dim
+            + config.baseline_action_embedding_dim
+            + config.ordinary_residual_embedding_dim
+            + config.spatial_token_count * config.spatial_embedding_dim,
+            config.hidden_dims,
+            config.action_horizon * config.action_dim,
+        )
+        if config.zero_init_output:
+            output_layer = self.network[-1]
+            if not isinstance(output_layer, nn.Linear):
+                raise TypeError("Spatial residual adapter output layer must be linear")
+            nn.init.zeros_(output_layer.weight)
+            nn.init.zeros_(output_layer.bias)
+
+    def forward(
+        self,
+        context: torch.Tensor,
+        baseline_actions: torch.Tensor,
+        ordinary_residual: torch.Tensor,
+        spatial_feature: torch.Tensor,
+        language_feature: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if context.ndim != 2 or context.shape[-1] != self.config.context_dim:
+            raise ValueError(
+                f"context must have shape [B, {self.config.context_dim}], "
+                f"got {tuple(context.shape)}"
+            )
+        expected = (context.shape[0], self.config.action_horizon, self.config.action_dim)
+        if tuple(baseline_actions.shape) != expected:
+            raise ValueError(f"baseline_actions must have shape {expected}")
+        if tuple(ordinary_residual.shape) != expected:
+            raise ValueError(f"ordinary_residual must have shape {expected}")
+        expected_spatial = (
+            context.shape[0],
+            self.config.spatial_token_count,
+            self.config.spatial_token_dim,
+        )
+        if tuple(spatial_feature.shape) != expected_spatial:
+            raise ValueError(
+                f"spatial_feature must have shape {expected_spatial}, "
+                f"got {tuple(spatial_feature.shape)}"
+            )
+        inputs = [context]
+        if self.baseline_action_projector is not None:
+            inputs.append(
+                self.baseline_action_projector(baseline_actions.flatten(start_dim=1))
+            )
+        if self.ordinary_residual_projector is not None:
+            inputs.append(
+                self.ordinary_residual_projector(
+                    ordinary_residual.flatten(start_dim=1)
+                )
+            )
+        spatial = self.spatial_projector(spatial_feature).flatten(start_dim=1)
+        inputs.append(spatial)
+        if self.language_projector is not None:
+            expected_language = (context.shape[0], self.config.language_feature_dim)
+            if language_feature is None or tuple(language_feature.shape) != expected_language:
+                shape = None if language_feature is None else tuple(language_feature.shape)
+                raise ValueError(
+                    f"language_feature must have shape {expected_language}, got {shape}"
+                )
+            inputs.append(self.language_projector(language_feature))
+        prediction = self.network(torch.cat(inputs, dim=-1)).view(expected)
+        return torch.tanh(prediction) * self.adapter_scale
+
+
+class FrozenSpatialResidualAdapterActor(FrozenResidualAdapterActor):
+    """Frozen ordinary actor plus a trainable head-spatial adapter."""
+
+    adapter: SpatialResidualAdapter
+
+    def components(
+        self,
+        context: torch.Tensor,
+        baseline_actions: torch.Tensor,
+        spatial_feature: torch.Tensor,
+        language_feature: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        with torch.no_grad():
+            base_corrected = self.base_actor(
+                context,
+                baseline_actions,
+                language_feature=language_feature,
+            )
+        ordinary_residual = base_corrected - baseline_actions
+        adapter_residual = self.adapter(
+            context,
+            baseline_actions,
+            ordinary_residual,
+            spatial_feature,
+            language_feature=language_feature,
+        )
+        return base_corrected, ordinary_residual, adapter_residual
+
+    def forward(
+        self,
+        context: torch.Tensor,
+        baseline_actions: torch.Tensor,
+        spatial_feature: torch.Tensor,
+        language_feature: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        base_corrected, _, adapter_residual = self.components(
+            context,
+            baseline_actions,
+            spatial_feature,
+            language_feature=language_feature,
+        )
+        corrected = base_corrected + adapter_residual
+        bounded = torch.maximum(
+            torch.minimum(corrected, self.base_actor.action_high),
+            self.base_actor.action_low,
+        )
+        frozen_dimensions = self.adapter.adapter_scale == 0
+        return torch.where(frozen_dimensions, base_corrected, bounded)
+
+
+@dataclass(frozen=True)
 class ValueCriticConfig:
     context_dim: int
     hidden_dims: tuple[int, ...] = (512, 512)

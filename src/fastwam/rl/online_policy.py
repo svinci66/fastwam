@@ -16,10 +16,13 @@ from .models import (
     ActionValueCritic,
     ActionValueCriticConfig,
     FrozenResidualAdapterActor,
+    FrozenSpatialResidualAdapterActor,
     ResidualActor,
     ResidualActorConfig,
     ResidualAdapter,
     ResidualAdapterConfig,
+    SpatialResidualAdapter,
+    SpatialResidualAdapterConfig,
 )
 from .support_gate import ResidualSupportIndex, SupportGateDecision
 
@@ -28,11 +31,15 @@ LIBERO_RESIDUAL_CAMERA_NAMES = ("agent", "wrist")
 ROBOTWIN_RESIDUAL_CAMERA_NAMES = ("head", "left_wrist", "right_wrist")
 RESIDUAL_CHECKPOINT_FORMAT = "fastwam_residual_awr_v2"
 RESIDUAL_ADAPTER_CHECKPOINT_FORMAT = "fastwam_residual_adapter_awr_v1"
+RESIDUAL_SPATIAL_ADAPTER_CHECKPOINT_FORMAT = (
+    "fastwam_residual_spatial_adapter_awr_v1"
+)
 _SUPPORTED_RESIDUAL_CHECKPOINT_FORMATS = {
     "fastwam_residual_awr_v1",
     RESIDUAL_CHECKPOINT_FORMAT,
     "fastwam_residual_iql_v1",
     RESIDUAL_ADAPTER_CHECKPOINT_FORMAT,
+    RESIDUAL_SPATIAL_ADAPTER_CHECKPOINT_FORMAT,
 }
 RESIDUAL_FEATURE_FUSION = "per_camera_l2_then_agent_wrist_concat_l2_v1"
 ROBOTWIN_RESIDUAL_FEATURE_FUSION = (
@@ -72,6 +79,16 @@ def _tuple_adapter_config(payload: Mapping[str, Any]) -> ResidualAdapterConfig:
         if key in config:
             config[key] = tuple(config[key])
     return ResidualAdapterConfig(**config)
+
+
+def _tuple_spatial_adapter_config(
+    payload: Mapping[str, Any],
+) -> SpatialResidualAdapterConfig:
+    config = dict(payload)
+    for key in ("hidden_dims", "adapter_scale"):
+        if key in config:
+            config[key] = tuple(config[key])
+    return SpatialResidualAdapterConfig(**config)
 
 
 def load_iql_q_critics(
@@ -173,7 +190,10 @@ def load_residual_actor_checkpoint(
 
     base_actor = ResidualActor(_tuple_actor_config(payload["actor_config"]))
     base_actor.load_state_dict(payload["actor"], strict=True)
-    if payload.get("format") == RESIDUAL_ADAPTER_CHECKPOINT_FORMAT:
+    if payload.get("format") in {
+        RESIDUAL_ADAPTER_CHECKPOINT_FORMAT,
+        RESIDUAL_SPATIAL_ADAPTER_CHECKPOINT_FORMAT,
+    }:
         if not isinstance(payload.get("adapter"), dict) or not isinstance(
             payload.get("adapter_config"), dict
         ):
@@ -181,9 +201,17 @@ def load_residual_actor_checkpoint(
                 "Residual adapter checkpoint must contain adapter and "
                 "adapter_config mappings."
             )
-        adapter = ResidualAdapter(_tuple_adapter_config(payload["adapter_config"]))
+        if payload.get("format") == RESIDUAL_SPATIAL_ADAPTER_CHECKPOINT_FORMAT:
+            adapter = SpatialResidualAdapter(
+                _tuple_spatial_adapter_config(payload["adapter_config"])
+            )
+        else:
+            adapter = ResidualAdapter(_tuple_adapter_config(payload["adapter_config"]))
         adapter.load_state_dict(payload["adapter"], strict=True)
-        actor = FrozenResidualAdapterActor(base_actor, adapter)
+        if isinstance(adapter, SpatialResidualAdapter):
+            actor = FrozenSpatialResidualAdapterActor(base_actor, adapter)
+        else:
+            actor = FrozenResidualAdapterActor(base_actor, adapter)
     else:
         actor = base_actor
     actor.to(device=device, dtype=torch.float32).eval()
@@ -723,6 +751,10 @@ class OnlineResidualPolicy:
 
         return self.encoder_version == FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
 
+    @property
+    def requires_external_spatial_feature(self) -> bool:
+        return isinstance(self.actor, FrozenSpatialResidualAdapterActor)
+
     def encode_observation(self, camera_images: Mapping[str, Any]) -> np.ndarray:
         if self.requires_external_observation_feature:
             raise RuntimeError(
@@ -766,6 +798,7 @@ class OnlineResidualPolicy:
         proprio: np.ndarray,
         baseline_actions: np.ndarray,
         language_feature: np.ndarray | None = None,
+        spatial_feature: np.ndarray | None = None,
         intervention_allowed: bool = True,
     ) -> ResidualPolicyOutput:
         if (
@@ -816,12 +849,40 @@ class OnlineResidualPolicy:
                     f"got {language.shape}"
                 )
             actor_language = torch.from_numpy(language).unsqueeze(0).to(self.device)
-        with torch.inference_mode():
-            candidate_prefix_tensor = self.actor(
-                actor_context,
-                actor_baseline,
-                language_feature=actor_language,
+        actor_spatial = None
+        if self.requires_external_spatial_feature:
+            if spatial_feature is None:
+                raise ValueError(
+                    "spatial_feature is required by this residual adapter checkpoint"
+                )
+            spatial = np.asarray(spatial_feature, dtype=np.float32)
+            spatial_config = self.actor.adapter.config
+            expected_spatial = (
+                spatial_config.spatial_token_count,
+                spatial_config.spatial_token_dim,
             )
+            if spatial.shape != expected_spatial or not np.all(np.isfinite(spatial)):
+                raise ValueError(
+                    f"spatial_feature must be finite with shape {expected_spatial}, "
+                    f"got {spatial.shape}"
+                )
+            actor_spatial = torch.from_numpy(spatial.copy()).unsqueeze(0).to(
+                self.device
+            )
+        with torch.inference_mode():
+            if self.requires_external_spatial_feature:
+                candidate_prefix_tensor = self.actor(
+                    actor_context,
+                    actor_baseline,
+                    actor_spatial,
+                    language_feature=actor_language,
+                )
+            else:
+                candidate_prefix_tensor = self.actor(
+                    actor_context,
+                    actor_baseline,
+                    language_feature=actor_language,
+                )
             candidate_residual_rms = float(
                 torch.sqrt(
                     torch.mean(torch.square(candidate_prefix_tensor - actor_baseline))

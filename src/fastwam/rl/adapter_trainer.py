@@ -17,7 +17,11 @@ from .awr_trainer import (
     build_context,
     masked_action_mse,
 )
-from .models import FrozenResidualAdapterActor, ValueCritic
+from .models import (
+    FrozenResidualAdapterActor,
+    FrozenSpatialResidualAdapterActor,
+    ValueCritic,
+)
 from .replay_buffer import ReplayBuffer
 
 
@@ -201,6 +205,7 @@ def train_residual_adapter_awr(
     anchor_weight: float,
     smoothness_weight: float,
     device: torch.device | str,
+    spatial_features: np.ndarray | None = None,
     epoch_end_callback: Callable[[int, FrozenResidualAdapterActor, ValueCritic], None]
     | None = None,
 ) -> tuple[list[dict[str, float]], dict]:
@@ -214,6 +219,24 @@ def train_residual_adapter_awr(
     actor.base_actor.eval().requires_grad_(False)
     critic.to(device)
     dataset = ReplayTensorDataset(replay, returns)
+    requires_spatial = isinstance(actor, FrozenSpatialResidualAdapterActor)
+    if requires_spatial:
+        if spatial_features is None:
+            raise ValueError("spatial adapter training requires spatial_features")
+        spatial_array = np.asarray(spatial_features, dtype=np.float32)
+        expected = (
+            len(replay),
+            actor.adapter.config.spatial_token_count,
+            actor.adapter.config.spatial_token_dim,
+        )
+        if spatial_array.shape != expected or not np.all(np.isfinite(spatial_array)):
+            raise ValueError(
+                f"spatial_features must be finite with shape {expected}, "
+                f"got {spatial_array.shape}"
+            )
+        dataset.tensors["spatial_feature"] = torch.from_numpy(spatial_array)
+    elif spatial_features is not None:
+        raise ValueError("mean-feature adapter must not receive spatial_features")
     task_ids, pair_ids, behaviors = replay_pair_labels(replay)
     audit_sampler = PairBehaviorBalancedBatchSampler(
         task_ids,
@@ -286,11 +309,19 @@ def train_residual_adapter_awr(
                 maximum=config.max_advantage_weight,
                 normalize=config.normalize_advantage_weights,
             )
-            base_actions, _, adapter_residual = actor.components(
-                context,
-                batch["baseline_actions"],
-                language_feature=language,
-            )
+            if requires_spatial:
+                base_actions, _, adapter_residual = actor.components(
+                    context,
+                    batch["baseline_actions"],
+                    batch["spatial_feature"],
+                    language_feature=language,
+                )
+            else:
+                base_actions, _, adapter_residual = actor.components(
+                    context,
+                    batch["baseline_actions"],
+                    language_feature=language,
+                )
             corrected = base_actions + adapter_residual
             bounded = torch.maximum(
                 torch.minimum(corrected, actor.base_actor.action_high),

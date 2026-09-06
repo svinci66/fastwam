@@ -32,7 +32,10 @@ from experiments.robotwin.build_wan_vae_head_awr_replay import (
 )
 from experiments.robotwin.export_expert_imagination_transitions import _make_policy
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
-from fastwam.models.wan22.fastwam import FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
+from fastwam.models.wan22.fastwam import (
+    FASTWAM_VIDEO_EXPERT_FEATURE_VERSION,
+    FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,6 +59,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--replan-steps", type=int, default=24)
     parser.add_argument("--num-inference-steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=47)
+    parser.add_argument(
+        "--include-head-spatial-feature",
+        action="store_true",
+        help=(
+            "Also store the 3xD Video Expert head-region spatial contrast "
+            "descriptor used by the spatial imagination adapter."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -82,10 +93,14 @@ def _atomic_save_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _already_complete(
-    metadata: dict[str, Any], arrays: dict[str, np.ndarray], *, checkpoint_sha256: str
+    metadata: dict[str, Any],
+    arrays: dict[str, np.ndarray],
+    *,
+    checkpoint_sha256: str,
+    require_head_spatial_feature: bool = False,
 ) -> bool:
     feature = arrays.get("video_expert_feature")
-    return bool(
+    mean_complete = bool(
         metadata.get("video_expert_feature_version")
         == FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
         and metadata.get("video_expert_checkpoint_sha256") == checkpoint_sha256
@@ -93,6 +108,23 @@ def _already_complete(
         and np.asarray(feature).ndim == 1
         and np.asarray(feature).size == int(metadata.get("video_expert_feature_dim", -1))
         and np.all(np.isfinite(feature))
+    )
+    if not mean_complete or not require_head_spatial_feature:
+        return mean_complete
+    spatial = arrays.get("video_expert_head_spatial_feature")
+    declared_shape = tuple(
+        int(value)
+        for value in metadata.get("video_expert_head_spatial_feature_shape", [])
+    )
+    return bool(
+        metadata.get("video_expert_head_spatial_feature_version")
+        == FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION
+        and metadata.get("video_expert_checkpoint_sha256") == checkpoint_sha256
+        and spatial is not None
+        and np.asarray(spatial).ndim == 2
+        and tuple(np.asarray(spatial).shape) == declared_shape
+        and declared_shape[0:1] == (3,)
+        and np.all(np.isfinite(spatial))
     )
 
 
@@ -127,6 +159,8 @@ def main() -> None:
     encoded = 0
     skipped = 0
     feature_dim: int | None = None
+    spatial_shape: tuple[int, int] | None = None
+    spatial_encoded = 0
     checkpoint_sha256: str | None = None
     try:
         checkpoint_sha256 = policy._fastwam_checkpoint_sha256
@@ -140,7 +174,10 @@ def main() -> None:
             with np.load(arrays_path, allow_pickle=False) as payload:
                 arrays = {key: payload[key] for key in payload.files}
             if _already_complete(
-                metadata, arrays, checkpoint_sha256=checkpoint_sha256
+                metadata,
+                arrays,
+                checkpoint_sha256=checkpoint_sha256,
+                require_head_spatial_feature=args.include_head_spatial_feature,
             ):
                 completed_dim = int(np.asarray(arrays["video_expert_feature"]).size)
                 if feature_dim is None:
@@ -150,6 +187,20 @@ def main() -> None:
                         "Existing Video Expert feature dimension changed: "
                         f"{feature_dim} -> {completed_dim}"
                     )
+                if args.include_head_spatial_feature:
+                    completed_shape = tuple(
+                        int(value)
+                        for value in np.asarray(
+                            arrays["video_expert_head_spatial_feature"]
+                        ).shape
+                    )
+                    if spatial_shape is None:
+                        spatial_shape = completed_shape
+                    elif completed_shape != spatial_shape:
+                        raise RuntimeError(
+                            "Existing head spatial feature shape changed: "
+                            f"{spatial_shape} -> {completed_shape}"
+                        )
                 skipped += 1
                 continue
 
@@ -172,6 +223,10 @@ def main() -> None:
                 input_image=image_tensor,
                 proprio=proprio,
                 tiled=policy.tiled,
+                return_head_spatial_feature=args.include_head_spatial_feature,
+                head_region_height=(
+                    256 if args.include_head_spatial_feature else None
+                ),
             )
             version = str(output["video_expert_feature_version"])
             if version != FASTWAM_VIDEO_EXPERT_FEATURE_VERSION:
@@ -196,6 +251,41 @@ def main() -> None:
             metadata["video_expert_feature_version"] = version
             metadata["video_expert_feature_dim"] = int(feature.size)
             metadata["video_expert_checkpoint_sha256"] = checkpoint_sha256
+            if args.include_head_spatial_feature:
+                spatial_version = str(
+                    output["video_expert_head_spatial_feature_version"]
+                )
+                if spatial_version != FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION:
+                    raise RuntimeError(
+                        f"Unexpected head spatial feature version: {spatial_version!r}"
+                    )
+                spatial = (
+                    output["video_expert_head_spatial_feature"]
+                    .detach()
+                    .float()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float32, copy=False)
+                )
+                if spatial.ndim != 2 or spatial.shape[0] != 3:
+                    raise RuntimeError(
+                        f"Unexpected head spatial feature shape: {spatial.shape}"
+                    )
+                if spatial_shape is None:
+                    spatial_shape = tuple(int(value) for value in spatial.shape)
+                elif tuple(spatial.shape) != spatial_shape:
+                    raise RuntimeError(
+                        f"Head spatial feature shape changed: {spatial_shape} -> {spatial.shape}"
+                    )
+                arrays["video_expert_head_spatial_feature"] = spatial
+                metadata["video_expert_head_spatial_feature_version"] = spatial_version
+                metadata["video_expert_head_spatial_feature_shape"] = list(
+                    spatial.shape
+                )
+                metadata["video_expert_grid_size"] = list(
+                    output["video_expert_grid_size"]
+                )
+                spatial_encoded += 1
             _atomic_save_npz(arrays_path, arrays)
             _atomic_save_json(metadata_path, metadata)
             encoded += 1
@@ -226,6 +316,14 @@ def main() -> None:
         "encoded_records": encoded,
         "skipped_records": skipped,
         "feature_dim": feature_dim,
+        "include_head_spatial_feature": args.include_head_spatial_feature,
+        "head_spatial_feature_version": (
+            FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION
+            if args.include_head_spatial_feature
+            else None
+        ),
+        "head_spatial_feature_shape": spatial_shape,
+        "head_spatial_encoded_records": spatial_encoded,
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "video_expert_backfill_summary.json").write_text(

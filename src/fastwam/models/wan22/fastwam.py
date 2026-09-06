@@ -17,6 +17,9 @@ logger = get_logger(__name__)
 FASTWAM_VIDEO_EXPERT_FEATURE_VERSION = (
     "fastwam_video_expert_final_token_mean_l2_v1"
 )
+FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION = (
+    "fastwam_video_expert_final_head_2x2_contrasts_l2_v1"
+)
 
 
 def pool_video_expert_tokens(tokens: torch.Tensor) -> torch.Tensor:
@@ -42,6 +45,64 @@ def pool_video_expert_tokens(tokens: torch.Tensor) -> torch.Tensor:
     if torch.any(~torch.isfinite(pooled)) or torch.any(norms <= 1e-12):
         raise ValueError("Video Expert pooled features must be finite and non-zero")
     return pooled / norms
+
+
+def pool_video_expert_head_spatial_contrasts(
+    tokens: torch.Tensor,
+    *,
+    grid_size: tuple[int, int, int],
+    input_height: int,
+    head_region_height: int,
+) -> torch.Tensor:
+    """Preserve coarse head-camera geometry as three 2x2 region contrasts.
+
+    The RoboTwin composite image stacks the head view above the two wrist
+    views. Final Video Expert tokens are reshaped with the exact DiT grid,
+    cropped to the head rows, and adaptively pooled to 2x2. Horizontal,
+    vertical, and diagonal contrasts complement (rather than replace) the
+    global token mean consumed by the frozen ordinary residual actor.
+    """
+
+    if tokens.ndim != 3:
+        raise ValueError(
+            "Video Expert tokens must have shape [B, S, D], "
+            f"got {tuple(tokens.shape)}"
+        )
+    f, h, w = (int(value) for value in grid_size)
+    if f != 1 or h <= 0 or w <= 0 or tokens.shape[1] != f * h * w:
+        raise ValueError(
+            "Head spatial pooling requires one-frame tokens matching grid_size, "
+            f"got tokens={tuple(tokens.shape)}, grid={grid_size}"
+        )
+    if input_height <= 0 or not 0 < head_region_height <= input_height:
+        raise ValueError("head_region_height must lie within input_height")
+    exact_rows = h * head_region_height / input_height
+    head_rows = int(round(exact_rows))
+    if head_rows <= 0 or abs(head_rows - exact_rows) > 1e-6:
+        raise ValueError(
+            "head-region boundary must align exactly to the Video Expert grid, "
+            f"got grid_h={h}, input_height={input_height}, "
+            f"head_region_height={head_region_height}"
+        )
+    grid = tokens.float().reshape(tokens.shape[0], f, h, w, tokens.shape[2])
+    head = grid[:, 0, :head_rows].permute(0, 3, 1, 2).contiguous()
+    pooled = F.adaptive_avg_pool2d(head, output_size=(2, 2)).permute(0, 2, 3, 1)
+    top_left = pooled[:, 0, 0]
+    top_right = pooled[:, 0, 1]
+    bottom_left = pooled[:, 1, 0]
+    bottom_right = pooled[:, 1, 1]
+    contrasts = torch.stack(
+        (
+            (top_left + bottom_left) - (top_right + bottom_right),
+            (top_left + top_right) - (bottom_left + bottom_right),
+            (top_left + bottom_right) - (top_right + bottom_left),
+        ),
+        dim=1,
+    )
+    norms = torch.linalg.vector_norm(contrasts, dim=-1, keepdim=True)
+    if torch.any(~torch.isfinite(contrasts)) or torch.any(norms <= 1e-12):
+        raise ValueError("Video Expert head spatial contrasts must be finite and non-zero")
+    return contrasts / norms
 
 
 class FastWAM(torch.nn.Module):
@@ -957,6 +1018,8 @@ class FastWAM(torch.nn.Module):
         context: Optional[torch.Tensor] = None,
         context_mask: Optional[torch.Tensor] = None,
         tiled: bool = False,
+        return_head_spatial_feature: bool = False,
+        head_region_height: Optional[int] = None,
     ) -> dict[str, Any]:
         """Encode one policy observation with FastWAM's frozen Video Expert.
 
@@ -1065,12 +1128,33 @@ class FastWAM(torch.nn.Module):
             return_final_tokens=True,
         )
         feature = pool_video_expert_tokens(final_video_tokens)
-        return {
+        result = {
             "video_expert_feature": feature[0].detach().to(
                 device="cpu", dtype=torch.float32
             ),
             "video_expert_feature_version": FASTWAM_VIDEO_EXPERT_FEATURE_VERSION,
         }
+        if return_head_spatial_feature:
+            if head_region_height is None:
+                raise ValueError(
+                    "head_region_height is required for head spatial features"
+                )
+            spatial = pool_video_expert_head_spatial_contrasts(
+                final_video_tokens,
+                grid_size=tuple(video_pre["meta"]["grid_size"]),
+                input_height=height,
+                head_region_height=int(head_region_height),
+            )
+            result["video_expert_head_spatial_feature"] = spatial[0].detach().to(
+                device="cpu", dtype=torch.float32
+            )
+            result["video_expert_head_spatial_feature_version"] = (
+                FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION
+            )
+            result["video_expert_grid_size"] = tuple(
+                int(value) for value in video_pre["meta"]["grid_size"]
+            )
+        return result
 
     @torch.no_grad()
     def infer_action(
@@ -1089,6 +1173,8 @@ class FastWAM(torch.nn.Module):
         rand_device: str = "cpu",
         tiled: bool = False,
         return_video_expert_feature: bool = False,
+        return_video_expert_head_spatial_feature: bool = False,
+        video_expert_head_region_height: Optional[int] = None,
     ) -> dict[str, Any]:
         self.eval()
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
@@ -1190,12 +1276,30 @@ class FastWAM(torch.nn.Module):
                 "mask": video_pre["context_mask"],
             },
             video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
-            return_final_tokens=return_video_expert_feature,
+            return_final_tokens=(
+                return_video_expert_feature
+                or return_video_expert_head_spatial_feature
+            ),
         )
         video_expert_feature = None
-        if return_video_expert_feature:
+        video_expert_head_spatial_feature = None
+        if return_video_expert_feature or return_video_expert_head_spatial_feature:
             video_kv_cache, final_video_tokens = video_prefill
-            video_expert_feature = pool_video_expert_tokens(final_video_tokens)
+            if return_video_expert_feature:
+                video_expert_feature = pool_video_expert_tokens(final_video_tokens)
+            if return_video_expert_head_spatial_feature:
+                if video_expert_head_region_height is None:
+                    raise ValueError(
+                        "video_expert_head_region_height is required for spatial features"
+                    )
+                video_expert_head_spatial_feature = (
+                    pool_video_expert_head_spatial_contrasts(
+                        final_video_tokens,
+                        grid_size=tuple(video_pre["meta"]["grid_size"]),
+                        input_height=height,
+                        head_region_height=int(video_expert_head_region_height),
+                    )
+                )
         else:
             video_kv_cache = video_prefill
 
@@ -1230,6 +1334,18 @@ class FastWAM(torch.nn.Module):
             )
             result["video_expert_feature_version"] = (
                 FASTWAM_VIDEO_EXPERT_FEATURE_VERSION
+            )
+        if video_expert_head_spatial_feature is not None:
+            result["video_expert_head_spatial_feature"] = (
+                video_expert_head_spatial_feature[0]
+                .detach()
+                .to(device="cpu", dtype=torch.float32)
+            )
+            result["video_expert_head_spatial_feature_version"] = (
+                FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION
+            )
+            result["video_expert_grid_size"] = tuple(
+                int(value) for value in video_pre["meta"]["grid_size"]
             )
         return result
 

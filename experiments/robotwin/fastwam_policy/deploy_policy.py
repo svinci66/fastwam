@@ -45,6 +45,9 @@ from fastwam.rl.online_policy import (
     load_residual_actor_checkpoint,
 )
 from fastwam.rl.language_routing import resolve_residual_language_instruction
+from fastwam.models.wan22.fastwam import (
+    FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -624,6 +627,8 @@ class WorldActionRobotWinPolicy:
         self._last_residual_actor_override_applied = False
         self._last_video_expert_feature: Optional[np.ndarray] = None
         self._last_video_expert_feature_version: Optional[str] = None
+        self._last_video_expert_head_spatial_feature: Optional[np.ndarray] = None
+        self._last_video_expert_head_spatial_feature_version: Optional[str] = None
         self._fastwam_checkpoint_sha256: Optional[str] = None
         if self.save_imagination_transitions or (
             self.residual_policy is not None
@@ -781,6 +786,18 @@ class WorldActionRobotWinPolicy:
                     "features required by collection/residual inference."
                 )
             infer_kwargs["return_video_expert_feature"] = True
+        needs_head_spatial_feature = bool(
+            self.residual_policy is not None
+            and self.residual_policy.requires_external_spatial_feature
+        )
+        if needs_head_spatial_feature:
+            if "return_video_expert_head_spatial_feature" not in action_parameters:
+                raise RuntimeError(
+                    "Loaded FastWAM implementation cannot expose head spatial "
+                    "features required by the residual adapter."
+                )
+            infer_kwargs["return_video_expert_head_spatial_feature"] = True
+            infer_kwargs["video_expert_head_region_height"] = 256
         infer_t0 = time.perf_counter() if self.timing_enabled else 0.0
         with torch.no_grad():
             predicted_frames = None
@@ -791,6 +808,8 @@ class WorldActionRobotWinPolicy:
 
         self._last_video_expert_feature = None
         self._last_video_expert_feature_version = None
+        self._last_video_expert_head_spatial_feature = None
+        self._last_video_expert_head_spatial_feature_version = None
         if needs_video_expert_feature:
             feature = np.asarray(
                 pred.get("video_expert_feature"), dtype=np.float32
@@ -804,6 +823,26 @@ class WorldActionRobotWinPolicy:
                 raise RuntimeError("FastWAM omitted Video Expert feature provenance")
             self._last_video_expert_feature = feature.copy()
             self._last_video_expert_feature_version = feature_version
+        if needs_head_spatial_feature:
+            spatial = np.asarray(
+                pred.get("video_expert_head_spatial_feature"), dtype=np.float32
+            )
+            spatial_version = str(
+                pred.get("video_expert_head_spatial_feature_version", "")
+            ).strip()
+            if spatial.ndim != 2 or spatial.shape[0] != 3:
+                raise RuntimeError(
+                    f"FastWAM returned invalid head spatial feature {spatial.shape}"
+                )
+            if not np.all(np.isfinite(spatial)):
+                raise RuntimeError("FastWAM head spatial feature is non-finite")
+            if spatial_version != FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION:
+                raise RuntimeError(
+                    "FastWAM head spatial feature provenance mismatch: "
+                    f"{spatial_version!r}"
+                )
+            self._last_video_expert_head_spatial_feature = spatial.copy()
+            self._last_video_expert_head_spatial_feature_version = spatial_version
 
         normalized_baseline = pred["action"].detach().float().cpu().numpy()
         if normalized_baseline.ndim == 3:
@@ -889,6 +928,11 @@ class WorldActionRobotWinPolicy:
                         )
                     residual_output = self.residual_policy.correct_from_feature(
                         observation_feature=self._last_video_expert_feature,
+                        spatial_feature=(
+                            self._last_video_expert_head_spatial_feature
+                            if self.residual_policy.requires_external_spatial_feature
+                            else None
+                        ),
                         **residual_kwargs,
                     )
                 else:
@@ -1210,6 +1254,13 @@ class WorldActionRobotWinPolicy:
                 self._pending_transition["video_expert_checkpoint_sha256"] = (
                     self._fastwam_checkpoint_sha256
                 )
+            if self._last_video_expert_head_spatial_feature is not None:
+                self._pending_transition["video_expert_head_spatial_feature"] = (
+                    self._last_video_expert_head_spatial_feature.copy()
+                )
+                self._pending_transition[
+                    "video_expert_head_spatial_feature_version"
+                ] = self._last_video_expert_head_spatial_feature_version
             if residual_output is not None:
                 candidate_residual = np.asarray(
                     residual_output.candidate_residual_actions,
@@ -1390,6 +1441,14 @@ class WorldActionRobotWinPolicy:
             metadata["video_expert_checkpoint_sha256"] = transition[
                 "video_expert_checkpoint_sha256"
             ]
+        if "video_expert_head_spatial_feature" in transition:
+            spatial = np.asarray(transition["video_expert_head_spatial_feature"])
+            metadata["video_expert_head_spatial_feature_version"] = transition[
+                "video_expert_head_spatial_feature_version"
+            ]
+            metadata["video_expert_head_spatial_feature_shape"] = list(
+                spatial.shape
+            )
         metadata.update(transition["residual_diagnostics"])
         if "candidate_residual_actions_sha256" in transition:
             metadata["candidate_residual_actions_sha256"] = transition[
@@ -1419,6 +1478,10 @@ class WorldActionRobotWinPolicy:
         if "video_expert_feature" in transition:
             rollout_arrays["video_expert_feature"] = transition[
                 "video_expert_feature"
+            ]
+        if "video_expert_head_spatial_feature" in transition:
+            rollout_arrays["video_expert_head_spatial_feature"] = transition[
+                "video_expert_head_spatial_feature"
             ]
         task_progress = np.asarray(transition["task_progress_trace"], dtype=np.float32)
         if task_progress.size:

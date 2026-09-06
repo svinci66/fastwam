@@ -8,8 +8,11 @@ from experiments.robotwin.build_wan_vae_head_awr_replay import (
     collapse_record_feature,
     load_video_expert_record_features,
 )
+from experiments.robotwin.backfill_video_expert_features import _already_complete
 from fastwam.models.wan22.fastwam import (
+    FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION,
     FASTWAM_VIDEO_EXPERT_FEATURE_VERSION,
+    pool_video_expert_head_spatial_contrasts,
     pool_video_expert_tokens,
 )
 from fastwam.rl.models import ResidualActor, ResidualActorConfig
@@ -35,6 +38,41 @@ def test_video_expert_token_pooling_rejects_invalid_features():
         pool_video_expert_tokens(torch.ones(2, 3))
     with pytest.raises(ValueError, match="finite and non-zero"):
         pool_video_expert_tokens(torch.zeros(1, 2, 3))
+
+
+def test_head_spatial_contrasts_preserve_horizontal_vertical_and_diagonal_layout():
+    # Grid is 3x2; top two rows correspond exactly to a 2/3-height head view.
+    grid = torch.tensor(
+        [
+            [
+                [[1.0, 0.0], [2.0, 0.0]],
+                [[3.0, 1.0], [5.0, 2.0]],
+                [[99.0, 99.0], [99.0, 99.0]],
+            ]
+        ]
+    )
+    tokens = grid.reshape(1, 6, 2)
+    result = pool_video_expert_head_spatial_contrasts(
+        tokens,
+        grid_size=(1, 3, 2),
+        input_height=384,
+        head_region_height=256,
+    )
+    assert result.shape == (1, 3, 2)
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(result, dim=-1), torch.ones(1, 3)
+    )
+    assert FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION.endswith("_v1")
+
+
+def test_head_spatial_contrasts_require_grid_aligned_head_boundary():
+    with pytest.raises(ValueError, match="align exactly"):
+        pool_video_expert_head_spatial_contrasts(
+            torch.ones(1, 10, 4),
+            grid_size=(1, 5, 2),
+            input_height=384,
+            head_region_height=256,
+        )
 
 
 def test_native_checkpoint_loads_without_a_separate_vision_encoder(tmp_path: Path):
@@ -115,3 +153,33 @@ def test_native_replay_feature_loader_requires_versioned_captured_feature(
     bad = dict(record, video_expert_feature_version="siglip")
     with pytest.raises(ValueError, match="Missing or incompatible"):
         load_video_expert_record_features([bad])
+
+
+def test_backfill_completion_requires_spatial_provenance_when_requested():
+    checkpoint = "a" * 64
+    metadata = {
+        "video_expert_feature_version": FASTWAM_VIDEO_EXPERT_FEATURE_VERSION,
+        "video_expert_feature_dim": 3,
+        "video_expert_checkpoint_sha256": checkpoint,
+    }
+    arrays = {"video_expert_feature": np.ones(3, dtype=np.float32)}
+    assert _already_complete(metadata, arrays, checkpoint_sha256=checkpoint)
+    assert not _already_complete(
+        metadata,
+        arrays,
+        checkpoint_sha256=checkpoint,
+        require_head_spatial_feature=True,
+    )
+    metadata["video_expert_head_spatial_feature_version"] = (
+        FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION
+    )
+    metadata["video_expert_head_spatial_feature_shape"] = [3, 3]
+    arrays["video_expert_head_spatial_feature"] = np.ones(
+        (3, 3), dtype=np.float32
+    )
+    assert _already_complete(
+        metadata,
+        arrays,
+        checkpoint_sha256=checkpoint,
+        require_head_spatial_feature=True,
+    )

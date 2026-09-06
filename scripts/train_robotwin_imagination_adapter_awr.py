@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import sys
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -25,17 +26,29 @@ from fastwam.rl.adapter_trainer import train_residual_adapter_awr
 from fastwam.rl.awr_trainer import AWRConfig, build_context
 from fastwam.rl.models import (
     FrozenResidualAdapterActor,
+    FrozenSpatialResidualAdapterActor,
     ResidualAdapter,
     ResidualAdapterConfig,
+    SpatialResidualAdapter,
+    SpatialResidualAdapterConfig,
     ValueCritic,
     ValueCriticConfig,
 )
 from fastwam.rl.online_policy import load_residual_actor_checkpoint
 from fastwam.rl.replay_buffer import ReplayBuffer
 from fastwam.rl.rewards import CompositeRewardConfig
+from fastwam.models.wan22.fastwam import (
+    FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION,
+)
+from experiments.robotwin.build_wan_vae_head_awr_replay import (
+    discover_records,
+    select_reward_tasks,
+)
 
 
 CHECKPOINT_FORMAT = "fastwam_residual_adapter_awr_v1"
+SPATIAL_CHECKPOINT_FORMAT = "fastwam_residual_spatial_adapter_awr_v1"
+PAIR_PATTERN = re.compile(r"-pair(?P<pair_id>\d+)-(?P<behavior>expert|policy)$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +60,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--timeout-bootstrap-value", type=float, required=True)
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument(
+        "--spatial-reward-json",
+        type=Path,
+        help="Reward payload whose source records contain aligned spatial features.",
+    )
+    parser.add_argument("--tasks", default="")
     return parser.parse_args()
 
 
@@ -90,6 +109,7 @@ def zero_equivalence_audit(
     *,
     use_goal_conditioning: bool,
     batch_size: int = 128,
+    spatial_features: np.ndarray | None = None,
 ) -> dict[str, Any]:
     actor.eval()
     exact = True
@@ -114,8 +134,19 @@ def zero_equivalence_audit(
                 use_goal_conditioning=use_goal_conditioning,
             )
             base = actor.base_actor(context, baseline, language)
-            composed = actor(context, baseline, language)
-            _, _, adapter_residual = actor.components(context, baseline, language)
+            if isinstance(actor, FrozenSpatialResidualAdapterActor):
+                if spatial_features is None:
+                    raise ValueError("spatial zero audit requires spatial_features")
+                spatial = torch.from_numpy(spatial_features[start:stop])
+                composed = actor(context, baseline, spatial, language)
+                _, _, adapter_residual = actor.components(
+                    context, baseline, spatial, language
+                )
+            else:
+                if spatial_features is not None:
+                    raise ValueError("mean adapter zero audit received spatial features")
+                composed = actor(context, baseline, language)
+                _, _, adapter_residual = actor.components(context, baseline, language)
             exact = exact and torch.equal(base, composed)
             maximum = max(maximum, float(torch.max(torch.abs(base - composed))))
             adapter_maximum = max(
@@ -137,6 +168,7 @@ def adapter_output_audit(
     device: torch.device,
     maximum_ratio: float,
     batch_size: int = 128,
+    spatial_features: np.ndarray | None = None,
 ) -> dict[str, Any]:
     actor.eval()
     adapter_square = 0.0
@@ -162,7 +194,15 @@ def adapter_output_audit(
                 goal,
                 use_goal_conditioning=use_goal_conditioning,
             )
-            _, ordinary, adapter = actor.components(context, baseline, language)
+            if isinstance(actor, FrozenSpatialResidualAdapterActor):
+                if spatial_features is None:
+                    raise ValueError("spatial output audit requires spatial_features")
+                spatial = torch.from_numpy(spatial_features[start:stop]).to(device)
+                _, ordinary, adapter = actor.components(
+                    context, baseline, spatial, language
+                )
+            else:
+                _, ordinary, adapter = actor.components(context, baseline, language)
             adapter_square += float(torch.sum(torch.square(adapter)))
             base_square += float(torch.sum(torch.square(ordinary)))
             elements += adapter.numel()
@@ -194,6 +234,94 @@ def adapter_output_audit(
     }
 
 
+def load_spatial_features(
+    reward_json: Path,
+    replay: ReplayBuffer,
+    replay_manifest: dict[str, Any],
+    *,
+    tasks: list[str],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    payload = json.loads(reward_json.read_text(encoding="utf-8"))
+    payload = select_reward_tasks(payload, tasks)
+    records = discover_records(payload)
+    record_lookup = {}
+    checkpoint_hashes = set()
+    for record in records:
+        key = (
+            str(record["task_name"]),
+            int(record["pair_episode_id"]),
+            str(record["behavior"]),
+            int(record["replan_idx"]),
+        )
+        if key in record_lookup:
+            raise ValueError(f"duplicate spatial source record {key}")
+        record_lookup[key] = record
+    task_id_map = {
+        int(task_id): str(task)
+        for task, task_id in replay_manifest["provenance"]["task_id_map"].items()
+    }
+    features = []
+    source_paths = []
+    expected_shape = None
+    for transition in replay.transitions:
+        match = PAIR_PATTERN.search(transition.episode_id)
+        if match is None:
+            raise ValueError(f"cannot recover pair id from {transition.episode_id!r}")
+        key = (
+            task_id_map[transition.task_id],
+            int(match.group("pair_id")),
+            match.group("behavior"),
+            int(transition.transition_index),
+        )
+        record = record_lookup.get(key)
+        if record is None:
+            raise ValueError(f"spatial source record is missing for {key}")
+        record_dir = Path(record["record_dir"])
+        metadata = json.loads((record_dir / "metadata.json").read_text())
+        if (
+            metadata.get("video_expert_head_spatial_feature_version")
+            != FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION
+        ):
+            raise ValueError(f"missing spatial feature provenance in {record_dir}")
+        checkpoint_hash = str(
+            metadata.get("video_expert_checkpoint_sha256", "")
+        ).strip()
+        if len(checkpoint_hash) != 64:
+            raise ValueError(f"missing FastWAM checkpoint hash in {record_dir}")
+        checkpoint_hashes.add(checkpoint_hash)
+        with np.load(
+            record_dir / str(record["rollout_arrays_file"]), allow_pickle=False
+        ) as arrays:
+            if "video_expert_head_spatial_feature" not in arrays.files:
+                raise ValueError(f"spatial feature array missing in {record_dir}")
+            feature = np.asarray(
+                arrays["video_expert_head_spatial_feature"], dtype=np.float32
+            )
+        if feature.ndim != 2 or feature.shape[0] != 3 or not np.all(
+            np.isfinite(feature)
+        ):
+            raise ValueError(f"invalid spatial feature {feature.shape} in {record_dir}")
+        if expected_shape is None:
+            expected_shape = tuple(int(value) for value in feature.shape)
+        elif tuple(feature.shape) != expected_shape:
+            raise ValueError(
+                f"mixed spatial feature shapes: {expected_shape} and {feature.shape}"
+            )
+        features.append(feature)
+        source_paths.append(str(record_dir.resolve()))
+    if len(checkpoint_hashes) != 1:
+        raise ValueError(f"mixed spatial FastWAM checkpoints: {checkpoint_hashes}")
+    result = np.stack(features).astype(np.float32)
+    return result, {
+        "version": FASTWAM_VIDEO_EXPERT_HEAD_SPATIAL_VERSION,
+        "shape": list(result.shape),
+        "fastwam_checkpoint_sha256": next(iter(checkpoint_hashes)),
+        "reward_json": str(reward_json.resolve()),
+        "reward_json_sha256": sha256(reward_json),
+        "source_record_count": len(source_paths),
+    }
+
+
 def main() -> None:
     args = parse_args()
     cfg = _config(args.config)
@@ -213,6 +341,25 @@ def main() -> None:
     if replay_manifest.get("imagination_reward_type") != reward_config.imagination_reward_type:
         raise ValueError("adapter reward type does not match replay")
     arrays = replay.arrays()
+    adapter_type = str(cfg["adapter"].get("type", "mean")).strip()
+    if adapter_type not in {"mean", "head_spatial_contrast"}:
+        raise ValueError(f"unsupported adapter type: {adapter_type!r}")
+    spatial_features = None
+    spatial_provenance = None
+    if adapter_type == "head_spatial_contrast":
+        if args.spatial_reward_json is None:
+            raise ValueError("spatial adapter requires --spatial-reward-json")
+        selected_tasks = [
+            value.strip() for value in args.tasks.split(",") if value.strip()
+        ]
+        spatial_features, spatial_provenance = load_spatial_features(
+            args.spatial_reward_json,
+            replay,
+            replay_manifest,
+            tasks=selected_tasks,
+        )
+    elif args.spatial_reward_json is not None:
+        raise ValueError("mean adapter must not receive --spatial-reward-json")
     base_actor, base_payload = load_residual_actor_checkpoint(
         args.base_checkpoint, device="cpu"
     )
@@ -235,6 +382,7 @@ def main() -> None:
         raise ValueError("base actor language dimension does not match replay")
 
     adapter_payload = dict(cfg["adapter"])
+    adapter_payload.pop("type", None)
     for key in ("hidden_dims", "adapter_scale"):
         adapter_payload[key] = tuple(adapter_payload[key])
     adapter_payload.update(
@@ -243,12 +391,25 @@ def main() -> None:
         action_dim=base_actor.config.action_dim,
         language_feature_dim=language_dim,
     )
-    adapter = ResidualAdapter(ResidualAdapterConfig(**adapter_payload))
-    actor = FrozenResidualAdapterActor(base_actor, adapter)
+    if adapter_type == "head_spatial_contrast":
+        if spatial_features is None:
+            raise RuntimeError("spatial feature loading was skipped")
+        adapter_payload.update(
+            spatial_token_count=int(spatial_features.shape[1]),
+            spatial_token_dim=int(spatial_features.shape[2]),
+        )
+        adapter = SpatialResidualAdapter(
+            SpatialResidualAdapterConfig(**adapter_payload)
+        )
+        actor = FrozenSpatialResidualAdapterActor(base_actor, adapter)
+    else:
+        adapter = ResidualAdapter(ResidualAdapterConfig(**adapter_payload))
+        actor = FrozenResidualAdapterActor(base_actor, adapter)
     zero_audit = zero_equivalence_audit(
         actor,
         arrays,
         use_goal_conditioning=awr_config.use_goal_conditioning,
+        spatial_features=spatial_features,
     )
     if not zero_audit["exact"] or zero_audit["maximum_adapter_residual"] != 0.0:
         raise RuntimeError(f"zero adapter equivalence failed: {zero_audit}")
@@ -302,6 +463,8 @@ def main() -> None:
         "return_mean": float(np.mean(returns)),
         "imagination_reward_type": reward_config.imagination_reward_type,
         "sampler_type": cfg["sampler"]["type"],
+        "adapter_type": adapter_type,
+        "spatial_feature_provenance": spatial_provenance,
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     if args.validate_only:
@@ -321,6 +484,7 @@ def main() -> None:
         anchor_weight=float(cfg["loss"]["anchor_weight"]),
         smoothness_weight=float(cfg["loss"]["smoothness_weight"]),
         device=device,
+        spatial_features=spatial_features,
     )
     output_audit = adapter_output_audit(
         actor,
@@ -328,6 +492,7 @@ def main() -> None:
         use_goal_conditioning=awr_config.use_goal_conditioning,
         device=device,
         maximum_ratio=float(cfg["audit"]["max_adapter_to_base_rms_ratio"]),
+        spatial_features=spatial_features,
     )
     summary["sampler_audit"] = sampler_audit
     summary["trained_adapter_audit"] = output_audit
@@ -335,7 +500,11 @@ def main() -> None:
         parameter.numel() for parameter in actor.adapter.parameters()
     )
     checkpoint = {
-        "format": CHECKPOINT_FORMAT,
+        "format": (
+            SPATIAL_CHECKPOINT_FORMAT
+            if adapter_type == "head_spatial_contrast"
+            else CHECKPOINT_FORMAT
+        ),
         "actor": actor.base_actor.state_dict(),
         "actor_config": actor.base_actor.export_config(),
         "adapter": actor.adapter.state_dict(),
