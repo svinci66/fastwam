@@ -43,7 +43,8 @@ exec > >(tee -a "${RUN_ROOT}/driver.log") 2>&1
 
 if [[ ! -s "${EXPERT_ROOT}/expert_export_summary.json" ]]; then
   printf '[targeted-pipeline] stage=export_expert_imagination\n'
-  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  conda run --no-capture-output -n "${CONDA_ENV}" \
+    env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
     "${PROJECT_ROOT}/experiments/robotwin/export_paired_expert_imagination_trajectories.py" \
     --cases-jsonl "${CASES_JSONL}" --tasks place_can_basket \
     --output-dir "${EXPERT_ROOT}" --checkpoint "${CHECKPOINT}" \
@@ -56,7 +57,8 @@ fi
 
 if [[ ! -s "${NEW_REWARD_JSON}" ]]; then
   printf '[targeted-pipeline] stage=score_head_wan_vae\n'
-  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  conda run --no-capture-output -n "${CONDA_ENV}" \
+    env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
     "${PROJECT_ROOT}/experiments/robotwin/score_natural_failure_vae_pairs.py" \
     --cases-jsonl "${CASES_JSONL}" --tasks place_can_basket \
     --expert-root "${EXPERT_ROOT}" --fastwam-run-dir "${POLICY_RUN_DIR}" \
@@ -69,13 +71,15 @@ fi
 # This is the direct reward falsification gate.  The selected batch contains
 # expert successes and natural FastWAM failures, so all five must rank in the
 # correct direction before the reward is allowed to train either adapter.
-conda run --no-capture-output -n "${CONDA_ENV}" python -c \
+conda run --no-capture-output -n "${CONDA_ENV}" \
+  env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -c \
   'import json,sys; d=json.load(open(sys.argv[1])); assert d["pair_count"]==5, d["pair_count"]; assert d["correctly_ranked_count"]==5, d["correctly_ranked_count"]; assert d["pairwise_accuracy"]==1.0, d["pairwise_accuracy"]; print("[targeted-pipeline] reward_gate=pass pairwise=5/5")' \
   "${NEW_REWARD_JSON}"
 
 if [[ ! -s "${BACKFILL_DIR}/video_expert_backfill_summary.json" ]]; then
   printf '[targeted-pipeline] stage=backfill_spatial_video_expert\n'
-  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  conda run --no-capture-output -n "${CONDA_ENV}" \
+    env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
     "${PROJECT_ROOT}/experiments/robotwin/backfill_video_expert_features.py" \
     --reward-json "${NEW_REWARD_JSON}" --output-dir "${BACKFILL_DIR}" \
     --checkpoint "${CHECKPOINT}" --dataset-stats "${DATASET_STATS}" \
@@ -88,7 +92,8 @@ fi
 
 if [[ ! -s "${MERGED_REWARD_JSON}" ]]; then
   printf '[targeted-pipeline] stage=merge_reward old47_plus_new5\n'
-  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  conda run --no-capture-output -n "${CONDA_ENV}" \
+    env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
     "${PROJECT_ROOT}/experiments/robotwin/merge_natural_failure_vae_rewards.py" \
     --inputs "${BASE_REWARD_JSON}" "${NEW_REWARD_JSON}" \
     --tasks open_microwave,hanging_mug,place_can_basket \
@@ -103,7 +108,8 @@ if [[ ! -s "${REPLAY_DIR}/manifest.json" ]]; then
     exit 1
   }
   printf '[targeted-pipeline] stage=build_paired_rank_replay\n'
-  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  conda run --no-capture-output -n "${CONDA_ENV}" \
+    env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
     "${PROJECT_ROOT}/experiments/robotwin/build_wan_vae_head_awr_replay.py" \
     --reward-json "${MERGED_REWARD_JSON}" --output-dir "${REPLAY_DIR}" \
     --actor-observation-source fastwam_video_expert \
@@ -127,7 +133,8 @@ train_adapter() {
     exit 1
   }
   printf '[targeted-pipeline] stage=train variant=%s\n' "${variant}"
-  conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+  conda run --no-capture-output -n "${CONDA_ENV}" \
+    env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
     "${PROJECT_ROOT}/scripts/train_robotwin_imagination_adapter_awr.py" \
     --config "${config}" --replay-dir "${REPLAY_DIR}" \
     --base-checkpoint "${BASE_RESIDUAL_CHECKPOINT}" --output-dir "${output}" \
@@ -138,7 +145,8 @@ train_adapter() {
 train_adapter no_imagination "${CONTROL_CONFIG}" "${CONTROL_DIR}"
 train_adapter with_imagination "${TREATMENT_CONFIG}" "${TREATMENT_DIR}"
 
-conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+conda run --no-capture-output -n "${CONDA_ENV}" \
+  env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
   "${PROJECT_ROOT}/experiments/robotwin/audit_imagination_adapter_training_pair.py" \
   --control-checkpoint "${CONTROL_DIR}/checkpoint.pt" \
   --treatment-checkpoint "${TREATMENT_DIR}/checkpoint.pt" \
@@ -167,7 +175,8 @@ env RUN_NAME="${DEV_RUN_NAME}" VARIANTS=no_imagination,imagination \
   EVAL_VIDEO_LOG=true \
   bash "${PROJECT_ROOT}/scripts/run_robotwin_residual_iql_online_pair.sh"
 
-conda run --no-capture-output -n "${CONDA_ENV}" python -u \
+conda run --no-capture-output -n "${CONDA_ENV}" \
+  env PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/src" python -u \
   "${PROJECT_ROOT}/experiments/robotwin/audit_targeted_adapter_dev_gate.py" \
   --summary "${DEV_SUMMARY}" --output-json "${DEV_SUMMARY_DIR}/frozen_dev_gate.json"
 touch "${RUN_ROOT}/DEV_GATE_PASSED"
