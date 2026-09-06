@@ -13,6 +13,8 @@ EPISODES_PER_TASK="${EPISODES_PER_TASK:-3}"
 START_CANDIDATE_SEED="${START_CANDIDATE_SEED:-0}"
 MAX_CANDIDATE_SEED="${MAX_CANDIDATE_SEED:-50}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-30}"
+REQUIRE_BASKET_ID="${REQUIRE_BASKET_ID:-}"
+REQUIRE_ARM_PATTERN="${REQUIRE_ARM_PATTERN:-none}"
 
 ARTIFACT_DIR="${PROJECT_ROOT}/evaluate_results/robotwin_imagination_restart/${RUN_NAME}"
 LOCAL_SOURCE_ROOT="${ARTIFACT_DIR}/local_expert_source"
@@ -32,6 +34,13 @@ done
 [[ "${MAX_CANDIDATE_SEED}" =~ ^[0-9]+$ && "${MAX_CANDIDATE_SEED}" -ge "${START_CANDIDATE_SEED}" ]] || {
   printf 'MAX_CANDIDATE_SEED must be >= START_CANDIDATE_SEED\n' >&2; exit 1;
 }
+[[ -z "${REQUIRE_BASKET_ID}" || "${REQUIRE_BASKET_ID}" == "0" || "${REQUIRE_BASKET_ID}" == "1" ]] || {
+  printf 'REQUIRE_BASKET_ID must be empty, 0, or 1\n' >&2; exit 1;
+}
+case "${REQUIRE_ARM_PATTERN}" in
+  none|alternating-left-first|alternating-right-first) ;;
+  *) printf 'Unsupported REQUIRE_ARM_PATTERN: %s\n' "${REQUIRE_ARM_PATTERN}" >&2; exit 1 ;;
+esac
 
 mkdir -p "${ARTIFACT_DIR}" "${ONLINE_DIR}"
 exec 9>"${LOCK_FILE}"
@@ -75,18 +84,28 @@ for task in "${tasks[@]}"; do
       seed="${next_seed}"
       collected=false
       while (( seed <= MAX_CANDIDATE_SEED )); do
+        required_arm=""
+        if [[ "${REQUIRE_ARM_PATTERN}" == "alternating-left-first" ]]; then
+          (( episode % 2 == 0 )) && required_arm="left" || required_arm="right"
+        elif [[ "${REQUIRE_ARM_PATTERN}" == "alternating-right-first" ]]; then
+          (( episode % 2 == 0 )) && required_arm="right" || required_arm="left"
+        fi
+        stratum_args=()
+        [[ -n "${REQUIRE_BASKET_ID}" ]] && stratum_args+=(--require-basket-id "${REQUIRE_BASKET_ID}")
+        [[ -n "${required_arm}" ]] && stratum_args+=(--require-arm-tag "${required_arm}")
         printf '[local-pair] collect expert task=%s episode=%s candidate_seed=%s\n' "${task}" "${episode}" "${seed}"
         if conda run --no-capture-output -n "${CONDA_ENV}" \
           env CUDA_VISIBLE_DEVICES="${GPU_ID}" PYTHONUNBUFFERED=1 \
           python -u "${PROJECT_ROOT}/experiments/robotwin/collect_local_expert_pair_episode.py" \
           --robotwin-root "${ROBOTWIN_ROOT}" --task "${task}" --task-config demo_clean \
-          --seed "${seed}" --episode-index "${episode}" --output-bundle "${bundle}"; then
+          --seed "${seed}" --episode-index "${episode}" --output-bundle "${bundle}" \
+          "${stratum_args[@]}"; then
           collected=true
           break
         else
           status="$?"
-          if [[ "${status}" -eq 20 || "${status}" -eq 21 ]]; then
-            printf '[local-pair] skip infeasible expert task=%s candidate_seed=%s status=%s\n' \
+          if [[ "${status}" -eq 20 || "${status}" -eq 21 || "${status}" -eq 23 ]]; then
+            printf '[local-pair] skip candidate task=%s candidate_seed=%s status=%s\n' \
               "${task}" "${seed}" "${status}"
             seed="$(( seed + 1 ))"
             continue

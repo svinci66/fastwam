@@ -43,12 +43,34 @@ def _json_value(value: Any) -> Any | None:
 def task_selectors(task_env: Any) -> dict[str, Any]:
     selectors: dict[str, Any] = {}
     for name, value in vars(task_env).items():
+        if name == "arm_tag":
+            selectors[name] = str(value)
+            continue
         if not name.endswith(("_id", "_name")):
             continue
         converted = _json_value(value)
         if converted is not None:
             selectors[name] = converted
     return selectors
+
+
+def required_stratum_matches(
+    selectors: dict[str, Any],
+    *,
+    basket_id: int | None = None,
+    arm_tag: str | None = None,
+) -> bool:
+    """Return whether a sampled scene belongs to the predeclared stratum.
+
+    This check uses only environment selectors fixed at reset time.  It never
+    inspects expert execution quality, FastWAM output, or reward values.
+    """
+
+    if basket_id is not None and int(selectors.get("basket_id", -1)) != basket_id:
+        return False
+    if arm_tag is not None and str(selectors.get("arm_tag", "")) != arm_tag:
+        return False
+    return True
 
 
 def scene_state(task_env: Any, observation: dict[str, Any]) -> dict[str, Any]:
@@ -172,6 +194,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episode-index", type=int, required=True)
     parser.add_argument("--output-bundle", type=Path, required=True)
     parser.add_argument("--pose-atol", type=float, default=1e-5)
+    parser.add_argument("--require-basket-id", type=int, choices=(0, 1))
+    parser.add_argument("--require-arm-tag", choices=("left", "right"))
     return parser.parse_args()
 
 
@@ -251,6 +275,21 @@ def main() -> None:
     planning_observation = task_env.get_obs()
     planning_images = rgb_observations(planning_observation)
     planning_state = scene_state(task_env, planning_observation)
+    if not required_stratum_matches(
+        planning_state["selectors"],
+        basket_id=args.require_basket_id,
+        arm_tag=args.require_arm_tag,
+    ):
+        close_safely(task_env)
+        print(
+            "TARGET_STRATUM_MISMATCH "
+            f"task={args.task} seed={args.seed} "
+            f"required_basket_id={args.require_basket_id} "
+            f"required_arm_tag={args.require_arm_tag} "
+            f"selectors={json.dumps(planning_state['selectors'], sort_keys=True)}",
+            flush=True,
+        )
+        raise SystemExit(23)
     try:
         try:
             episode_info = task_env.play_once()
