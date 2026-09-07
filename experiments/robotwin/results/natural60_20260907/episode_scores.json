@@ -1,0 +1,1562 @@
+[
+  {
+    "action_steps": 1500,
+    "episode": 0,
+    "full": {
+      "action_magnitude": 0.7248941472461147,
+      "action_variation": 0.004168474111675976,
+      "donor": 0.008958304509358195,
+      "latent_motion": 0.196910620697083,
+      "matched": 0.2938432864123775,
+      "negative_duration": -1500,
+      "time_reversed": 0.28542110275837684
+    },
+    "prefix": {
+      "action_magnitude": 0.8355732057243586,
+      "action_variation": 0.006500463729025796,
+      "donor": 0.027277407481482156,
+      "latent_motion": 0.22872578632086515,
+      "matched": 0.36349315755069256,
+      "negative_duration": -1500,
+      "time_reversed": 0.3302678605541587
+    },
+    "seed": 601,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 1,
+    "full": {
+      "action_magnitude": 0.7396264403097091,
+      "action_variation": 0.004483873193572846,
+      "donor": 0.005665363803986579,
+      "latent_motion": 0.24178203411640659,
+      "matched": 0.35532467523890154,
+      "negative_duration": -1500,
+      "time_reversed": 0.3548680791451085
+    },
+    "prefix": {
+      "action_magnitude": 0.8378228880465031,
+      "action_variation": 0.0065368896757718176,
+      "donor": 0.027236686088144776,
+      "latent_motion": 0.26640771981328726,
+      "matched": 0.34973937086761,
+      "negative_duration": -1500,
+      "time_reversed": 0.31864951085299253
+    },
+    "seed": 604,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 2,
+    "full": {
+      "action_magnitude": 0.7747306814116817,
+      "action_variation": 0.004246217795767852,
+      "donor": 0.006701966576345673,
+      "latent_motion": 0.220006680776996,
+      "matched": 0.31691093814949833,
+      "negative_duration": -1500,
+      "time_reversed": 0.29985715208515046
+    },
+    "prefix": {
+      "action_magnitude": 0.8494702912867069,
+      "action_variation": 0.006360409766784869,
+      "donor": 0.0288178711933525,
+      "latent_motion": 0.2537193903699517,
+      "matched": 0.3534018434584141,
+      "negative_duration": -1500,
+      "time_reversed": 0.3207878079265356
+    },
+    "seed": 608,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 3,
+    "full": {
+      "action_magnitude": 0.7275503465244847,
+      "action_variation": 0.004133570991877106,
+      "donor": 0.006395240538658523,
+      "latent_motion": 0.20474674576713192,
+      "matched": 0.30748659877046464,
+      "negative_duration": -1500,
+      "time_reversed": 0.28791069659975266
+    },
+    "prefix": {
+      "action_magnitude": 0.852391904219985,
+      "action_variation": 0.006424597726436332,
+      "donor": 0.020552084266551234,
+      "latent_motion": 0.2244611782953143,
+      "matched": 0.37978448811918497,
+      "negative_duration": -1500,
+      "time_reversed": 0.3333008671179414
+    },
+    "seed": 609,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 4,
+    "full": {
+      "action_magnitude": 0.760666290598531,
+      "action_variation": 0.004517547628511825,
+      "donor": 0.01044632100108909,
+      "latent_motion": 0.2252090046963384,
+      "matched": 0.27438407030797773,
+      "negative_duration": -1500,
+      "time_reversed": 0.25439686808855305
+    },
+    "prefix": {
+      "action_magnitude": 0.8796646893024445,
+      "action_variation": 0.007339908799622208,
+      "donor": 0.0397753968932911,
+      "latent_motion": 0.283321144990623,
+      "matched": 0.3943482367321849,
+      "negative_duration": -1500,
+      "time_reversed": 0.33700826577842236
+    },
+    "seed": 611,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 5,
+    "full": {
+      "action_magnitude": 0.7402284957708851,
+      "action_variation": 0.004316876236830027,
+      "donor": 0.011408705607712285,
+      "latent_motion": 0.21886403666388604,
+      "matched": 0.2738186380555553,
+      "negative_duration": -1500,
+      "time_reversed": 0.26308775164427295
+    },
+    "prefix": {
+      "action_magnitude": 0.8937555644661188,
+      "action_variation": 0.00698100843874272,
+      "donor": 0.03551089918044837,
+      "latent_motion": 0.27112567611038685,
+      "matched": 0.3627381012775004,
+      "negative_duration": -1500,
+      "time_reversed": 0.32381444377824664
+    },
+    "seed": 615,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 6,
+    "full": {
+      "action_magnitude": 0.7432939862051318,
+      "action_variation": 0.004125393728064673,
+      "donor": 0.008293180168263574,
+      "latent_motion": 0.21413775485369466,
+      "matched": 0.2551350397688727,
+      "negative_duration": -1500,
+      "time_reversed": 0.24329369286856345
+    },
+    "prefix": {
+      "action_magnitude": 0.9027336128056049,
+      "action_variation": 0.00648819534399081,
+      "donor": 0.029550721280668914,
+      "latent_motion": 0.23110853973776102,
+      "matched": 0.3130814880132675,
+      "negative_duration": -1500,
+      "time_reversed": 0.2750486726872623
+    },
+    "seed": 618,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 7,
+    "full": {
+      "action_magnitude": 0.7252676097616073,
+      "action_variation": 0.00418656816961424,
+      "donor": 0.00729765996662487,
+      "latent_motion": 0.21292650579444825,
+      "matched": 0.23519534365304054,
+      "negative_duration": -1500,
+      "time_reversed": 0.22530516549464194
+    },
+    "prefix": {
+      "action_magnitude": 0.8639578949660063,
+      "action_variation": 0.006638453109189868,
+      "donor": 0.030498901357580176,
+      "latent_motion": 0.2420905726030469,
+      "matched": 0.3249075235798955,
+      "negative_duration": -1500,
+      "time_reversed": 0.28092123474925756
+    },
+    "seed": 619,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 8,
+    "full": {
+      "action_magnitude": 0.7306814174498281,
+      "action_variation": 0.0041561873381837245,
+      "donor": 0.006479334880114218,
+      "latent_motion": 0.20640140243114963,
+      "matched": 0.3178581868208224,
+      "negative_duration": -1500,
+      "time_reversed": 0.3045234082927627
+    },
+    "prefix": {
+      "action_magnitude": 0.8641995713114738,
+      "action_variation": 0.006485449353931472,
+      "donor": 0.024151974627257957,
+      "latent_motion": 0.22895153984427452,
+      "matched": 0.39192443480715156,
+      "negative_duration": -1500,
+      "time_reversed": 0.34617826202884316
+    },
+    "seed": 620,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 9,
+    "full": {
+      "action_magnitude": 0.7381933619899135,
+      "action_variation": 0.004357974961279861,
+      "donor": 0.006336222707394597,
+      "latent_motion": 0.22207968537845918,
+      "matched": 0.32046459675315886,
+      "negative_duration": -1500,
+      "time_reversed": 0.30881027997501437
+    },
+    "prefix": {
+      "action_magnitude": 0.7912284769117832,
+      "action_variation": 0.005983179959002882,
+      "donor": 0.02741765061785516,
+      "latent_motion": 0.21400241926312447,
+      "matched": 0.3397979154251516,
+      "negative_duration": -1500,
+      "time_reversed": 0.30154927633702755
+    },
+    "seed": 622,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 10,
+    "full": {
+      "action_magnitude": 0.7126688183315338,
+      "action_variation": 0.003922362635362773,
+      "donor": 0.007445618456331993,
+      "latent_motion": 0.19867391884326935,
+      "matched": 0.2573363980458629,
+      "negative_duration": -1500,
+      "time_reversed": 0.23984620539892104
+    },
+    "prefix": {
+      "action_magnitude": 0.7867526654154062,
+      "action_variation": 0.005951701110461727,
+      "donor": 0.025437303009982173,
+      "latent_motion": 0.23222639504820108,
+      "matched": 0.3555924859829247,
+      "negative_duration": -1500,
+      "time_reversed": 0.30935572646558285
+    },
+    "seed": 623,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 444,
+    "episode": 11,
+    "full": {
+      "action_magnitude": 0.875252526667383,
+      "action_variation": 0.0070519400760531425,
+      "donor": 0.03610840174862709,
+      "latent_motion": 0.2689874577853415,
+      "matched": 0.433211808403333,
+      "negative_duration": -444,
+      "time_reversed": 0.34896114220221836
+    },
+    "prefix": {
+      "action_magnitude": 0.8878951128572226,
+      "action_variation": 0.007469177711755037,
+      "donor": 0.040344641641958764,
+      "latent_motion": 0.27510580513626337,
+      "matched": 0.43897503428161144,
+      "negative_duration": -444,
+      "time_reversed": 0.3524033008143306
+    },
+    "seed": 624,
+    "success": true,
+    "task": "open_microwave",
+    "valid_chunks": 18
+  },
+  {
+    "action_steps": 1500,
+    "episode": 12,
+    "full": {
+      "action_magnitude": 0.7322897209275153,
+      "action_variation": 0.004217547360777615,
+      "donor": 0.009255798003639638,
+      "latent_motion": 0.20867659656270857,
+      "matched": 0.31306309613489336,
+      "negative_duration": -1500,
+      "time_reversed": 0.2929610573957043
+    },
+    "prefix": {
+      "action_magnitude": 0.8776229582726955,
+      "action_variation": 0.0065356113482266665,
+      "donor": 0.025090856943279505,
+      "latent_motion": 0.2263656184077263,
+      "matched": 0.37681097257882357,
+      "negative_duration": -1500,
+      "time_reversed": 0.33193232119083405
+    },
+    "seed": 625,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 442,
+    "episode": 13,
+    "full": {
+      "action_magnitude": 0.8973015712367164,
+      "action_variation": 0.007286502552839617,
+      "donor": 0.03147258725237583,
+      "latent_motion": 0.2838771649532848,
+      "matched": 0.46205892744991517,
+      "negative_duration": -442,
+      "time_reversed": 0.37597256236606175
+    },
+    "prefix": {
+      "action_magnitude": 0.9141454882919788,
+      "action_variation": 0.007684736410737969,
+      "donor": 0.032830230744653625,
+      "latent_motion": 0.28679056093096733,
+      "matched": 0.45879261661320925,
+      "negative_duration": -442,
+      "time_reversed": 0.37485733814537525
+    },
+    "seed": 626,
+    "success": true,
+    "task": "open_microwave",
+    "valid_chunks": 18
+  },
+  {
+    "action_steps": 1500,
+    "episode": 14,
+    "full": {
+      "action_magnitude": 0.7243588379313869,
+      "action_variation": 0.004355418518365872,
+      "donor": 0.008641700710080722,
+      "latent_motion": 0.20939176697884837,
+      "matched": 0.291510718363908,
+      "negative_duration": -1500,
+      "time_reversed": 0.27503403480495175
+    },
+    "prefix": {
+      "action_magnitude": 0.853938153013587,
+      "action_variation": 0.00686013100494165,
+      "donor": 0.02986674427397941,
+      "latent_motion": 0.2410197351127863,
+      "matched": 0.42520487029105425,
+      "negative_duration": -1500,
+      "time_reversed": 0.3707552868872881
+    },
+    "seed": 627,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 398,
+    "episode": 15,
+    "full": {
+      "action_magnitude": 0.8839985877275467,
+      "action_variation": 0.00775834804517217,
+      "donor": 0.04403561123303677,
+      "latent_motion": 0.2835405617952347,
+      "matched": 0.47548902686685324,
+      "negative_duration": -398,
+      "time_reversed": 0.376523922663182
+    },
+    "prefix": {
+      "action_magnitude": 0.8839985877275467,
+      "action_variation": 0.00775834804517217,
+      "donor": 0.04403561123303677,
+      "latent_motion": 0.2835405617952347,
+      "matched": 0.47548902686685324,
+      "negative_duration": -398,
+      "time_reversed": 0.376523922663182
+    },
+    "seed": 629,
+    "success": true,
+    "task": "open_microwave",
+    "valid_chunks": 16
+  },
+  {
+    "action_steps": 1500,
+    "episode": 16,
+    "full": {
+      "action_magnitude": 0.6980987777633052,
+      "action_variation": 0.004137784449173318,
+      "donor": 0.007198601462620904,
+      "latent_motion": 0.21678388359085207,
+      "matched": 0.2565627343832485,
+      "negative_duration": -1500,
+      "time_reversed": 0.24220025196911826
+    },
+    "prefix": {
+      "action_magnitude": 0.8472208976745605,
+      "action_variation": 0.006993591377977282,
+      "donor": 0.0314722891994997,
+      "latent_motion": 0.2751641133800149,
+      "matched": 0.4185455860570073,
+      "negative_duration": -1500,
+      "time_reversed": 0.36029911134392023
+    },
+    "seed": 630,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 17,
+    "full": {
+      "action_magnitude": 0.7520815682026648,
+      "action_variation": 0.004462532894385438,
+      "donor": 0.007866705682865151,
+      "latent_motion": 0.21016104423230694,
+      "matched": 0.29083528045204377,
+      "negative_duration": -1500,
+      "time_reversed": 0.27010169024429015
+    },
+    "prefix": {
+      "action_magnitude": 0.878877978771925,
+      "action_variation": 0.007036200579022989,
+      "donor": 0.02875792490024316,
+      "latent_motion": 0.2439765315502882,
+      "matched": 0.4417051896452904,
+      "negative_duration": -1500,
+      "time_reversed": 0.3754933988675475
+    },
+    "seed": 634,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 18,
+    "full": {
+      "action_magnitude": 0.7257548585053413,
+      "action_variation": 0.00441573322525308,
+      "donor": 0.0076489263887759085,
+      "latent_motion": 0.21179596911514958,
+      "matched": 0.2941859074898304,
+      "negative_duration": -1500,
+      "time_reversed": 0.27848338828452174
+    },
+    "prefix": {
+      "action_magnitude": 0.8626991156488657,
+      "action_variation": 0.006581644804100506,
+      "donor": 0.029167608455999902,
+      "latent_motion": 0.23349542170763016,
+      "matched": 0.3756844662129879,
+      "negative_duration": -1500,
+      "time_reversed": 0.33325767796486616
+    },
+    "seed": 635,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 1500,
+    "episode": 19,
+    "full": {
+      "action_magnitude": 0.7286838937190271,
+      "action_variation": 0.004200054730679239,
+      "donor": 0.007565019060925233,
+      "latent_motion": 0.2175973829242491,
+      "matched": 0.28399357824556287,
+      "negative_duration": -1500,
+      "time_reversed": 0.275747439794002
+    },
+    "prefix": {
+      "action_magnitude": 0.8499098308384418,
+      "action_variation": 0.0066434094769647345,
+      "donor": 0.029348202490885003,
+      "latent_motion": 0.25690050702542067,
+      "matched": 0.3647390096448362,
+      "negative_duration": -1500,
+      "time_reversed": 0.33151765493676066
+    },
+    "seed": 637,
+    "success": false,
+    "task": "open_microwave",
+    "valid_chunks": 62
+  },
+  {
+    "action_steps": 317,
+    "episode": 0,
+    "full": {
+      "action_magnitude": 0.8015011663620288,
+      "action_variation": 0.017326958728237793,
+      "donor": 0.10968252811354665,
+      "latent_motion": 0.3860674832875912,
+      "matched": 0.6268411920620844,
+      "negative_duration": -317,
+      "time_reversed": 0.4019508379010054
+    },
+    "prefix": {
+      "action_magnitude": 0.8015011663620288,
+      "action_variation": 0.017326958728237793,
+      "donor": 0.10968252811354665,
+      "latent_motion": 0.3860674832875912,
+      "matched": 0.6268411920620844,
+      "negative_duration": -317,
+      "time_reversed": 0.4019508379010054
+    },
+    "seed": 600,
+    "success": true,
+    "task": "hanging_mug",
+    "valid_chunks": 13
+  },
+  {
+    "action_steps": 325,
+    "episode": 1,
+    "full": {
+      "action_magnitude": 0.8246023884186378,
+      "action_variation": 0.016763876335552104,
+      "donor": 0.05657941935516079,
+      "latent_motion": 0.35040218555010283,
+      "matched": 0.5463121281220362,
+      "negative_duration": -325,
+      "time_reversed": 0.38691552671102375
+    },
+    "prefix": {
+      "action_magnitude": 0.8246023884186378,
+      "action_variation": 0.016763876335552104,
+      "donor": 0.05657941935516079,
+      "latent_motion": 0.35040218555010283,
+      "matched": 0.5463121281220362,
+      "negative_duration": -325,
+      "time_reversed": 0.38691552671102375
+    },
+    "seed": 601,
+    "success": true,
+    "task": "hanging_mug",
+    "valid_chunks": 13
+  },
+  {
+    "action_steps": 900,
+    "episode": 2,
+    "full": {
+      "action_magnitude": 1.0647868175764341,
+      "action_variation": 0.013608442927786225,
+      "donor": 0.05014050185295824,
+      "latent_motion": 0.2682723435195717,
+      "matched": 0.39136780758161804,
+      "negative_duration": -900,
+      "time_reversed": 0.3309530076142904
+    },
+    "prefix": {
+      "action_magnitude": 0.8519704479437608,
+      "action_variation": 0.01740342527269744,
+      "donor": 0.1332558461046412,
+      "latent_motion": 0.38679662117591274,
+      "matched": 0.5937846027887784,
+      "negative_duration": -900,
+      "time_reversed": 0.4249334530188487
+    },
+    "seed": 605,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 3,
+    "full": {
+      "action_magnitude": 1.2196052171088554,
+      "action_variation": 0.014138620585907955,
+      "donor": 0.041529558131914515,
+      "latent_motion": 0.25863639406255773,
+      "matched": 0.3504366238374968,
+      "negative_duration": -900,
+      "time_reversed": 0.29686622845159993
+    },
+    "prefix": {
+      "action_magnitude": 0.8837636434114896,
+      "action_variation": 0.018352583552209232,
+      "donor": 0.11514756192079924,
+      "latent_motion": 0.37593704691300023,
+      "matched": 0.5660148446376507,
+      "negative_duration": -900,
+      "time_reversed": 0.4085006404381532
+    },
+    "seed": 606,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 4,
+    "full": {
+      "action_magnitude": 1.1357025189979657,
+      "action_variation": 0.013342178376341189,
+      "donor": 0.02069526031428637,
+      "latent_motion": 0.2521526334253517,
+      "matched": 0.3515175391693373,
+      "negative_duration": -900,
+      "time_reversed": 0.27867799957056305
+    },
+    "prefix": {
+      "action_magnitude": 0.814301447226451,
+      "action_variation": 0.018071412073018458,
+      "donor": 0.052456868080957696,
+      "latent_motion": 0.35997053522330064,
+      "matched": 0.5813928682070512,
+      "negative_duration": -900,
+      "time_reversed": 0.3758308830169531
+    },
+    "seed": 610,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 317,
+    "episode": 5,
+    "full": {
+      "action_magnitude": 0.8208875197630662,
+      "action_variation": 0.017070284775959756,
+      "donor": 0.1458141843558323,
+      "latent_motion": 0.3814379423856735,
+      "matched": 0.5901428438149966,
+      "negative_duration": -317,
+      "time_reversed": 0.4132315252835934
+    },
+    "prefix": {
+      "action_magnitude": 0.8208875197630662,
+      "action_variation": 0.017070284775959756,
+      "donor": 0.1458141843558323,
+      "latent_motion": 0.3814379423856735,
+      "matched": 0.5901428438149966,
+      "negative_duration": -317,
+      "time_reversed": 0.4132315252835934
+    },
+    "seed": 614,
+    "success": true,
+    "task": "hanging_mug",
+    "valid_chunks": 13
+  },
+  {
+    "action_steps": 900,
+    "episode": 6,
+    "full": {
+      "action_magnitude": 1.0670428952655278,
+      "action_variation": 0.01256039271105987,
+      "donor": 0.03929954072435173,
+      "latent_motion": 0.2711119124212781,
+      "matched": 0.3837034504961323,
+      "negative_duration": -900,
+      "time_reversed": 0.3504073970221184
+    },
+    "prefix": {
+      "action_magnitude": 0.8354936517201937,
+      "action_variation": 0.01721030346547755,
+      "donor": 0.1118029448908833,
+      "latent_motion": 0.3624417380644725,
+      "matched": 0.5132829432304089,
+      "negative_duration": -900,
+      "time_reversed": 0.43501989314189327
+    },
+    "seed": 615,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 7,
+    "full": {
+      "action_magnitude": 1.1769174047418542,
+      "action_variation": 0.013087970764703444,
+      "donor": 0.04188836668442963,
+      "latent_motion": 0.2771508786323908,
+      "matched": 0.3906541768763516,
+      "negative_duration": -900,
+      "time_reversed": 0.3286374750975016
+    },
+    "prefix": {
+      "action_magnitude": 0.8238171201485854,
+      "action_variation": 0.01756970537826419,
+      "donor": 0.11217555331315107,
+      "latent_motion": 0.39329842076851773,
+      "matched": 0.5981511427805974,
+      "negative_duration": -900,
+      "time_reversed": 0.4235145736199159
+    },
+    "seed": 616,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 8,
+    "full": {
+      "action_magnitude": 1.004763676508053,
+      "action_variation": 0.013844195042258582,
+      "donor": 0.023635937073952153,
+      "latent_motion": 0.2651536762714386,
+      "matched": 0.3952243565707593,
+      "negative_duration": -900,
+      "time_reversed": 0.3277330499243092
+    },
+    "prefix": {
+      "action_magnitude": 0.837959002989989,
+      "action_variation": 0.017390854388045576,
+      "donor": 0.06178202875229994,
+      "latent_motion": 0.35685909482148975,
+      "matched": 0.5627569991808671,
+      "negative_duration": -900,
+      "time_reversed": 0.4045079923593081
+    },
+    "seed": 617,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 9,
+    "full": {
+      "action_magnitude": 1.110052530829971,
+      "action_variation": 0.013874468343282069,
+      "donor": 0.04696684590510735,
+      "latent_motion": 0.26546781691345006,
+      "matched": 0.38296163847317566,
+      "negative_duration": -900,
+      "time_reversed": 0.3190803278136898
+    },
+    "prefix": {
+      "action_magnitude": 0.8235464646266057,
+      "action_variation": 0.017333661313526906,
+      "donor": 0.12823095314415844,
+      "latent_motion": 0.38224718089287096,
+      "matched": 0.5817027710951291,
+      "negative_duration": -900,
+      "time_reversed": 0.4120738437542549
+    },
+    "seed": 618,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 10,
+    "full": {
+      "action_magnitude": 1.0541310334527814,
+      "action_variation": 0.012333479470799904,
+      "donor": 0.031293413090260146,
+      "latent_motion": 0.26501485302641586,
+      "matched": 0.37427384950019216,
+      "negative_duration": -900,
+      "time_reversed": 0.3122639792996484
+    },
+    "prefix": {
+      "action_magnitude": 0.8764298672859485,
+      "action_variation": 0.01819586854141492,
+      "donor": 0.08473121275303336,
+      "latent_motion": 0.36680287695848024,
+      "matched": 0.5348485822861011,
+      "negative_duration": -900,
+      "time_reversed": 0.3852704751950044
+    },
+    "seed": 619,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 11,
+    "full": {
+      "action_magnitude": 1.1587258134339307,
+      "action_variation": 0.013757719463240859,
+      "donor": 0.04948522534022316,
+      "latent_motion": 0.2619650214910507,
+      "matched": 0.3868062423693167,
+      "negative_duration": -900,
+      "time_reversed": 0.3167869364087646
+    },
+    "prefix": {
+      "action_magnitude": 0.8210839881346776,
+      "action_variation": 0.017767009593976233,
+      "donor": 0.12028953975994096,
+      "latent_motion": 0.3805746699755008,
+      "matched": 0.5910574083144848,
+      "negative_duration": -900,
+      "time_reversed": 0.40908289758058697
+    },
+    "seed": 620,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 12,
+    "full": {
+      "action_magnitude": 1.166880212925576,
+      "action_variation": 0.014256228415949925,
+      "donor": 0.028634630341981385,
+      "latent_motion": 0.25737691006144964,
+      "matched": 0.3888932551081116,
+      "negative_duration": -900,
+      "time_reversed": 0.31304076313972473
+    },
+    "prefix": {
+      "action_magnitude": 0.8753123466785138,
+      "action_variation": 0.019125802245420907,
+      "donor": 0.08314488303323507,
+      "latent_motion": 0.3753130023296063,
+      "matched": 0.6086296783043788,
+      "negative_duration": -900,
+      "time_reversed": 0.41308326446093047
+    },
+    "seed": 624,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 13,
+    "full": {
+      "action_magnitude": 1.0604800275854163,
+      "action_variation": 0.01443429578196358,
+      "donor": 0.04153144734615816,
+      "latent_motion": 0.3484017087801083,
+      "matched": 0.44000746631944504,
+      "negative_duration": -900,
+      "time_reversed": 0.361659507493715
+    },
+    "prefix": {
+      "action_magnitude": 0.8398458269926218,
+      "action_variation": 0.01762425575333719,
+      "donor": 0.11162286484048432,
+      "latent_motion": 0.3691583012159054,
+      "matched": 0.5586552218748972,
+      "negative_duration": -900,
+      "time_reversed": 0.39216426702646107
+    },
+    "seed": 625,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 14,
+    "full": {
+      "action_magnitude": 0.9551652226899121,
+      "action_variation": 0.015457411793790557,
+      "donor": 0.04876850382874371,
+      "latent_motion": 0.35059829781184326,
+      "matched": 0.462901496001192,
+      "negative_duration": -900,
+      "time_reversed": 0.3849013435679513
+    },
+    "prefix": {
+      "action_magnitude": 0.8146884051653055,
+      "action_variation": 0.01699995256673831,
+      "donor": 0.13694631365629342,
+      "latent_motion": 0.37907759157510906,
+      "matched": 0.5859456520814162,
+      "negative_duration": -900,
+      "time_reversed": 0.42326129285188824
+    },
+    "seed": 626,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 316,
+    "episode": 15,
+    "full": {
+      "action_magnitude": 0.8092736647679255,
+      "action_variation": 0.016630514256226327,
+      "donor": 0.12963682690612702,
+      "latent_motion": 0.3731194253151233,
+      "matched": 0.6055168394859021,
+      "negative_duration": -316,
+      "time_reversed": 0.4194930877823096
+    },
+    "prefix": {
+      "action_magnitude": 0.8092736647679255,
+      "action_variation": 0.016630514256226327,
+      "donor": 0.12963682690612702,
+      "latent_motion": 0.3731194253151233,
+      "matched": 0.6055168394859021,
+      "negative_duration": -316,
+      "time_reversed": 0.4194930877823096
+    },
+    "seed": 627,
+    "success": true,
+    "task": "hanging_mug",
+    "valid_chunks": 13
+  },
+  {
+    "action_steps": 900,
+    "episode": 16,
+    "full": {
+      "action_magnitude": 1.1942870020866394,
+      "action_variation": 0.013083215645589941,
+      "donor": 0.04498194173217619,
+      "latent_motion": 0.2837085788314407,
+      "matched": 0.38999150008768646,
+      "negative_duration": -900,
+      "time_reversed": 0.3231980993941024
+    },
+    "prefix": {
+      "action_magnitude": 0.851119169822106,
+      "action_variation": 0.01761327522735183,
+      "donor": 0.12429985741854677,
+      "latent_motion": 0.3693877641971295,
+      "matched": 0.590028547323667,
+      "negative_duration": -900,
+      "time_reversed": 0.4134233227142921
+    },
+    "seed": 628,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 322,
+    "episode": 17,
+    "full": {
+      "action_magnitude": 0.8395824019725506,
+      "action_variation": 0.017546334286005452,
+      "donor": 0.13156798807715597,
+      "latent_motion": 0.3799597896062411,
+      "matched": 0.5516179410310892,
+      "negative_duration": -322,
+      "time_reversed": 0.39534045182741606
+    },
+    "prefix": {
+      "action_magnitude": 0.8395824019725506,
+      "action_variation": 0.017546334286005452,
+      "donor": 0.13156798807715597,
+      "latent_motion": 0.3799597896062411,
+      "matched": 0.5516179410310892,
+      "negative_duration": -322,
+      "time_reversed": 0.39534045182741606
+    },
+    "seed": 629,
+    "success": true,
+    "task": "hanging_mug",
+    "valid_chunks": 13
+  },
+  {
+    "action_steps": 900,
+    "episode": 18,
+    "full": {
+      "action_magnitude": 0.9680587077462995,
+      "action_variation": 0.013435561618943876,
+      "donor": 0.042543468989690754,
+      "latent_motion": 0.2939483624052357,
+      "matched": 0.42650681452171224,
+      "negative_duration": -900,
+      "time_reversed": 0.3425553956547299
+    },
+    "prefix": {
+      "action_magnitude": 0.8230255635885092,
+      "action_variation": 0.017339370732840437,
+      "donor": 0.11963984370231628,
+      "latent_motion": 0.38500387278886944,
+      "matched": 0.6197610245301173,
+      "negative_duration": -900,
+      "time_reversed": 0.42786662165935224
+    },
+    "seed": 630,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 900,
+    "episode": 19,
+    "full": {
+      "action_magnitude": 1.1086296221694432,
+      "action_variation": 0.013715986344912971,
+      "donor": 0.05626028342321258,
+      "latent_motion": 0.2641096819896956,
+      "matched": 0.3901803078683647,
+      "negative_duration": -900,
+      "time_reversed": 0.3289093371178653
+    },
+    "prefix": {
+      "action_magnitude": 0.7910981705555549,
+      "action_variation": 0.01696409390737804,
+      "donor": 0.14984305920871163,
+      "latent_motion": 0.3864782406733586,
+      "matched": 0.6108680161146017,
+      "negative_duration": -900,
+      "time_reversed": 0.42951260392482465
+    },
+    "seed": 631,
+    "success": false,
+    "task": "hanging_mug",
+    "valid_chunks": 37
+  },
+  {
+    "action_steps": 223,
+    "episode": 0,
+    "full": {
+      "action_magnitude": 0.8483277923531003,
+      "action_variation": 0.01888920082193282,
+      "donor": 0.06199153605182888,
+      "latent_motion": 0.29468122786945766,
+      "matched": 0.5420950121349759,
+      "negative_duration": -223,
+      "time_reversed": 0.34326903853151536
+    },
+    "prefix": {
+      "action_magnitude": 0.7743490278720856,
+      "action_variation": 0.018368497118353845,
+      "donor": 0.0626575319390548,
+      "latent_motion": 0.26575413942337034,
+      "matched": 0.551947546005249,
+      "negative_duration": -223,
+      "time_reversed": 0.3343247532844543
+    },
+    "seed": 604,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 9
+  },
+  {
+    "action_steps": 246,
+    "episode": 1,
+    "full": {
+      "action_magnitude": 0.9076200395822525,
+      "action_variation": 0.018835887871682645,
+      "donor": 0.0895538544968555,
+      "latent_motion": 0.296190419793129,
+      "matched": 0.5488814383745193,
+      "negative_duration": -246,
+      "time_reversed": 0.3537170082330704
+    },
+    "prefix": {
+      "action_magnitude": 0.8244720280170441,
+      "action_variation": 0.02038638978265226,
+      "donor": 0.09419647580698917,
+      "latent_motion": 0.2757221132516861,
+      "matched": 0.6093749046325684,
+      "negative_duration": -246,
+      "time_reversed": 0.36799159944057463
+    },
+    "seed": 606,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 10
+  },
+  {
+    "action_steps": 296,
+    "episode": 2,
+    "full": {
+      "action_magnitude": 0.9618254974484444,
+      "action_variation": 0.017122433850696932,
+      "donor": 0.027553420264426382,
+      "latent_motion": 0.29210300991932553,
+      "matched": 0.48545318221052486,
+      "negative_duration": -296,
+      "time_reversed": 0.341510100911061
+    },
+    "prefix": {
+      "action_magnitude": 0.8812701284885407,
+      "action_variation": 0.021327091753482817,
+      "donor": 0.051285935389368154,
+      "latent_motion": 0.26679770052433016,
+      "matched": 0.5352305054664612,
+      "negative_duration": -296,
+      "time_reversed": 0.3536122262477875
+    },
+    "seed": 607,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 12
+  },
+  {
+    "action_steps": 222,
+    "episode": 3,
+    "full": {
+      "action_magnitude": 0.8606957130961947,
+      "action_variation": 0.019372004265379574,
+      "donor": 0.05825988411942112,
+      "latent_motion": 0.2976196027464337,
+      "matched": 0.49802834788958233,
+      "negative_duration": -222,
+      "time_reversed": 0.32790059513515896
+    },
+    "prefix": {
+      "action_magnitude": 0.810135567188263,
+      "action_variation": 0.01879946202971041,
+      "donor": 0.0693422982567235,
+      "latent_motion": 0.2667064070701599,
+      "matched": 0.47785442471504214,
+      "negative_duration": -222,
+      "time_reversed": 0.31543382108211515
+    },
+    "seed": 608,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 9
+  },
+  {
+    "action_steps": 223,
+    "episode": 4,
+    "full": {
+      "action_magnitude": 0.9112091991636488,
+      "action_variation": 0.021302413842123415,
+      "donor": 0.10950252862043237,
+      "latent_motion": 0.30406832695007324,
+      "matched": 0.5886386666033003,
+      "negative_duration": -223,
+      "time_reversed": 0.3989819089571635
+    },
+    "prefix": {
+      "action_magnitude": 0.8780957579612731,
+      "action_variation": 0.022296642232686282,
+      "donor": 0.09346967119919627,
+      "latent_motion": 0.2829471707344055,
+      "matched": 0.5990958631038665,
+      "negative_duration": -223,
+      "time_reversed": 0.3939789354801178
+    },
+    "seed": 609,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 9
+  },
+  {
+    "action_steps": 700,
+    "episode": 5,
+    "full": {
+      "action_magnitude": 0.9388379577932686,
+      "action_variation": 0.008678692762322467,
+      "donor": 0.02261336578293226,
+      "latent_motion": 0.2346875050972248,
+      "matched": 0.26172637477003297,
+      "negative_duration": -700,
+      "time_reversed": 0.20766244366251188
+    },
+    "prefix": {
+      "action_magnitude": 0.8347275137901307,
+      "action_variation": 0.019997058948501945,
+      "donor": 0.07955296572886014,
+      "latent_motion": 0.2513517886400223,
+      "matched": 0.45407935976982117,
+      "negative_duration": -700,
+      "time_reversed": 0.3250509053468704
+    },
+    "seed": 611,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 700,
+    "episode": 6,
+    "full": {
+      "action_magnitude": 0.9906436770126738,
+      "action_variation": 0.008439173592768353,
+      "donor": 0.028436336881043713,
+      "latent_motion": 0.23189556290363444,
+      "matched": 0.3103534260700489,
+      "negative_duration": -700,
+      "time_reversed": 0.2354913122695068
+    },
+    "prefix": {
+      "action_magnitude": 0.7706860959529876,
+      "action_variation": 0.018130626529455185,
+      "donor": 0.07162608378811887,
+      "latent_motion": 0.27126569151878355,
+      "matched": 0.571402657032013,
+      "negative_duration": -700,
+      "time_reversed": 0.3096600830554962
+    },
+    "seed": 617,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 700,
+    "episode": 7,
+    "full": {
+      "action_magnitude": 1.0655047790757541,
+      "action_variation": 0.012864104937762022,
+      "donor": 0.014379676196436462,
+      "latent_motion": 0.2357816382728774,
+      "matched": 0.23264622431376886,
+      "negative_duration": -700,
+      "time_reversed": 0.2133111159863143
+    },
+    "prefix": {
+      "action_magnitude": 0.8925321459770202,
+      "action_variation": 0.02862329324707389,
+      "donor": 0.07686650345199986,
+      "latent_motion": 0.23683205842971802,
+      "matched": 0.3920450732111931,
+      "negative_duration": -700,
+      "time_reversed": 0.3204151302576065
+    },
+    "seed": 618,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 700,
+    "episode": 8,
+    "full": {
+      "action_magnitude": 0.8940574578170118,
+      "action_variation": 0.018392531016584616,
+      "donor": 0.02266941814638116,
+      "latent_motion": 0.32440498419876757,
+      "matched": 0.43545385989649543,
+      "negative_duration": -700,
+      "time_reversed": 0.35410988330841064
+    },
+    "prefix": {
+      "action_magnitude": 0.8547560393810272,
+      "action_variation": 0.02088300995528698,
+      "donor": 0.08532481444509406,
+      "latent_motion": 0.2598836630582809,
+      "matched": 0.5229337453842163,
+      "negative_duration": -700,
+      "time_reversed": 0.36939561665058135
+    },
+    "seed": 619,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 700,
+    "episode": 9,
+    "full": {
+      "action_magnitude": 1.0324141897004226,
+      "action_variation": 0.009908941991884133,
+      "donor": 0.031569772098761065,
+      "latent_motion": 0.2833342105150223,
+      "matched": 0.34460989951059734,
+      "negative_duration": -700,
+      "time_reversed": 0.269555590532977
+    },
+    "prefix": {
+      "action_magnitude": 0.7921712756156921,
+      "action_variation": 0.018931177072227003,
+      "donor": 0.10187304772828756,
+      "latent_motion": 0.2751085847616196,
+      "matched": 0.6002031803131104,
+      "negative_duration": -700,
+      "time_reversed": 0.3391445130109787
+    },
+    "seed": 620,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 700,
+    "episode": 10,
+    "full": {
+      "action_magnitude": 1.034720032379545,
+      "action_variation": 0.012125911215191772,
+      "donor": 0.01444611137296781,
+      "latent_motion": 0.2674520632316326,
+      "matched": 0.31787561419708976,
+      "negative_duration": -700,
+      "time_reversed": 0.2897408237231189
+    },
+    "prefix": {
+      "action_magnitude": 0.9172810316085815,
+      "action_variation": 0.02955902204848826,
+      "donor": 0.07049698861021744,
+      "latent_motion": 0.24975648820400237,
+      "matched": 0.4134580194950104,
+      "negative_duration": -700,
+      "time_reversed": 0.3468383252620697
+    },
+    "seed": 621,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 247,
+    "episode": 11,
+    "full": {
+      "action_magnitude": 0.9056496500968934,
+      "action_variation": 0.018774788058362902,
+      "donor": 0.07117456389013788,
+      "latent_motion": 0.29921946972608565,
+      "matched": 0.4929473578929901,
+      "negative_duration": -247,
+      "time_reversed": 0.3639475777745247
+    },
+    "prefix": {
+      "action_magnitude": 0.8666935563087463,
+      "action_variation": 0.02119809598661959,
+      "donor": 0.09099632470231309,
+      "latent_motion": 0.2470853716135025,
+      "matched": 0.48270044922828675,
+      "negative_duration": -247,
+      "time_reversed": 0.3393716186285019
+    },
+    "seed": 623,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 10
+  },
+  {
+    "action_steps": 700,
+    "episode": 12,
+    "full": {
+      "action_magnitude": 1.0364766706680428,
+      "action_variation": 0.008846249310942045,
+      "donor": 0.03344384262724782,
+      "latent_motion": 0.2237641179356082,
+      "matched": 0.3214311455858165,
+      "negative_duration": -700,
+      "time_reversed": 0.24574365389758143
+    },
+    "prefix": {
+      "action_magnitude": 0.8379048883914948,
+      "action_variation": 0.02041757442057133,
+      "donor": 0.09899418605001349,
+      "latent_motion": 0.28023591041564944,
+      "matched": 0.6122488975524902,
+      "negative_duration": -700,
+      "time_reversed": 0.3772157818078995
+    },
+    "seed": 624,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 137,
+    "episode": 13,
+    "full": {
+      "action_magnitude": 0.8338300108909606,
+      "action_variation": 0.020484305638819932,
+      "donor": 0.10329695249858654,
+      "latent_motion": 0.2797049432992935,
+      "matched": 0.6190410673618316,
+      "negative_duration": -137,
+      "time_reversed": 0.3878599017858505
+    },
+    "prefix": {
+      "action_magnitude": 0.8338300108909606,
+      "action_variation": 0.020484305638819932,
+      "donor": 0.10329695249858654,
+      "latent_motion": 0.2797049432992935,
+      "matched": 0.6190410673618316,
+      "negative_duration": -137,
+      "time_reversed": 0.3878599017858505
+    },
+    "seed": 625,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 5
+  },
+  {
+    "action_steps": 222,
+    "episode": 14,
+    "full": {
+      "action_magnitude": 0.8611140847206116,
+      "action_variation": 0.019066881517776184,
+      "donor": 0.114673945677598,
+      "latent_motion": 0.3044032272365358,
+      "matched": 0.5758644044399261,
+      "negative_duration": -222,
+      "time_reversed": 0.358365010884073
+    },
+    "prefix": {
+      "action_magnitude": 0.7867674589157104,
+      "action_variation": 0.018450197158381344,
+      "donor": 0.10920901173039485,
+      "latent_motion": 0.2762961477041245,
+      "matched": 0.5999849796295166,
+      "negative_duration": -222,
+      "time_reversed": 0.3349253535270691
+    },
+    "seed": 628,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 9
+  },
+  {
+    "action_steps": 222,
+    "episode": 15,
+    "full": {
+      "action_magnitude": 0.8731699850824144,
+      "action_variation": 0.019464529145302042,
+      "donor": 0.11668433584974834,
+      "latent_motion": 0.3030737919939889,
+      "matched": 0.5821052292982737,
+      "negative_duration": -222,
+      "time_reversed": 0.36547904047701096
+    },
+    "prefix": {
+      "action_magnitude": 0.797105324268341,
+      "action_variation": 0.018892842484638094,
+      "donor": 0.10970026097799601,
+      "latent_motion": 0.2826141625642776,
+      "matched": 0.5847985446453094,
+      "negative_duration": -222,
+      "time_reversed": 0.33408969044685366
+    },
+    "seed": 629,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 9
+  },
+  {
+    "action_steps": 700,
+    "episode": 16,
+    "full": {
+      "action_magnitude": 0.9818456059899824,
+      "action_variation": 0.008945859647516546,
+      "donor": 0.018926632614067473,
+      "latent_motion": 0.2692484609011946,
+      "matched": 0.40233022848079947,
+      "negative_duration": -700,
+      "time_reversed": 0.3174578408742773
+    },
+    "prefix": {
+      "action_magnitude": 0.7787182986736297,
+      "action_variation": 0.018216847954317928,
+      "donor": 0.067237809457277,
+      "latent_motion": 0.25431545078754425,
+      "matched": 0.5176485538482666,
+      "negative_duration": -700,
+      "time_reversed": 0.30834552049636843
+    },
+    "seed": 630,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 700,
+    "episode": 17,
+    "full": {
+      "action_magnitude": 1.0076653422980473,
+      "action_variation": 0.009264789634095183,
+      "donor": 0.0322588997618653,
+      "latent_motion": 0.24905919771769952,
+      "matched": 0.3371293955835803,
+      "negative_duration": -700,
+      "time_reversed": 0.2617937598762841
+    },
+    "prefix": {
+      "action_magnitude": 0.8963144540786743,
+      "action_variation": 0.022962361574172974,
+      "donor": 0.08977711639906231,
+      "latent_motion": 0.2808923810720444,
+      "matched": 0.5832490503787995,
+      "negative_duration": -700,
+      "time_reversed": 0.40348186194896696
+    },
+    "seed": 631,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  },
+  {
+    "action_steps": 222,
+    "episode": 18,
+    "full": {
+      "action_magnitude": 0.9047112199995253,
+      "action_variation": 0.02057223184965551,
+      "donor": 0.08264964935142857,
+      "latent_motion": 0.28560025493303937,
+      "matched": 0.49417030480172897,
+      "negative_duration": -222,
+      "time_reversed": 0.34196117520332336
+    },
+    "prefix": {
+      "action_magnitude": 0.8558258295059205,
+      "action_variation": 0.020922440104186535,
+      "donor": 0.08958684613830163,
+      "latent_motion": 0.24364343881607056,
+      "matched": 0.46884396076202395,
+      "negative_duration": -222,
+      "time_reversed": 0.33168408274650574
+    },
+    "seed": 632,
+    "success": true,
+    "task": "place_can_basket",
+    "valid_chunks": 9
+  },
+  {
+    "action_steps": 700,
+    "episode": 19,
+    "full": {
+      "action_magnitude": 1.0190033470762188,
+      "action_variation": 0.011802742000797698,
+      "donor": 0.020627094789314807,
+      "latent_motion": 0.254319923191235,
+      "matched": 0.3033417522393424,
+      "negative_duration": -700,
+      "time_reversed": 0.2747372830736226
+    },
+    "prefix": {
+      "action_magnitude": 0.8931736409664154,
+      "action_variation": 0.02869384498335421,
+      "donor": 0.0756222371992312,
+      "latent_motion": 0.22840867340564727,
+      "matched": 0.3805752083659172,
+      "negative_duration": -700,
+      "time_reversed": 0.3249261111021042
+    },
+    "seed": 633,
+    "success": false,
+    "task": "place_can_basket",
+    "valid_chunks": 29
+  }
+]

@@ -1,0 +1,538 @@
+{
+  "analysis_sources": {
+    "diagnose_awr_transmission.py": "4275c7ee5c89b70ab713e7d58c17f21f77e4a44b7056aae3b6cbfb1f60956cba",
+    "diagnose_natural60_reward.py": "9b3a6cd97a6fe72d893b5ac2d5ada28d27ef1120f9b0851bc30bde78b64807b3",
+    "package_natural60_diagnostic.py": "9fc3c7ee0cf6b7f5c269dff434887035d3d4c74ea84d73fa85cd66b5e3e34504"
+  },
+  "artifacts": {
+    "awr_transition_index.json": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/awr_transition_index.json",
+      "sha256": "76f7e95a6533c8f25dfe9631ea427e12954b3a49cc2e237b3c552025236f07b8"
+    },
+    "awr_transmission.json": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/awr_transmission.json",
+      "sha256": "878a950608e6b62e7a3437c24a60e8d992c67c8ca389d9df8e2645251c4c0736"
+    },
+    "awr_transmission_arrays.npz": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/awr_transmission_arrays.npz",
+      "sha256": "f9eb775b2914fca58fe6d51c22f64246ed3439f6dd5aa751cb453a1fb1a59825"
+    },
+    "chunk_scores.json": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/chunk_scores.json",
+      "sha256": "65790c3057578a856a062158ceb001b9ccb450a43af022326150e5cab724e6e8"
+    },
+    "episode_scores.json": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/episode_scores.json",
+      "sha256": "9d5f5b173cd2009afdd80881d66d9edd26f33ce7c89432042d4ae1e9277bf5ac"
+    },
+    "inventory.json": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/inventory.json",
+      "sha256": "36adef2f473c12d472825ef31b4c38eaa8b000100877ed884ec5d8b9657ce843"
+    },
+    "prefix_cross_scores.json": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/prefix_cross_scores.json",
+      "sha256": "fb9504803146985d1c940511ee17aa06fcae28d704df3267651c5b1db5b8bca4"
+    },
+    "reward_diagnostic.json": {
+      "local_path": "/home/ubuntu/sj/fastwam/FastWAM-git/evaluate_results/robotwin_imagination_restart/robotwin_natural60_diagnostic_20260907/reward_diagnostic.json",
+      "sha256": "edd12240cc5a9f38b8c7ad105314ebc6cf59a4179d9df6b25bf1f840479d1f55"
+    }
+  },
+  "development_only": true,
+  "episodes": [
+    {
+      "action_steps": 1500,
+      "episode": 0,
+      "seed": 601,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 1,
+      "seed": 604,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 2,
+      "seed": 608,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 3,
+      "seed": 609,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 4,
+      "seed": 611,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 5,
+      "seed": 615,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 6,
+      "seed": 618,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 7,
+      "seed": 619,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 8,
+      "seed": 620,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 9,
+      "seed": 622,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 10,
+      "seed": 623,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 444,
+      "episode": 11,
+      "seed": 624,
+      "success": true,
+      "task": "open_microwave",
+      "valid_chunks": 18
+    },
+    {
+      "action_steps": 1500,
+      "episode": 12,
+      "seed": 625,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 442,
+      "episode": 13,
+      "seed": 626,
+      "success": true,
+      "task": "open_microwave",
+      "valid_chunks": 18
+    },
+    {
+      "action_steps": 1500,
+      "episode": 14,
+      "seed": 627,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 398,
+      "episode": 15,
+      "seed": 629,
+      "success": true,
+      "task": "open_microwave",
+      "valid_chunks": 16
+    },
+    {
+      "action_steps": 1500,
+      "episode": 16,
+      "seed": 630,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 17,
+      "seed": 634,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 18,
+      "seed": 635,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 1500,
+      "episode": 19,
+      "seed": 637,
+      "success": false,
+      "task": "open_microwave",
+      "valid_chunks": 62
+    },
+    {
+      "action_steps": 317,
+      "episode": 0,
+      "seed": 600,
+      "success": true,
+      "task": "hanging_mug",
+      "valid_chunks": 13
+    },
+    {
+      "action_steps": 325,
+      "episode": 1,
+      "seed": 601,
+      "success": true,
+      "task": "hanging_mug",
+      "valid_chunks": 13
+    },
+    {
+      "action_steps": 900,
+      "episode": 2,
+      "seed": 605,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 3,
+      "seed": 606,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 4,
+      "seed": 610,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 317,
+      "episode": 5,
+      "seed": 614,
+      "success": true,
+      "task": "hanging_mug",
+      "valid_chunks": 13
+    },
+    {
+      "action_steps": 900,
+      "episode": 6,
+      "seed": 615,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 7,
+      "seed": 616,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 8,
+      "seed": 617,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 9,
+      "seed": 618,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 10,
+      "seed": 619,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 11,
+      "seed": 620,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 12,
+      "seed": 624,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 13,
+      "seed": 625,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 14,
+      "seed": 626,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 316,
+      "episode": 15,
+      "seed": 627,
+      "success": true,
+      "task": "hanging_mug",
+      "valid_chunks": 13
+    },
+    {
+      "action_steps": 900,
+      "episode": 16,
+      "seed": 628,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 322,
+      "episode": 17,
+      "seed": 629,
+      "success": true,
+      "task": "hanging_mug",
+      "valid_chunks": 13
+    },
+    {
+      "action_steps": 900,
+      "episode": 18,
+      "seed": 630,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 900,
+      "episode": 19,
+      "seed": 631,
+      "success": false,
+      "task": "hanging_mug",
+      "valid_chunks": 37
+    },
+    {
+      "action_steps": 223,
+      "episode": 0,
+      "seed": 604,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 9
+    },
+    {
+      "action_steps": 246,
+      "episode": 1,
+      "seed": 606,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 10
+    },
+    {
+      "action_steps": 296,
+      "episode": 2,
+      "seed": 607,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 12
+    },
+    {
+      "action_steps": 222,
+      "episode": 3,
+      "seed": 608,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 9
+    },
+    {
+      "action_steps": 223,
+      "episode": 4,
+      "seed": 609,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 9
+    },
+    {
+      "action_steps": 700,
+      "episode": 5,
+      "seed": 611,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 700,
+      "episode": 6,
+      "seed": 617,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 700,
+      "episode": 7,
+      "seed": 618,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 700,
+      "episode": 8,
+      "seed": 619,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 700,
+      "episode": 9,
+      "seed": 620,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 700,
+      "episode": 10,
+      "seed": 621,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 247,
+      "episode": 11,
+      "seed": 623,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 10
+    },
+    {
+      "action_steps": 700,
+      "episode": 12,
+      "seed": 624,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 137,
+      "episode": 13,
+      "seed": 625,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 5
+    },
+    {
+      "action_steps": 222,
+      "episode": 14,
+      "seed": 628,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 9
+    },
+    {
+      "action_steps": 222,
+      "episode": 15,
+      "seed": 629,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 9
+    },
+    {
+      "action_steps": 700,
+      "episode": 16,
+      "seed": 630,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 700,
+      "episode": 17,
+      "seed": 631,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    },
+    {
+      "action_steps": 222,
+      "episode": 18,
+      "seed": 632,
+      "success": true,
+      "task": "place_can_basket",
+      "valid_chunks": 9
+    },
+    {
+      "action_steps": 700,
+      "episode": 19,
+      "seed": 633,
+      "success": false,
+      "task": "place_can_basket",
+      "valid_chunks": 29
+    }
+  ],
+  "feature_cache_provenance": {
+    "device": "cuda",
+    "dtype": "bf16",
+    "encoder_sha256": "56ff2f0239568f08030eae337899186483eb2c669912091e158d7784c4d5ba4d",
+    "feature": "full-composite single-frame Wan VAE, float32 head region",
+    "vae_sha256": "0e913a2ca571c75fcb63385a8edadcca73454af5842596cb1ad11e4142590996"
+  },
+  "inventory_sha256": "36adef2f473c12d472825ef31b4c38eaa8b000100877ed884ec5d8b9657ce843",
+  "protocol_sha256": "16a9ce28486701f99f3437ee7a2057f42c0fd0763fad9f299e5ee30a678a879c",
+  "records": 2167,
+  "schema": "natural60_compact_archive_v1",
+  "source_manifest_sha256": "75b275c3b034d3087aad4b5496f79f5b4283734e0fc76ce205f1998034dcdd98",
+  "unique_images": 27451,
+  "vae_sha256": "0e913a2ca571c75fcb63385a8edadcca73454af5842596cb1ad11e4142590996"
+}

@@ -1,0 +1,698 @@
+{
+  "bootstrap_replicates": 10000,
+  "bootstrap_unit": "episode; within-task outcome-stratified; donors resampled",
+  "decision": "inconclusive_do_not_train",
+  "full_episode_auc_descriptive": {
+    "hanging_mug": {
+      "action_magnitude": 0.0,
+      "action_variation": 1.0,
+      "donor": 1.0,
+      "latent_motion": 0.9866666666666667,
+      "matched": 1.0,
+      "negative_duration": 1.0,
+      "time_reversed": 1.0
+    },
+    "open_microwave": {
+      "action_magnitude": 1.0,
+      "action_variation": 1.0,
+      "donor": 1.0,
+      "latent_motion": 1.0,
+      "matched": 1.0,
+      "negative_duration": 1.0,
+      "time_reversed": 0.9803921568627451
+    },
+    "place_can_basket": {
+      "action_magnitude": 0.06,
+      "action_variation": 0.99,
+      "donor": 0.96,
+      "latent_motion": 0.89,
+      "matched": 1.0,
+      "negative_duration": 1.0,
+      "time_reversed": 0.95
+    }
+  },
+  "gates": {
+    "auc_at_least_065": true,
+    "auc_lower_above_chance": true,
+    "content_delta_at_least_005": false,
+    "content_delta_lower_positive": false,
+    "no_supported_reverse_task": true,
+    "two_positive_tasks": true
+  },
+  "input_validation": {
+    "all_executed_actions_equal_baseline": true,
+    "all_source_metadata_and_array_hashes_match": true,
+    "episodes": 60,
+    "incomplete_chunks_excluded": 60,
+    "nondegenerate_scored_deltas": true,
+    "records": 2167,
+    "scored_complete_chunks": 2107
+  },
+  "inventory_sha256": "36adef2f473c12d472825ef31b4c38eaa8b000100877ed884ec5d8b9657ce843",
+  "legacy_score_reproduction": {
+    "chunks_compared": 1899,
+    "maximum_absolute_error": 1.7717397717831318e-06,
+    "source_sha256": "fb554ded9730f10c460fbc8fcf60c11d38504b4b01e1af7e5b9557c5fe22d2a8"
+  },
+  "limitations": [
+    "seen development data; failures overlap training",
+    "full scores confounded by duration",
+    "three fixed tasks only",
+    "setbacks are not irreversible failure labels",
+    "no state-based failure localization for mug/basket",
+    "no online efficacy claim"
+  ],
+  "microwave_progress": [
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.00505072383308097,
+      "donor_non_setback_score_drop_fraction": 0.5409836065573771,
+      "donor_progress_rho": 0.07290171489008083,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 0,
+      "latent_motion_progress_rho": 0.7950190123643324,
+      "matched_non_setback_mean_score_change": -0.004634109432580041,
+      "matched_non_setback_score_drop_fraction": 0.5409836065573771,
+      "matched_progress_rho": 0.6763617133791645,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 601,
+      "setback_replans": [],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005769746929304264,
+      "donor_non_setback_score_drop_fraction": 0.47540983606557374,
+      "donor_progress_rho": 0.06451233781868268,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 1,
+      "latent_motion_progress_rho": -0.0943145543728679,
+      "matched_non_setback_mean_score_change": -0.0008097457104041928,
+      "matched_non_setback_score_drop_fraction": 0.47540983606557374,
+      "matched_progress_rho": -0.1564616369094724,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 604,
+      "setback_replans": [],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.006111471639259864,
+      "donor_non_setback_score_drop_fraction": 0.5166666666666667,
+      "donor_progress_rho": -0.07979474687945222,
+      "donor_setback_mean_score_change": -0.010706089437007904,
+      "donor_setback_score_drop_fraction": 1.0,
+      "episode": 2,
+      "latent_motion_progress_rho": 0.44051654275046587,
+      "matched_non_setback_mean_score_change": -0.002712049086888631,
+      "matched_non_setback_score_drop_fraction": 0.4666666666666667,
+      "matched_progress_rho": 0.21574659499956547,
+      "matched_setback_mean_score_change": 0.033944666385650635,
+      "matched_setback_score_drop_fraction": 0.0,
+      "seed": 608,
+      "setback_replans": [
+        37
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005334610926551902,
+      "donor_non_setback_score_drop_fraction": 0.5517241379310345,
+      "donor_progress_rho": 0.016141623227821006,
+      "donor_setback_mean_score_change": 0.0008171771963437399,
+      "donor_setback_score_drop_fraction": 0.3333333333333333,
+      "episode": 3,
+      "latent_motion_progress_rho": 0.6186447080154114,
+      "matched_non_setback_mean_score_change": -0.0037857121948538155,
+      "matched_non_setback_score_drop_fraction": 0.5,
+      "matched_progress_rho": 0.6728866057263732,
+      "matched_setback_mean_score_change": 0.018735493222872417,
+      "matched_setback_score_drop_fraction": 0.6666666666666666,
+      "seed": 609,
+      "setback_replans": [
+        42,
+        43,
+        61
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.006733184859211647,
+      "donor_non_setback_score_drop_fraction": 0.49122807017543857,
+      "donor_progress_rho": 0.13075015065169665,
+      "donor_setback_mean_score_change": 0.004885643720626831,
+      "donor_setback_score_drop_fraction": 0.25,
+      "episode": 4,
+      "latent_motion_progress_rho": 0.1316701787753622,
+      "matched_non_setback_mean_score_change": -0.009246608405782465,
+      "matched_non_setback_score_drop_fraction": 0.5614035087719298,
+      "matched_progress_rho": 0.00937720972197554,
+      "matched_setback_mean_score_change": 0.05600647255778313,
+      "matched_setback_score_drop_fraction": 0.25,
+      "seed": 611,
+      "setback_replans": [
+        56,
+        57,
+        59,
+        60
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.006241109604666827,
+      "donor_non_setback_score_drop_fraction": 0.45901639344262296,
+      "donor_progress_rho": 0.07557951315639341,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 5,
+      "latent_motion_progress_rho": 0.3253615462310089,
+      "matched_non_setback_mean_score_change": -0.0035686373222069663,
+      "matched_non_setback_score_drop_fraction": 0.4918032786885246,
+      "matched_progress_rho": 0.13377809768889198,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 615,
+      "setback_replans": [],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005941934693955058,
+      "donor_non_setback_score_drop_fraction": 0.45901639344262296,
+      "donor_progress_rho": -0.09345948662297524,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 6,
+      "latent_motion_progress_rho": 0.15843577694570193,
+      "matched_non_setback_mean_score_change": -0.0020315661782124004,
+      "matched_non_setback_score_drop_fraction": 0.5573770491803278,
+      "matched_progress_rho": 0.17419925566304983,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 618,
+      "setback_replans": [],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005642091839067769,
+      "donor_non_setback_score_drop_fraction": 0.5333333333333333,
+      "donor_progress_rho": 0.01638357774065915,
+      "donor_setback_mean_score_change": 0.004336535146361903,
+      "donor_setback_score_drop_fraction": 0.0,
+      "episode": 7,
+      "latent_motion_progress_rho": 0.11242035957251428,
+      "matched_non_setback_mean_score_change": -0.0025484892229239147,
+      "matched_non_setback_score_drop_fraction": 0.48333333333333334,
+      "matched_progress_rho": 0.17823775611166337,
+      "matched_setback_mean_score_change": 0.1021372526884079,
+      "matched_setback_score_drop_fraction": 0.0,
+      "seed": 619,
+      "setback_replans": [
+        13
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005471442871024472,
+      "donor_non_setback_score_drop_fraction": 0.5166666666666667,
+      "donor_progress_rho": -0.06121729495605752,
+      "donor_setback_mean_score_change": 0.009609255939722061,
+      "donor_setback_score_drop_fraction": 0.0,
+      "episode": 8,
+      "latent_motion_progress_rho": 0.6533957845433255,
+      "matched_non_setback_mean_score_change": -0.004243875543276469,
+      "matched_non_setback_score_drop_fraction": 0.5166666666666667,
+      "matched_progress_rho": 0.5023041474654378,
+      "matched_setback_mean_score_change": 0.00022618472576141357,
+      "matched_setback_score_drop_fraction": 0.0,
+      "seed": 620,
+      "setback_replans": [
+        44
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005837337374523807,
+      "donor_non_setback_score_drop_fraction": 0.5166666666666667,
+      "donor_progress_rho": -0.1544335249494381,
+      "donor_setback_mean_score_change": -0.00982962313451265,
+      "donor_setback_score_drop_fraction": 1.0,
+      "episode": 9,
+      "latent_motion_progress_rho": 0.05522235875937776,
+      "matched_non_setback_mean_score_change": -0.000755796084801356,
+      "matched_non_setback_score_drop_fraction": 0.5166666666666667,
+      "matched_progress_rho": -0.004476737039405749,
+      "matched_setback_mean_score_change": -0.13158868253231049,
+      "matched_setback_score_drop_fraction": 1.0,
+      "seed": 622,
+      "setback_replans": [
+        14
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005566717867158528,
+      "donor_non_setback_score_drop_fraction": 0.5081967213114754,
+      "donor_progress_rho": 0.04532242910671453,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 10,
+      "latent_motion_progress_rho": 0.23403604190898997,
+      "matched_non_setback_mean_score_change": -0.0036088218454454766,
+      "matched_non_setback_score_drop_fraction": 0.4262295081967213,
+      "matched_progress_rho": 0.07575123894175846,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 623,
+      "setback_replans": [],
+      "success": false
+    },
+    {
+      "chunks": 18,
+      "donor_non_setback_mean_score_change": -0.019924142208600067,
+      "donor_non_setback_score_drop_fraction": 0.5294117647058824,
+      "donor_progress_rho": 0.16408668730650156,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 11,
+      "latent_motion_progress_rho": 0.4447884416924664,
+      "matched_non_setback_mean_score_change": -0.013584757552427404,
+      "matched_non_setback_score_drop_fraction": 0.47058823529411764,
+      "matched_progress_rho": 0.5500515995872033,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 624,
+      "setback_replans": [],
+      "success": true
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.004863922748093804,
+      "donor_non_setback_score_drop_fraction": 0.4666666666666667,
+      "donor_progress_rho": -0.05281563863342333,
+      "donor_setback_mean_score_change": -0.005605430342257023,
+      "donor_setback_score_drop_fraction": 1.0,
+      "episode": 12,
+      "latent_motion_progress_rho": 0.24472339391635903,
+      "matched_non_setback_mean_score_change": -0.0038852560023466746,
+      "matched_non_setback_score_drop_fraction": 0.4666666666666667,
+      "matched_progress_rho": 0.39615514137893587,
+      "matched_setback_mean_score_change": 0.08430524170398712,
+      "matched_setback_score_drop_fraction": 0.0,
+      "seed": 625,
+      "setback_replans": [
+        41
+      ],
+      "success": false
+    },
+    {
+      "chunks": 18,
+      "donor_non_setback_mean_score_change": -0.018954065741441237,
+      "donor_non_setback_score_drop_fraction": 0.47058823529411764,
+      "donor_progress_rho": -0.1475748194014448,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 13,
+      "latent_motion_progress_rho": 0.2239422084623323,
+      "matched_non_setback_mean_score_change": -0.0062298073488123275,
+      "matched_non_setback_score_drop_fraction": 0.5294117647058824,
+      "matched_progress_rho": 0.32507739938080493,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 626,
+      "setback_replans": [],
+      "success": true
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005601027042062471,
+      "donor_non_setback_score_drop_fraction": 0.576271186440678,
+      "donor_progress_rho": 0.15611070557966045,
+      "donor_setback_mean_score_change": 0.0020423929672688246,
+      "donor_setback_score_drop_fraction": 0.0,
+      "episode": 14,
+      "latent_motion_progress_rho": 0.6502052439685841,
+      "matched_non_setback_mean_score_change": -0.00498502954082974,
+      "matched_non_setback_score_drop_fraction": 0.576271186440678,
+      "matched_progress_rho": 0.7723941685487604,
+      "matched_setback_mean_score_change": -0.00774996355175972,
+      "matched_setback_score_drop_fraction": 0.5,
+      "seed": 627,
+      "setback_replans": [
+        55,
+        56
+      ],
+      "success": false
+    },
+    {
+      "chunks": 16,
+      "donor_non_setback_mean_score_change": -0.0209269644921286,
+      "donor_non_setback_score_drop_fraction": 0.7333333333333333,
+      "donor_progress_rho": -0.10294117647058824,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 15,
+      "latent_motion_progress_rho": 0.2411764705882353,
+      "matched_non_setback_mean_score_change": 0.012904153267542521,
+      "matched_non_setback_score_drop_fraction": 0.5333333333333333,
+      "matched_progress_rho": 0.45294117647058824,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 629,
+      "setback_replans": [],
+      "success": true
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.006089198445541817,
+      "donor_non_setback_score_drop_fraction": 0.5,
+      "donor_progress_rho": -0.04140750642751418,
+      "donor_setback_mean_score_change": -0.0022288780463369275,
+      "donor_setback_score_drop_fraction": 1.0,
+      "episode": 16,
+      "latent_motion_progress_rho": 0.2835608061242211,
+      "matched_non_setback_mean_score_change": -0.0021068304777145386,
+      "matched_non_setback_score_drop_fraction": 0.5833333333333334,
+      "matched_progress_rho": 0.3217437963816914,
+      "matched_setback_mean_score_change": -0.10267803072929382,
+      "matched_setback_score_drop_fraction": 1.0,
+      "seed": 630,
+      "setback_replans": [
+        10
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005250653603998184,
+      "donor_non_setback_score_drop_fraction": 0.5517241379310345,
+      "donor_progress_rho": 0.2296341064188764,
+      "donor_setback_mean_score_change": 0.001972765816996495,
+      "donor_setback_score_drop_fraction": 0.3333333333333333,
+      "episode": 17,
+      "latent_motion_progress_rho": 0.6631160131953363,
+      "matched_non_setback_mean_score_change": -0.0016021782468105185,
+      "matched_non_setback_score_drop_fraction": 0.4827586206896552,
+      "matched_progress_rho": 0.8235249678930271,
+      "matched_setback_mean_score_change": 0.006742273767789205,
+      "matched_setback_score_drop_fraction": 0.3333333333333333,
+      "seed": 634,
+      "setback_replans": [
+        43,
+        47,
+        48
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005997305733676398,
+      "donor_non_setback_score_drop_fraction": 0.5555555555555556,
+      "donor_progress_rho": 0.1061300567524106,
+      "donor_setback_mean_score_change": -0.00016242418704288348,
+      "donor_setback_score_drop_fraction": 0.42857142857142855,
+      "episode": 18,
+      "latent_motion_progress_rho": 0.5641716661866991,
+      "matched_non_setback_mean_score_change": -0.000280692207592505,
+      "matched_non_setback_score_drop_fraction": 0.4074074074074074,
+      "matched_progress_rho": 0.7300911758888541,
+      "matched_setback_mean_score_change": -0.003671930304595402,
+      "matched_setback_score_drop_fraction": 0.5714285714285714,
+      "seed": 635,
+      "setback_replans": [
+        50,
+        52,
+        53,
+        54,
+        55,
+        57,
+        58
+      ],
+      "success": false
+    },
+    {
+      "chunks": 62,
+      "donor_non_setback_mean_score_change": -0.005687857151185778,
+      "donor_non_setback_score_drop_fraction": 0.47540983606557374,
+      "donor_progress_rho": 0.0035167016745294355,
+      "donor_setback_mean_score_change": null,
+      "donor_setback_score_drop_fraction": null,
+      "episode": 19,
+      "latent_motion_progress_rho": 0.10145495261034919,
+      "matched_non_setback_mean_score_change": -0.002316410912842047,
+      "matched_non_setback_score_drop_fraction": 0.5409836065573771,
+      "matched_progress_rho": 0.07438013111612256,
+      "matched_setback_mean_score_change": null,
+      "matched_setback_score_drop_fraction": null,
+      "seed": 637,
+      "setback_replans": [],
+      "success": false
+    }
+  ],
+  "prefix": {
+    "hanging_mug": {
+      "action_magnitude": {
+        "ci95": [
+          0.05333333333333334,
+          0.5466666666666666
+        ],
+        "estimate": 0.28
+      },
+      "action_variation": {
+        "ci95": [
+          0.0,
+          0.38666666666666666
+        ],
+        "estimate": 0.16
+      },
+      "content_delta": {
+        "ci95": [
+          -0.45333333333333337,
+          0.3733333333333333
+        ],
+        "estimate": -0.040000000000000036
+      },
+      "donor": {
+        "ci95": [
+          0.24,
+          0.8933333333333333
+        ],
+        "estimate": 0.5733333333333334
+      },
+      "latent_motion": {
+        "ci95": [
+          0.2,
+          0.7866666666666666
+        ],
+        "estimate": 0.49333333333333335
+      },
+      "matched": {
+        "ci95": [
+          0.2,
+          0.8533333333333334
+        ],
+        "estimate": 0.5333333333333333
+      },
+      "negative_duration": {
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "estimate": 1.0
+      },
+      "time_reversed": {
+        "ci95": [
+          0.09333333333333334,
+          0.5866666666666667
+        ],
+        "estimate": 0.3333333333333333
+      }
+    },
+    "macro": {
+      "action_magnitude": {
+        "ci95": [
+          0.4077124183006536,
+          0.6622222222222223
+        ],
+        "estimate": 0.5305228758169935
+      },
+      "action_variation": {
+        "ci95": [
+          0.42,
+          0.6366666666666667
+        ],
+        "estimate": 0.5233333333333333
+      },
+      "content_delta": {
+        "ci95": [
+          -0.12694281045751632,
+          0.36073039215686253
+        ],
+        "estimate": 0.009869281045751613
+      },
+      "donor": {
+        "ci95": [
+          0.3884787581699347,
+          0.8188251633986928
+        ],
+        "estimate": 0.7180392156862746
+      },
+      "latent_motion": {
+        "ci95": [
+          0.5722205882352941,
+          0.8322222222222222
+        ],
+        "estimate": 0.7047058823529412
+      },
+      "matched": {
+        "ci95": [
+          0.5833333333333334,
+          0.8622222222222223
+        ],
+        "estimate": 0.7279084967320261
+      },
+      "negative_duration": {
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "estimate": 1.0
+      },
+      "time_reversed": {
+        "ci95": [
+          0.488562091503268,
+          0.7434640522875817
+        ],
+        "estimate": 0.6183006535947713
+      }
+    },
+    "open_microwave": {
+      "action_magnitude": {
+        "ci95": [
+          0.7647058823529411,
+          1.0
+        ],
+        "estimate": 0.9215686274509803
+      },
+      "action_variation": {
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "estimate": 1.0
+      },
+      "content_delta": {
+        "ci95": [
+          -0.039215686274509776,
+          0.8235294117647058
+        ],
+        "estimate": 0.019607843137254832
+      },
+      "donor": {
+        "ci95": [
+          0.11764705882352941,
+          1.0
+        ],
+        "estimate": 0.9607843137254902
+      },
+      "latent_motion": {
+        "ci95": [
+          0.8431372549019608,
+          1.0
+        ],
+        "estimate": 0.9607843137254902
+      },
+      "matched": {
+        "ci95": [
+          0.8823529411764706,
+          1.0
+        ],
+        "estimate": 0.9803921568627451
+      },
+      "negative_duration": {
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "estimate": 1.0
+      },
+      "time_reversed": {
+        "ci95": [
+          0.7647058823529411,
+          1.0
+        ],
+        "estimate": 0.9215686274509803
+      }
+    },
+    "place_can_basket": {
+      "action_magnitude": {
+        "ci95": [
+          0.14,
+          0.66
+        ],
+        "estimate": 0.39
+      },
+      "action_variation": {
+        "ci95": [
+          0.15,
+          0.68
+        ],
+        "estimate": 0.41
+      },
+      "content_delta": {
+        "ci95": [
+          -0.21024999999999985,
+          0.61
+        ],
+        "estimate": 0.050000000000000044
+      },
+      "donor": {
+        "ci95": [
+          0.21,
+          0.82
+        ],
+        "estimate": 0.62
+      },
+      "latent_motion": {
+        "ci95": [
+          0.4,
+          0.89
+        ],
+        "estimate": 0.66
+      },
+      "matched": {
+        "ci95": [
+          0.4097500000000002,
+          0.89
+        ],
+        "estimate": 0.67
+      },
+      "negative_duration": {
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "estimate": 1.0
+      },
+      "time_reversed": {
+        "ci95": [
+          0.33,
+          0.85
+        ],
+        "estimate": 0.6
+      }
+    }
+  },
+  "schema": "natural60_reward_diagnostic_v1"
+}
